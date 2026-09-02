@@ -163,8 +163,16 @@ def capture_report(run: CaptureRun, mode: str, frozen: bool = False) -> Renderab
     if mode == "raw" and run.running:
         note = "frozen — the capture is still running" if frozen else "following"
         style = "bold bright_yellow" if frozen else _KEY
-    header = _mode_header(mode, trailer=f"capture · {run.backend}",
-                          note=note, note_style=style)
+    # A capture's three modes are not a scan's: there is no "added since the
+    # last scan" here, so the diff view is what did not answer instead.
+    label = {"condensed": "overview", "diff": "what did not answer",
+             "raw": "raw output"}.get(mode, mode)
+    header = Text()
+    header.append(label, style=_HEAD)
+    if note:
+        header.append(" · ", style=_KEY)
+        header.append(note, style=style)
+    header.append(f"   capture · {run.backend}", style=_KEY)
     if mode == "raw":
         return Group(header, *_log_lines(run))
     if mode == "diff":

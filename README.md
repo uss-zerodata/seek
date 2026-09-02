@@ -233,10 +233,22 @@ hands the URL list to [gowitness](https://github.com/sensepost/gowitness)
 instead of writing it to a file, and what comes back lands on the host and
 service records themselves: HTTP status, page title, server, detected
 technologies, a TLS summary, and the screenshot's path. `i` opens one
-screenshot in your image viewer; `W` serves the whole gallery and opens a
-browser. A running capture appears in the Scans tab beside nmap runs, streams
+screenshot in your image viewer; `W` serves the report and opens a browser at
+the selected result itself, or at the gallery when the row covers several. A running capture appears in the Scans tab beside nmap runs, streams
 its output, and can be cancelled — and it may run *while* a scan runs, since
 screenshotting and port scanning do not contend.
+
+Results are read from the capture's own SQLite database, which is what
+gowitness leaves behind whether or not seek ran it — so a capture you made by
+hand with `--write-db` is picked up from the capture directory on start up,
+with its screenshots, exactly like an nmap file you did not run here. The
+record shows the identifying facts inline (status, title, server, technologies,
+TLS, and which security headers were *absent*); `d` opens the same record
+full-screen with every header, cookie and console message laid out — the reader
+shows everything the pane shows and more, never something different.
+`gowitness_collect_all` additionally records per-request network logs and
+response bodies, off by default because it makes the capture directory grow
+without a useful bound.
 
 It runs in docker by default (`ghcr.io/sensepost/gowitness`, pulled on first
 use) and falls back to a `gowitness` on `PATH`; `gowitness_mode` pins one or

@@ -139,15 +139,24 @@ class Runner:
         return self.current
 
     async def run(self, run: Run, on_line: Callable[[str], None],
-                  on_done: Callable[[Run], None]) -> Run:
+                  on_done: Callable[[Run], None],
+                  on_start: Callable[[Run], None] | None = None) -> Run:
         """Start `run`, stream its output, and settle its state.
 
         `on_line` is called for each line as it arrives, `on_done` once, after
-        the state is final.
+        the state is final, and `on_start` once the run is listed but before it
+        has produced anything.
+
+        `on_start` exists because "listed" and "has said something" are minutes
+        apart for a tool that pulls a container image before it begins: without
+        it the caller can only refresh its view when the first line arrives, and
+        until then the run it just started is nowhere to be seen.
         """
         self.runs.append(run)
         self._current = run
         self._cancelling = False
+        if on_start is not None:
+            on_start(run)
         try:
             process = await asyncio.create_subprocess_exec(
                 *run.argv,

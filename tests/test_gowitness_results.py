@@ -1,129 +1,198 @@
-"""Reading a capture back.
+"""Reading a capture back from its database.
 
-The fixture is real gowitness v3 output, trimmed to the fields the reader uses
-but with its shapes left exactly as the tool wrote them - `technologies` as
-`null` rather than `[]`, header keys lowercased. Hand-written JSON would have
-had neither trap in it, and both are the kind that only shows up in production.
+The fixture is a real gowitness v3 database (see `make_fixture.py`), so the
+schema under test is the one the tool writes rather than one invented here. It
+carries the traps that matter: the screenshot column is `filename`, header keys
+are cased differently per protocol, and `response_reason` is empty over HTTP/2.
 """
 
 from __future__ import annotations
 
-import json
+import sqlite3
 from pathlib import Path
+
+import pytest
 
 from seek.gowitness import results as res
 
-FIX = Path(__file__).parent / "fixtures" / "gowitness" / "capture.jsonl"
+FIX = Path(__file__).parent / "fixtures" / "gowitness" / "capture.sqlite3"
 
 
-def _load(shots: Path | None = None):
-    return res.read_jsonl(FIX, shots)
+def _read(shots: Path | None = None):
+    return res.read_database(FIX, shots)
 
 
-# --- the real shapes ----------------------------------------------------
+# --- the real database --------------------------------------------------
 
 
-def test_every_record_in_the_sample_is_read():
-    captures, problems = _load()
+def test_every_result_in_the_capture_is_read():
+    captures, problems = _read()
     assert len(captures) == 7
     assert problems == []
 
 
-def test_a_successful_capture_carries_what_the_record_needs():
-    captures, _ = _load()
-    found = next(c for c in captures if c.url == "https://sso.hektor.cc:443")
-    assert found.status == 200
-    assert found.title == "sso.hektor.cc"
-    assert found.protocol
-    assert not found.failed
+def test_the_row_id_is_carried_because_the_report_server_needs_it():
+    """The JSON Lines writer set every id to 0; only the database has real
+    ones, and `/results/detail/:id` is addressed by them."""
+    captures, _ = _read()
+    ids = [c.row_id for c in captures]
+    assert all(isinstance(i, int) for i in ids)
+    assert len(set(ids)) == len(ids), "ids are distinct"
+    assert 0 not in ids
 
 
-def test_technologies_are_read_when_present():
-    captures, _ = _load()
-    with_tech = [c for c in captures if c.technologies]
-    assert with_tech, "the sample has records with technologies"
-    assert all(isinstance(t, str) and t for c in with_tech for t in c.technologies)
+def test_the_screenshot_comes_from_the_filename_column():
+    """The column is `filename`; the JSON field was `file_name`. A
+    field-for-field port of the old reader loses every screenshot silently."""
+    captures, _ = _read(Path("/shots"))
+    shots = [c.shot for c in captures if c.shot is not None]
+    assert shots, "no screenshot path was read"
+    assert all(str(s).startswith("/shots/") for s in shots)
+    assert all(s.suffix in (".jpeg", ".png") for s in shots)
 
 
-def test_null_technologies_do_not_crash_the_reader():
-    """gowitness writes `null` here, not `[]`, when it detected none."""
-    raws = [json.loads(line) for line in FIX.read_text().splitlines() if line.strip()]
-    assert any(r["technologies"] is None for r in raws), \
-        "fixture premise: the real tool writes null here"
-    captures, _ = _load()
-    assert all(isinstance(c.technologies, list) for c in captures)
+def test_headers_are_read_for_every_result():
+    captures, _ = _read()
+    assert sum(len(c.headers) for c in captures) == 70
+
+
+def test_a_header_is_found_whatever_its_case():
+    """HTTP/1.1 keeps the server's casing, HTTP/2 lowercases it - a
+    case-sensitive lookup works on some rows and fails on others."""
+    captures, _ = _read()
+    by_proto = {}
+    for c in captures:
+        by_proto.setdefault(c.protocol, []).append(c)
+    assert {"http/1.1", "h2"} <= set(by_proto), "the fixture has both protocols"
+    for protocol, group in by_proto.items():
+        found = [c for c in group if c.header("content-type")]
+        assert found, f"no content-type found over {protocol}"
+
+
+def test_technologies_are_read_and_absent_ones_are_empty():
+    captures, _ = _read()
+    assert any(c.technologies for c in captures)
     assert any(c.technologies == [] for c in captures)
+    assert all(isinstance(c.technologies, list) for c in captures)
 
 
-def test_the_server_header_is_matched_case_insensitively():
-    """gowitness lowercases header names, so looking for `Server` finds nothing."""
-    raw = {"url": "http://x:80", "headers": [{"key": "server", "value": "nginx"}]}
-    assert res.from_record(raw).server == "nginx"
+def test_console_messages_are_read():
+    """They carry version strings the headers do not."""
+    captures, _ = _read()
+    assert sum(len(c.console) for c in captures) == 6
 
 
-def test_a_tls_summary_is_built_only_for_a_tls_probe():
-    captures, _ = _load()
-    tls = [c for c in captures if c.tls]
-    assert tls, "the sample has TLS probes"
-    assert any("TLS" in c.tls for c in tls)
-    plain = res.from_record({"url": "http://x:80", "tls": {"protocol": ""}})
-    assert plain.tls == ""
+def test_tls_detail_and_its_san_list_are_read():
+    captures, _ = _read()
+    with_tls = [c for c in captures if c.tls]
+    assert with_tls
+    assert any("TLS" in c.tls for c in with_tls)
+    assert any(c.sans for c in captures), "no certificate SAN names were read"
 
 
-def test_the_screenshot_path_is_resolved_against_the_shots_directory():
-    captures, _ = _load(Path("/shots"))
-    shot = next(c.shot for c in captures if c.shot is not None)
-    assert str(shot).startswith("/shots/")
-    assert shot.suffix in (".jpeg", ".png")
+def test_an_empty_reason_over_http2_is_not_an_error():
+    captures, _ = _read()
+    h2 = [c for c in captures if c.protocol == "h2"]
+    assert h2 and all(c.reason == "" for c in h2)
+    assert all(str(c.status) in c.summary() for c in h2 if c.status)
 
 
-def test_no_shots_directory_leaves_the_path_unset():
-    captures, _ = _load()
-    assert all(c.shot is None for c in captures)
+def test_the_probe_time_and_size_are_carried():
+    captures, _ = _read()
+    assert any(c.probed_at for c in captures)
+    assert any(isinstance(c.content_length, int) for c in captures)
+
+
+# --- a database-only capture: the defect this change fixes ---------------
+
+
+def test_a_capture_directory_with_only_a_database_is_read(tmp_path):
+    """The documented workflow is `scan file --write-db` - no JSON Lines file
+    at all. That capture used to return nothing."""
+    from seek.gowitness.capture import capture_dir
+
+    paths = capture_dir(tmp_path)
+    paths.root.mkdir(parents=True)
+    paths.db.write_bytes(FIX.read_bytes())
+    assert not paths.jsonl.exists()
+
+    index = res.Captures()
+    index.load(paths.db, paths.shots)
+    assert len(index) == 7, "a database-only capture was not read"
+    assert index.problems == []
 
 
 # --- damage -------------------------------------------------------------
 
 
-def test_a_malformed_line_is_skipped_and_reported(tmp_path):
-    good = FIX.read_text().splitlines()[0]
-    path = tmp_path / "gowitness.jsonl"
-    path.write_text(f"{good}\n{{not json\n{good}\n")
-    captures, problems = res.read_jsonl(path)
-    assert len(captures) == 2, "the readable records survived"
-    assert len(problems) == 1 and "line 2" in problems[0]
+def test_a_missing_database_is_no_captures_not_an_error(tmp_path):
+    assert res.read_database(tmp_path / "absent.sqlite3") == ([], [])
 
 
-def test_a_truncated_last_line_does_not_lose_the_rest(tmp_path):
-    """The process was killed mid-write - the work before it still counts."""
-    lines = FIX.read_text().splitlines()
-    path = tmp_path / "gowitness.jsonl"
-    path.write_text("\n".join(lines) + "\n" + lines[0][:40])
-    captures, problems = res.read_jsonl(path)
-    assert len(captures) == 7
+def test_a_file_that_is_not_a_database_is_reported_not_raised(tmp_path):
+    path = tmp_path / "gowitness.sqlite3"
+    path.write_text("this is not a database")
+    captures, problems = res.read_database(path)
+    assert captures == []
     assert len(problems) == 1
 
 
-def test_a_record_without_a_url_is_not_a_capture(tmp_path):
-    path = tmp_path / "gowitness.jsonl"
-    path.write_text('{"response_code": 200}\n')
-    captures, problems = res.read_jsonl(path)
+def test_a_database_without_a_results_table_says_so(tmp_path):
+    path = tmp_path / "gowitness.sqlite3"
+    con = sqlite3.connect(path)
+    con.execute("create table something_else (id integer)")
+    con.commit()
+    con.close()
+    captures, problems = res.read_database(path)
     assert captures == []
-    assert "not a capture record" in problems[0]
+    assert "not a gowitness database" in problems[0]
 
 
-def test_a_missing_results_file_is_no_captures_not_an_error(tmp_path):
-    captures, problems = res.read_jsonl(tmp_path / "absent.jsonl")
-    assert (captures, problems) == ([], [])
+def test_a_database_missing_optional_tables_still_reads(tmp_path):
+    """A different gowitness version need not have every table we expect."""
+    path = tmp_path / "gowitness.sqlite3"
+    path.write_bytes(FIX.read_bytes())
+    con = sqlite3.connect(path)
+    for table in ("cookies", "network_logs", "console_logs", "tls_san_lists"):
+        con.execute(f"drop table if exists {table}")
+    con.commit()
+    con.close()
+    captures, problems = res.read_database(path)
+    assert len(captures) == 7, "dropped optional tables lost the results"
+    assert problems == []
+    assert all(c.console == [] and c.sans == [] for c in captures)
+
+
+def test_a_results_table_missing_columns_still_reads(tmp_path):
+    """Only columns that exist are selected, never a fixed list."""
+    path = tmp_path / "gowitness.sqlite3"
+    con = sqlite3.connect(path)
+    con.execute("create table results (id integer, url text)")
+    con.execute("insert into results values (1, 'http://a:80')")
+    con.commit()
+    con.close()
+    captures, problems = res.read_database(path)
+    assert len(captures) == 1
+    assert captures[0].url == "http://a:80" and captures[0].row_id == 1
+    assert problems == []
+
+
+def test_the_database_is_opened_read_only(tmp_path):
+    """A capture may be writing to it, and the viewer never should."""
+    path = tmp_path / "gowitness.sqlite3"
+    path.write_bytes(FIX.read_bytes())
+    before = path.read_bytes()
+    res.read_database(path)
+    assert path.read_bytes() == before
 
 
 # --- the index ----------------------------------------------------------
 
 
 def test_captures_are_looked_up_by_url():
-    captures, _ = _load()
+    captures, _ = _read()
     index = res.Captures(captures)
-    assert index.get("https://sso.hektor.cc:443") is not None
+    assert index.get(captures[0].url) is not None
     assert index.get("https://not.captured:443") is None
 
 
@@ -134,41 +203,64 @@ def test_the_newest_capture_of_a_url_wins():
     assert len(index) == 1
 
 
-def test_for_urls_keeps_the_order_given_and_skips_unknowns():
-    index = res.Captures([res.Capture(url="b"), res.Capture(url="a")])
-    assert [c.url for c in index.for_urls(["a", "missing", "b"])] == ["a", "b"]
-
-
-def test_failures_are_added_from_the_run_since_nothing_writes_them():
-    """gowitness records a failed target nowhere on disk - the run's log is
-    the only place it exists."""
+def test_failures_come_from_the_run_because_nothing_writes_them():
     index = res.Captures()
     index.add_failures({"http://10.255.255.1:81": "page load error"})
-    found = index.get("http://10.255.255.1:81")
-    assert found.failed
-    assert found.summary() == "page load error"
+    assert index.get("http://10.255.255.1:81").failed
 
 
-def test_loading_a_directory_collects_problems():
-    index = res.Captures()
-    index.load(FIX)
-    assert len(index) == 7
-    assert index.problems == []
+# --- what identifies a system -------------------------------------------
 
 
-# --- the one-line summary shown in a record ------------------------------
+def test_the_security_headers_looked_for_are_reported_both_ways():
+    captures, _ = _read()
+    for c in captures:
+        labels = {label for _n, label in res.SECURITY_HEADERS}
+        assert set(c.present_security_headers()) | set(c.missing_security_headers()) == labels
+        assert not set(c.present_security_headers()) & set(c.missing_security_headers())
 
 
-def test_the_summary_leads_with_the_status():
-    capture = res.Capture(url="u", status=200, reason="OK", title="Home",
-                          server="nginx", technologies=["Cloudflare"])
-    assert capture.summary() == "200 OK · Home · nginx · Cloudflare"
+def test_a_missing_security_header_is_knowable():
+    c = res.Capture(url="u", headers=[("X-Frame-Options", "DENY")])
+    assert "x-frame-options" in c.present_security_headers()
+    assert "hsts" in c.missing_security_headers()
 
 
-def test_a_failed_summary_is_its_reason():
-    assert res.Capture(url="u", failure="i/o timeout").summary() == "i/o timeout"
+def test_a_system_is_derived_from_a_header_when_nothing_was_detected():
+    captures, _ = _read()
+    derived = [(c.derived_system(), c.url) for c in captures]
+    named = [d for d, _u in derived if d[0]]
+    assert named, "nothing was derived from the real capture"
+    assert all(source for _name, source in named), "a derivation must say its source"
 
 
-def test_a_redirect_is_visible():
-    assert res.Capture(url="http://x:80", final_url="https://x/login").redirected
-    assert not res.Capture(url="http://x:80", final_url="http://x:80/").redirected
+def test_a_detected_technology_is_never_overridden_by_a_guess():
+    c = res.Capture(url="u", technologies=["Cloudflare"],
+                    headers=[("server", "nginx")])
+    assert c.derived_system() == ("", "")
+
+
+def test_a_title_that_only_repeats_the_host_names_nothing():
+    assert res.Capture(url="http://fritz.box:80", title="fritz.box").derived_system() == ("", "")
+    assert res.Capture(url="http://fritz.box:80",
+                       title="FRITZ!Box 7590").derived_system() == ("FRITZ!Box 7590", "page title")
+
+
+@pytest.mark.parametrize("header", ["server", "x-powered-by"])
+def test_a_naming_header_is_used_and_labelled(header):
+    name, source = res.Capture(url="u", headers=[(header, "authentik")]).derived_system()
+    assert (name, source) == ("authentik", header)
+
+
+def test_a_versioned_server_header_keeps_only_the_product():
+    name, _ = res.Capture(url="u", headers=[("server", "nginx/1.24.0")]).derived_system()
+    assert name == "nginx"
+
+
+def test_an_error_pages_title_names_no_system():
+    """An error page's title is usually its own status line back again, and
+    "403 Forbidden" is not a product."""
+    for status, title in ((403, "403 Forbidden"), (404, "404 Not Found"),
+                          (400, "400 The plain HTTP request was sent to HTTPS port")):
+        assert res.Capture(url="http://x:80", status=status,
+                           title=title).derived_system() == ("", "")

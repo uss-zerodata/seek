@@ -28,7 +28,7 @@ from seek.tui.nmap.app import NmapApp
 pytestmark = pytest.mark.asyncio
 
 FIX = Path(__file__).parent / "fixtures" / "nmap"
-SHOTS = Path(__file__).parent / "fixtures" / "gowitness" / "capture.jsonl"
+SHOTS = Path(__file__).parent / "fixtures" / "gowitness" / "capture.sqlite3"
 
 
 def _app(tmp_path, *, available: bool = True, backend: str = "docker") -> NmapApp:
@@ -292,7 +292,7 @@ async def test_an_external_capture_directory_is_read_at_startup(tmp_path):
     scan history already follows."""
     paths = capture_dir(tmp_path)
     paths.root.mkdir(parents=True)
-    paths.jsonl.write_text(SHOTS.read_text())
+    paths.db.write_bytes(SHOTS.read_bytes())
     app = _app(tmp_path)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause(0.3)
@@ -320,3 +320,157 @@ async def test_a_selection_with_no_http_service_is_refused(tmp_path):
         await pilot.pause(0.4)
         assert app.captures.runs == []
         assert app.query_one(DataTable) is not None
+
+
+# --- the deep link -------------------------------------------------------
+
+
+def _report_url(app) -> str:
+    """The URL `W` would open, without starting anything."""
+    host = app.config.gowitness_report_host
+    port = app.config.gowitness_report_port
+    url = f"http://{host}:{port}"
+    found = [c for c in app._record_captures() if c.row_id]
+    return f"{url}/results/detail/{found[0].row_id}" if len(found) == 1 else url
+
+
+async def test_one_selected_result_deep_links_to_itself(tmp_path):
+    app = _app(tmp_path)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.3)
+        from seek.tui.nmap import detail as detail_pane
+        host, svc = next((h, s) for h in app.scans.hosts for s in h.open_services
+                         if detail_pane._service_urls(s, h))
+        url = detail_pane._service_urls(svc, host)[0]
+        app.shots.add([gw.Capture(url=url, row_id=42, status=200)])
+        app._select_target(svc)
+        await pilot.pause(0.2)
+        if len(app._record_captures()) == 1:
+            assert _report_url(app).endswith("/results/detail/42")
+
+
+async def test_several_results_open_the_gallery(tmp_path):
+    app = _app(tmp_path)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.3)
+        from seek.tui.nmap import detail as detail_pane
+        host = next(h for h in app.scans.hosts for s in h.open_services
+                    if detail_pane._service_urls(s, h))
+        urls = [u for s in host.open_services
+                for u in detail_pane._service_urls(s, host)][:3]
+        app.shots.add([gw.Capture(url=u, row_id=i + 1, status=200)
+                       for i, u in enumerate(urls)])
+        app._select_target(host)
+        await pilot.pause(0.2)
+        if len(app._record_captures()) > 1:
+            assert "/results/detail/" not in _report_url(app)
+
+
+async def test_a_failure_with_no_id_opens_the_gallery(tmp_path):
+    """It was recovered from a run's log; the report server has no row for it."""
+    app = _app(tmp_path)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.3)
+        from seek.tui.nmap import detail as detail_pane
+        host, svc = next((h, s) for h in app.scans.hosts for s in h.open_services
+                         if detail_pane._service_urls(s, h))
+        url = detail_pane._service_urls(svc, host)[0]
+        app.shots.add_failures({url: "connection refused"})
+        app._select_target(svc)
+        await pilot.pause(0.2)
+        assert app.shots.get(url).row_id is None
+        assert "/results/detail/" not in _report_url(app)
+
+
+async def test_the_database_is_what_is_read_at_startup(tmp_path):
+    """The documented external workflow writes a database and no JSON Lines."""
+    from seek.gowitness.capture import capture_dir
+
+    fixture = Path(__file__).parent / "fixtures" / "gowitness" / "capture.sqlite3"
+    paths = capture_dir(tmp_path)
+    paths.root.mkdir(parents=True)
+    paths.db.write_bytes(fixture.read_bytes())
+    app = _app(tmp_path)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.3)
+        assert len(app.shots) == 7
+        assert app.shots.problems == []
+
+
+# --- three bugs found in the field ---------------------------------------
+
+
+async def test_a_capture_row_has_a_report_not_an_empty_pane(tmp_path):
+    """A `CaptureRun` is a `Run`, not a `ScanRun`. An isinstance test against
+    the scan type alone dropped it through to the record renderer, which knows
+    nothing about runs and returned an empty pane - no log, no overview."""
+    app = _app(tmp_path)
+    async with app.run_test(size=(110, 30)) as pilot:
+        await pilot.pause(0.3)
+        shot = _capture(tmp_path, ["http://a:80"])
+        shot.append("INFO result 🤖 target=http://a:80 status-code=200 title=x")
+        app.captures.runs = [shot]
+        app._activate("scans")
+        await pilot.pause(0.4)
+        row = next(r for r in app._rows if r.target is shot)
+        for mode in ("condensed", "diff", "raw"):
+            app._report_mode = mode
+            renderable, title = app._detail_content(row)
+            console = Console(width=90, record=True, file=open("/dev/null", "w"))
+            console.print(renderable)
+            body = console.export_text().strip()
+            assert body, f"the {mode} report was empty"
+            assert "Capture" in title, f"the title called it something else: {title}"
+        assert "http://a:80" in body, "the raw log did not carry the output"
+
+
+async def test_a_run_is_listed_before_it_has_said_anything(tmp_path):
+    """A container backend pulls its image before the tool runs at all. Waiting
+    for the first line to refresh the list left a capture invisible for
+    minutes, which reads as a capture that never started."""
+    app = _app(tmp_path)
+    async with app.run_test(size=(110, 30)) as pilot:
+        await pilot.pause(0.3)
+        seen: list[str] = []
+        shot = _capture(tmp_path, ["http://a:80"])
+
+        async def never_speaks(*_argv, **_kw):
+            raise FileNotFoundError          # settles without producing output
+
+        app._on_run_started = lambda run: seen.append(run.label)
+        await app.captures.run(shot, lambda _l: None, lambda _r: None,
+                               on_start=app._on_run_started)
+        assert seen == ["capture"], "on_start did not fire before any output"
+
+
+async def test_the_start_hook_puts_the_run_on_screen(tmp_path):
+    app = _app(tmp_path)
+    async with app.run_test(size=(110, 30)) as pilot:
+        await pilot.pause(0.3)
+        shot = _capture(tmp_path, ["http://a:80"])
+        app.captures.runs = [shot]
+        app._activate("hosts")
+        await pilot.pause(0.3)
+        app._on_run_started(shot)
+        await pilot.pause(0.4)
+        assert app.view.kind == "scans", "the hook did not switch to the Scans tab"
+        assert any(r.target is shot for r in app._rows)
+
+
+async def test_a_cancelled_capture_still_yields_what_it_managed(tmp_path):
+    """It wrote rows for every URL it reached before it was stopped, and those
+    are results the operator waited for."""
+    from seek.gowitness.capture import capture_dir
+
+    fixture = Path(__file__).parent / "fixtures" / "gowitness" / "capture.sqlite3"
+    app = _app(tmp_path)
+    async with app.run_test(size=(110, 30)) as pilot:
+        await pilot.pause(0.3)
+        paths = capture_dir(tmp_path)
+        paths.root.mkdir(parents=True, exist_ok=True)
+        paths.db.write_bytes(fixture.read_bytes())
+        shot = _capture(tmp_path, ["http://a:80"])
+        shot.state, shot.result = State.CANCELLED, "cancelled"
+        app._on_capture_done(shot)
+        await pilot.pause(0.3)
+        assert len(app.shots) == 7, "a cancelled capture's results were discarded"

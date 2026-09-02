@@ -61,9 +61,10 @@ _GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
     ("Capture (gowitness)", [
         ("x", "the export dialog runs a capture over this view's URLs"),
-        ("", "results land on the host and service records themselves"),
+        ("", "results land on the host and service records themselves;"),
+        ("", "d opens the same record with every header and console line"),
         ("i", "open a capture's screenshot in the system image viewer"),
-        ("W", "serve the whole gallery and open it in a browser"),
+        ("W", "serve the report and open it at the selected result"),
     ]),
     ("Scan", [
         ("n", "new scan: scope, preset, command, then a review before it runs"),

@@ -117,6 +117,10 @@ class Config:
     # Empty: let gowitness fetch its own browser. Set when Chrome is already
     # installed and the download is unwanted.
     gowitness_chrome_path: str = ""
+    # Off by default: gowitness warns that recording response content can
+    # make a capture directory grow without a useful bound, and nothing
+    # shown by default needs it. Affects collection only, never reading.
+    gowitness_collect_all: bool = False
     # name -> nmap arguments. Unlike the other tables this one *replaces* the
     # default when the user defines any: a curated list of the commands you
     # actually run should be exactly what the app offers.
@@ -158,6 +162,7 @@ _SCALAR_KEYS: dict[str, type | tuple[type, ...]] = {
     "gowitness_report_host": str,
     "gowitness_report_port": int,
     "gowitness_chrome_path": str,
+    "gowitness_collect_all": bool,
 }
 # Minimum (and where one is meaningful, maximum) for each numeric key.
 # Types alone were checked before, which let values through that quietly break
@@ -384,6 +389,7 @@ _EXAMPLE_COMMENTS = {
     "gowitness_report_host": "address the gowitness report server binds to",
     "gowitness_report_port": "port the gowitness report server listens on",
     "gowitness_chrome_path": "a Chrome binary for gowitness to use; empty lets it fetch its own",
+    "gowitness_collect_all": "record network logs, cookies and response bodies too (large)",
 }
 
 

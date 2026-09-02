@@ -61,6 +61,9 @@ _MOUNT = "/data"
 # One of these per finished target - the first when it was reached, the second
 # when it was not. Both are needed: they are the only two ways a target ends.
 _RESULT = re.compile(r"\bINFO\b.*\bresult\b.*\btarget=(\S+)")
+# Trailing "see the help" pointers: always last, never the reason.
+_NOISE = re.compile(r"^\s*(run|see) ['\"`]?\S+.*(--help|help\b).*", re.I)
+
 _FAILURE = re.compile(r'failed to witness target\s+target=(\S+)\s+err="?(.*?)"?\s*$')
 
 
@@ -88,8 +91,18 @@ class Paths:
 
 
 def capture_dir(scan_dir: Path) -> Paths:
-    """The capture directory under the directory scans are written to."""
-    return Paths(Path(scan_dir) / CAPTURE_DIRNAME)
+    """The capture directory under the directory scans are written to.
+
+    **Resolved to an absolute path, always.** The viewer is usually opened on a
+    relative directory (`seek nmap test_scans`), and docker reads a relative
+    `-v` source as a *named volume* rather than a host directory - it refuses
+    the run with "includes invalid characters for a local volume name" and a
+    pointer to `docker run --help`, which reads as the app having built a
+    broken command. Resolving here rather than at the mount means the database,
+    the screenshots and the URL file are absolute for every consumer, including
+    the report server and the image viewer.
+    """
+    return Paths((Path(scan_dir) / CAPTURE_DIRNAME).resolve())
 
 
 def write_urls(paths: Paths, urls: list[str]) -> Path:
@@ -101,6 +114,7 @@ def write_urls(paths: Paths, urls: list[str]) -> Path:
 
 
 def scan_argv(probe: Probe, paths: Paths, *, chrome_path: str = "",
+              collect_all: bool = False,
               threads: int = 6, timeout: int = 30, delay: int = 3) -> list[str]:
     """The command that captures `paths.urls`, for whichever backend is in use."""
     seen = _MOUNT if probe.backend == "docker" else str(paths.root)
@@ -108,11 +122,7 @@ def scan_argv(probe: Probe, paths: Paths, *, chrome_path: str = "",
         "scan", "file",
         "-f", f"{seen}/{URLS_NAME}",
         "--write-db", "--write-db-uri", f"sqlite://{seen}/{DB_NAME}",
-        "--write-jsonl", "--write-jsonl-file", f"{seen}/{JSONL_NAME}",
         "--screenshot-path", f"{seen}/{SHOTS_NAME}",
-        # The app reads none of this, and `html` carries a whole response body
-        # per result - the difference between a lean results file and a huge one.
-        "--skip-html", "--skip-network-logs",
         # Not optional: without it an unreachable target is silent in every
         # output the tool has, and "refused" becomes indistinguishable from
         # "never asked".
@@ -121,6 +131,12 @@ def scan_argv(probe: Probe, paths: Paths, *, chrome_path: str = "",
         "--timeout", str(timeout),
         "--delay", str(delay),
     ]
+    if not collect_all:
+        # `html` carries a whole response body per result and the network log a
+        # row per request; gowitness's own help warns this can make storage
+        # explode. Collection only - a database recorded either way reads the
+        # same.
+        flags += ["--skip-html", "--skip-network-logs"]
     if chrome_path:
         flags += ["--chrome-path", chrome_path]
     if probe.backend == "docker":
@@ -208,5 +224,16 @@ class CaptureRun(Run):
         if self.finished:
             # A capture that got some way in and then died has more to say than
             # its last line: what it managed is the useful half.
-            return f"{self.summarise()}, then failed: {super().failure(code, tail)}"
-        return super().failure(code, tail)
+            return f"{self.summarise()}, then failed: {self._why(code, tail)}"
+        return self._why(code, tail)
+
+    def _why(self, code: int, tail: list[str]) -> str:
+        """The most informative line, not simply the last one.
+
+        A tool that refuses its own command line prints the reason and *then* a
+        pointer to its help, so the last line is the least useful thing it
+        said - `Run 'docker run --help' for more information` in place of the
+        line above it explaining what was actually wrong.
+        """
+        useful = [line for line in tail if not _NOISE.search(line)]
+        return super().failure(code, useful or tail)

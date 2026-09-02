@@ -95,13 +95,74 @@ def _capture_under(capture: Capture, indent: int = 8) -> Text:
     # An error page's title is usually just its status again ("403 Forbidden"),
     # and saying it twice on one line reads as a rendering bug.
     title = "" if capture.title.strip().lower() == head.lower() else capture.title
-    rest = [bit for bit in (title, capture.server,
+    rest = [bit for bit in (title, capture.server, capture.powered_by,
                             ", ".join(capture.technologies)) if bit]
+    name, source = capture.derived_system()
+    # Labelled with where it came from: a guess shown as a detection is worse
+    # than no guess. Suppressed when the header it was derived from is already
+    # on the line - saying "authentik · authentik (from x-powered-by)" reads as
+    # a rendering fault, not as extra information.
+    if name and not any(name in bit for bit in rest):
+        rest.append(f"{name} (from {source})")
     if rest:
-        line.append("  ·  " + "  ·  ".join(rest), style=_KEY)
+        line.append("  ·  " + "  ·  ".join(dict.fromkeys(rest)), style=_KEY)
     if capture.redirected:
         line.append(f"  →  {capture.final_url}", style=_KEY)
     return line
+
+
+def _capture_extra(capture: Capture, full: bool) -> list[Text]:
+    """The rest of a capture: a curated line shallow, everything when full."""
+    out: list[Text] = []
+    if capture.failed:
+        return out
+    if capture.tls:
+        out.append(_sub("tls", capture.tls))
+    if not full:
+        # Which security headers were looked for, and which were absent. The
+        # absence is the point: it cannot be noticed by reading a list of the
+        # headers that are present, so it is the half that gets said inline.
+        missing = capture.missing_security_headers()
+        if capture.headers:
+            line = Text(" " * 8)
+            line.append(f"{'headers':<10}", style=_KEY)
+            line.append(f"{len(capture.headers)} collected")
+            if missing:
+                line.append("   ·   missing: ", style=_KEY)
+                line.append(", ".join(missing), style="yellow")
+            out.append(line)
+        return out
+
+    if capture.sans:
+        out.append(_sub("cert", "   ".join(capture.sans)))
+    for label, value in (("content", capture.content_type),
+                         ("length", str(capture.content_length or "")),
+                         ("probed", capture.probed_at[:19]),
+                         ("group", str(capture.perception_group or ""))):
+        if value:
+            out.append(_sub(label, value))
+    missing = capture.missing_security_headers()
+    if missing:
+        line = Text(" " * 8)
+        line.append(f"{'missing':<10}", style=_KEY)
+        line.append(", ".join(missing), style="yellow")
+        out.append(line)
+    for title, items in (("headers", capture.headers),
+                         ("cookies", capture.cookies),
+                         ("console", capture.console)):
+        if not items:
+            continue
+        heading = Text(" " * 8)
+        heading.append(f"{title} ({len(items)})", style=_SECTION)
+        out.append(heading)
+        for key, value in items:
+            row = Text(" " * 10)
+            row.append(f"{key:<28}", style=_KEY)
+            # A folded header (`vary` sends two lines) would otherwise break the
+            # column and read as two entries.
+            row.append(" ".join(str(value).split()))
+            out.append(row)
+    return out
 
 
 def _capture_rows(urls: list[str], shots: Captures | None) -> list[Text]:
@@ -212,7 +273,8 @@ def _state_text(host: Host) -> tuple[str, str]:
     return str(host.state or ABSENT), "bold green"
 
 
-def host_detail(host: Host, shots: Captures | None = None) -> RenderableType:
+def host_detail(host: Host, shots: Captures | None = None,
+                full: bool = False) -> RenderableType:
     state, style = _state_text(host)
     os_text = host.os or ABSENT
     if host.os and host.osclass:
@@ -266,7 +328,7 @@ def host_detail(host: Host, shots: Captures | None = None) -> RenderableType:
 
 
 def service_detail(svc: Service, host: Host | None = None,
-                   shots: Captures | None = None) -> RenderableType:
+                   shots: Captures | None = None, full: bool = False) -> RenderableType:
     state_line = Text()
     state_line.append(f"  {'state':<{_LABEL_W}}", style=_KEY)
     state_line.append(str(svc.state or ABSENT), style="bold green" if svc.is_open else _KEY)
@@ -306,8 +368,7 @@ def service_detail(svc: Service, host: Host | None = None,
             capture = shots.get(url) if shots is not None else None
             if capture is not None:
                 parts.append(_capture_under(capture))
-            if capture is not None and capture.tls:
-                parts.append(_sub("tls", capture.tls))
+                parts.extend(_capture_extra(capture, full))
     if svc.vulnerabilities:
         parts.append(Text(""))
         parts.append(_section("Vulnerabilities", len(svc.vulnerabilities), "bold red"))
@@ -387,13 +448,20 @@ def grouping_detail(group: Grouping) -> RenderableType:
 
 
 def render(target: object, host: Host | None = None,
-           shots: Captures | None = None) -> RenderableType:
+           shots: Captures | None = None, full: bool = False) -> RenderableType:
+    """The record for one row.
+
+    `full` is the reader's depth: the same record, with everything a capture
+    collected laid out rather than summarised. One function, two depths - the
+    reader shows everything the pane shows and may show more, and neither
+    composes its own version of a record.
+    """
     if isinstance(target, ServiceGroup):
         return group_detail(target)
     if isinstance(target, Grouping):
         return grouping_detail(target)
     if isinstance(target, Service):
-        return service_detail(target, host, shots)
+        return service_detail(target, host, shots, full)
     if isinstance(target, Host):
-        return host_detail(target, shots)
+        return host_detail(target, shots, full)
     return Text("")

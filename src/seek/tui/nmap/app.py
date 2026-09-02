@@ -286,9 +286,11 @@ class NmapApp(App[int]):
         # the workflow it exists to serve.
         self.captures = Runner()
         self._report_proc: object | None = None
-        # What has been captured, whoever captured it: the directory is read on
-        # startup so a capture someone else ran is picked up, exactly as the
-        # scan history reads scan files it did not produce.
+        # What has been captured, whoever captured it: the results database is
+        # read on startup so a capture someone else ran is picked up, exactly as
+        # the scan history reads scan files it did not produce. The database is
+        # what an external run leaves - the documented workflow writes it and no
+        # JSON Lines file at all.
         self.shots = gw_results.Captures()
         self._load_captures()
         self._diffs: dict[int, ScanDiff] = {}
@@ -1042,10 +1044,9 @@ class NmapApp(App[int]):
     async def _run_scan(self, run: ScanRun) -> None:
         self._log_frozen = False
         self._report_mode = "raw"
-        self._activate("scans")
-        self._select_target(run)        # focus the live run, not the oldest scan
         self.notify(f"started {run.preset}")
-        await self.runner.run(run, self._on_scan_line, self._on_scan_done)
+        await self.runner.run(run, self._on_scan_line, self._on_scan_done,
+                              on_start=self._on_run_started)
 
     # --- captures ----------------------------------------------------------
 
@@ -1084,8 +1085,10 @@ class NmapApp(App[int]):
             self.notify(f"could not write the URL list: {exc.strerror or exc}",
                         severity="error")
             return
-        argv = gw_capture.scan_argv(self.gowitness, paths,
-                                    chrome_path=self.config.gowitness_chrome_path)
+        argv = gw_capture.scan_argv(
+            self.gowitness, paths,
+            chrome_path=self.config.gowitness_chrome_path,
+            collect_all=self.config.gowitness_collect_all)
         run = gw_capture.CaptureRun(argv=argv, paths=paths, urls=urls,
                                     backend=self.gowitness.backend or "")
         await self._run_capture(run)
@@ -1093,17 +1096,29 @@ class NmapApp(App[int]):
     async def _run_capture(self, run: gw_capture.CaptureRun) -> None:
         self._log_frozen = False
         self._report_mode = "raw"
-        self._activate("scans")
-        self._select_target(run)
         self.notify(f"capturing {run.scope} with gowitness ({run.backend})")
-        await self.captures.run(run, self._on_scan_line, self._on_capture_done)
+        # Shown as soon as it is listed rather than when it first speaks: a
+        # container backend pulls its image before the tool runs at all, and a
+        # capture that is nowhere in the Scans tab for the first few minutes
+        # looks like a capture that never started.
+        await self.captures.run(run, self._on_scan_line, self._on_capture_done,
+                                on_start=self._on_run_started)
+
+    def _on_run_started(self, run) -> None:
+        """Put a just-started run on screen before it has produced anything."""
+        self._activate("scans")
+        self._reload_rows(preserve=True)
+        self._select_target(run)
 
     def _on_capture_done(self, run) -> None:
+        # Read back whatever it managed, whatever became of it: a capture that
+        # was cancelled or died part way still wrote rows for the URLs it had
+        # already reached, and those are results the operator waited for.
+        self._load_captures()
+        # The only place a failed target is recorded: gowitness writes it to
+        # neither the results file nor the database.
+        self.shots.add_failures(run.failures)
         if run.state is State.DONE:
-            self._load_captures()
-            # The only place a failed target is recorded: gowitness writes it
-            # to neither the results file nor the database.
-            self.shots.add_failures(run.failures)
             self.notify(f"capture: {run.result}")
         else:
             self.notify(f"capture: {run.result}",
@@ -1193,6 +1208,15 @@ class NmapApp(App[int]):
         host = self.config.gowitness_report_host
         port = self.config.gowitness_report_port
         url = f"http://{host}:{port}"
+        # Land on the thing the cursor was on. The route is the report's own
+        # client-side one, and the id exists only in the database - the JSON
+        # Lines writer set every id to 0, which is one of the reasons the
+        # database became the source. A failure recovered from a run's log has
+        # no id, so it falls back to the gallery rather than building a link
+        # that would not resolve.
+        found = [c for c in self._record_captures() if c.row_id]
+        if len(found) == 1:
+            url = f"{url}/results/detail/{found[0].row_id}"
         if self._report_proc is None:
             argv = gw_capture.report_argv(self.gowitness, paths, host, port)
             try:
@@ -1213,7 +1237,7 @@ class NmapApp(App[int]):
     def _load_captures(self) -> None:
         """Read the capture directory. Absence is the ordinary case, not an error."""
         paths = gw_capture.capture_dir(self.scan_dir)
-        self.shots.load(paths.jsonl, paths.shots)
+        self.shots.load(paths.db, paths.shots)
 
     def _stop_report_server(self) -> None:
         """Never leave a web server running behind a closed viewer."""
@@ -1402,7 +1426,8 @@ class NmapApp(App[int]):
             return None
         return self._rows[row]
 
-    def _detail_content(self, row: vdefs.Row | None) -> tuple[RenderableType, str]:
+    def _detail_content(self, row: vdefs.Row | None,
+                        full: bool = False) -> tuple[RenderableType, str]:
         """The renderable and a title for the given row's record.
 
         The one place that decides what a row's detail *is* - both the inline
@@ -1413,6 +1438,14 @@ class NmapApp(App[int]):
         if isinstance(target, timeline.Scan):
             return (scan_views.scan_report(target, self._report_mode),
                     f"Scan · {target.label}")
+        if isinstance(target, gw_capture.CaptureRun):
+            # Checked before ScanRun and separately from it: a capture is a
+            # `Run`, not a `ScanRun`, so an isinstance test against the scan
+            # type alone drops it through to the record renderer, which knows
+            # nothing about runs and returns an empty pane.
+            return (scan_views.report(target, self._report_mode, None,
+                                      self._log_frozen),
+                    f"Capture · {target.scope}")
         if isinstance(target, ScanRun):
             return (scan_views.report(target, self._report_mode,
                                       self._diffs.get(id(target)),
@@ -1428,7 +1461,9 @@ class NmapApp(App[int]):
             # the row rather than leaving the pane blank
             return Text(row.text, style="dim"), self.view.title
         title = f"{self.view.title} · {row.cells[0]}" if row is not None else self.view.title
-        return detail_pane.render(target, row.host if row else None, self.shots), title
+        return (detail_pane.render(target, row.host if row else None, self.shots,
+                                   full=full),
+                title)
 
     def _refresh_detail(self) -> None:
         """Show the full record for the highlighted row - the table only has
@@ -1442,11 +1477,14 @@ class NmapApp(App[int]):
         renderable, _title = self._detail_content(row)
         pane.update(renderable)
         if self._reader is not None:
-            # The reader shows exactly what the pane shows, always - this is
-            # what keeps a running scan streaming into an open reader, and a
-            # mode change (`o`) or a freeze toggle (`p`) reflected in it too,
-            # with no separate "is the reader open on this row" bookkeeping.
-            self._reader.update(renderable)
+            # The reader shows everything the pane shows, and may show more -
+            # both come from this one call, so neither can drift into being a
+            # second description of the record. This is also what keeps a
+            # running scan streaming into an open reader, and a mode change
+            # (`o`) or a freeze toggle (`p`) reflected in it, with no separate
+            # "is the reader open on this row" bookkeeping.
+            deep, _ = self._detail_content(row, full=True)
+            self._reader.update(deep)
         if isinstance(target, timeline.Scan):
             self._apply_detail_visibility()
             return
@@ -1468,7 +1506,7 @@ class NmapApp(App[int]):
 
     def _reader_payload(self, row: vdefs.Row | None) -> tuple[str, RenderableType, bool]:
         """What the reader needs to show one row: title, record, follow-tail."""
-        renderable, title = self._detail_content(row)
+        renderable, title = self._detail_content(row, full=True)
         target = row.target if row is not None else None
         # Match the pane's own rule for the same case (`_refresh_detail`'s
         # scroll_end): only a running scan's raw log opens at the newest line.

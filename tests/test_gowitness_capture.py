@@ -8,6 +8,8 @@ The log lines parsed here are verbatim from a real v3 run.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from seek.gowitness.capture import (
     CaptureRun,
     Paths,
@@ -95,7 +97,6 @@ def test_both_backends_ask_for_the_same_writers(tmp_path):
     paths = _paths(tmp_path)
     for argv in (scan_argv(DOCKER, paths), scan_argv(NATIVE, paths)):
         assert "--write-db" in argv
-        assert "--write-jsonl" in argv
         assert "--skip-html" in argv and "--skip-network-logs" in argv
 
 
@@ -188,3 +189,90 @@ def test_the_run_describes_itself_for_the_list(tmp_path):
     assert run.label == "capture"
     assert run.scope == "12 urls"
     assert _run(tmp_path, n=1).scope == "1 url"
+
+
+# --- how much a capture collects ----------------------------------------
+
+
+def test_the_default_capture_skips_the_heavy_writers(tmp_path):
+    """gowitness warns that recording response content can make storage
+    explode, and nothing shown by default needs it."""
+    for probe in (DOCKER, NATIVE):
+        argv = scan_argv(probe, _paths(tmp_path))
+        assert "--skip-html" in argv and "--skip-network-logs" in argv
+
+
+def test_collecting_everything_drops_the_skips(tmp_path):
+    for probe in (DOCKER, NATIVE):
+        argv = scan_argv(probe, _paths(tmp_path), collect_all=True)
+        assert "--skip-html" not in argv and "--skip-network-logs" not in argv
+
+
+def test_the_setting_changes_collection_only(tmp_path):
+    """Everything else about the command is identical, so a database recorded
+    either way is read the same."""
+    off = [a for a in scan_argv(DOCKER, _paths(tmp_path)) if not a.startswith("--skip")]
+    on = scan_argv(DOCKER, _paths(tmp_path), collect_all=True)
+    assert off == on
+
+
+def test_the_results_file_is_no_longer_written(tmp_path):
+    """The JSON Lines reader is gone; a writer nothing reads is dead weight."""
+    argv = scan_argv(DOCKER, _paths(tmp_path))
+    assert "--write-jsonl" not in argv
+    assert not any(a.startswith("--write-jsonl") for a in argv)
+    assert "--write-db" in argv, "the database is still written"
+
+
+# --- the mount must be an absolute path ---------------------------------
+
+
+def test_the_capture_directory_is_absolute_even_from_a_relative_scan_dir():
+    """docker reads a relative `-v` source as a *named volume*, not a host
+    directory: it refuses the run with "includes invalid characters for a local
+    volume name" and points at `docker run --help`, which reads as the app
+    having built a broken command. The viewer is normally opened on a relative
+    directory (`seek nmap test_scans`), so this is the common case, not an edge.
+    """
+    paths = capture_dir(Path("test_scans"))
+    assert paths.root.is_absolute()
+    for path in (paths.urls, paths.db, paths.jsonl, paths.shots):
+        assert path.is_absolute()
+
+
+def test_the_docker_mount_source_is_absolute():
+    argv = scan_argv(DOCKER, capture_dir(Path("relative/dir")))
+    source = argv[argv.index("-v") + 1].rsplit(":", 1)[0]
+    assert Path(source).is_absolute(), f"docker would treat {source!r} as a volume name"
+
+
+def test_the_native_command_also_gets_absolute_paths():
+    argv = scan_argv(NATIVE, capture_dir(Path("relative/dir")))
+    assert Path(argv[argv.index("-f") + 1]).is_absolute()
+
+
+def test_the_report_server_mount_is_absolute():
+    argv = report_argv(DOCKER, capture_dir(Path("relative/dir")), "127.0.0.1", 7171)
+    source = argv[argv.index("-v") + 1].rsplit(":", 1)[0]
+    assert Path(source).is_absolute()
+
+
+def test_a_help_pointer_is_not_what_the_run_list_reports(tmp_path):
+    """A tool that refuses its command line prints the reason and *then* points
+    at its help, so the last line is the least useful thing it said."""
+    run = _run(tmp_path, n=1)
+    tail = [
+        'docker: Error response from daemon: create x: "x" includes invalid '
+        "characters for a local volume name",
+        "Run 'docker run --help' for more information",
+    ]
+    reported = run.failure(125, tail)
+    assert "invalid characters" in reported
+    assert "--help" not in reported
+
+
+def test_the_last_line_is_still_used_when_it_is_all_there_is(tmp_path):
+    run = _run(tmp_path, n=1)
+    assert "boom" in run.failure(1, ["boom"])
+    # even a lone help pointer beats saying nothing
+    assert run.failure(1, ["Run 'docker run --help' for more information"])

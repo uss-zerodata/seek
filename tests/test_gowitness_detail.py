@@ -44,7 +44,7 @@ def http_service():
 def test_a_captured_url_is_annotated_under_itself(http_service):
     host, svc, urls = http_service
     shots = gw.Captures([gw.Capture(url=urls[0], status=200, reason="OK",
-                                    title="Home", server="nginx",
+                                    title="Home", headers=[("server", "nginx")],
                                     technologies=["Cloudflare"])])
     text = _text(detail.service_detail(svc, host, shots))
     assert urls[0] in text
@@ -158,3 +158,117 @@ def test_the_number_is_printed_whatever_the_colour(http_service):
     host, svc, urls = http_service
     shots = gw.Captures([gw.Capture(url=urls[0], status=404, reason="Not Found")])
     assert "404" in _text(detail.service_detail(svc, host, shots))
+
+
+# --- two depths ----------------------------------------------------------
+
+
+def _rich_capture(url: str) -> gw.Capture:
+    return gw.Capture(
+        url=url, row_id=7, status=200, reason="OK", title="Login",
+        protocol="h2", probed_at="2026-09-02 14:17:50", content_length=50,
+        perception_group=2, technologies=[],
+        headers=[("content-type", "text/html; charset=utf-8"),
+                 ("x-powered-by", "authentik"),
+                 ("x-frame-options", "DENY"),
+                 ("vary", "Accept-Encoding\nAccept-Language")],
+        cookies=[("session", "abc")],
+        console=[("console.debug", "authentik(early): version 2026.5.6")],
+        tls="TLS 1.3 · AES_128_GCM", sans=["sso.example"])
+
+
+def test_the_pane_summarises_and_the_reader_lays_out(http_service):
+    """The reader shows everything the pane shows, and may show more."""
+    host, svc, urls = http_service
+    shots = gw.Captures([_rich_capture(urls[0])])
+    shallow = _text(detail.service_detail(svc, host, shots, full=False))
+    deep = _text(detail.service_detail(svc, host, shots, full=True))
+
+    # everything the pane says, the reader says too
+    assert "200 OK" in shallow and "200 OK" in deep
+    assert "TLS 1.3" in shallow and "TLS 1.3" in deep
+    # and the reader says more
+    assert "x-powered-by" not in shallow, "a full header list reached the pane"
+    assert "x-powered-by" in deep
+    assert "authentik(early): version" in deep, "console messages are in the reader"
+    assert "authentik(early)" not in shallow
+
+
+def test_the_pane_counts_headers_without_listing_them(http_service):
+    host, svc, urls = http_service
+    shots = gw.Captures([_rich_capture(urls[0])])
+    shallow = _text(detail.service_detail(svc, host, shots, full=False))
+    assert "4 collected" in shallow
+
+
+def test_a_missing_security_header_is_visible_at_both_depths(http_service):
+    """An absence cannot be noticed by reading a list of what is present."""
+    host, svc, urls = http_service
+    shots = gw.Captures([_rich_capture(urls[0])])
+    for full in (False, True):
+        text = _text(detail.service_detail(svc, host, shots, full=full))
+        assert "hsts" in text and "csp" in text
+
+
+def test_cookies_and_certificate_names_reach_the_reader(http_service):
+    host, svc, urls = http_service
+    shots = gw.Captures([_rich_capture(urls[0])])
+    deep = _text(detail.service_detail(svc, host, shots, full=True))
+    assert "session" in deep
+    assert "sso.example" in deep
+
+
+def test_a_folded_header_value_stays_on_one_line(http_service):
+    """`vary` can arrive with a newline in it, which would break the column."""
+    host, svc, urls = http_service
+    shots = gw.Captures([_rich_capture(urls[0])])
+    deep = _text(detail.service_detail(svc, host, shots, full=True))
+    line = next(x for x in deep.splitlines() if "Accept-Encoding" in x)
+    assert "Accept-Language" in line
+
+
+def test_a_derived_system_says_where_it_came_from(http_service):
+    """The label earns its place when the name comes from somewhere the record
+    does not already show - an identifying header that is not `server`."""
+    host, svc, urls = http_service
+    capture = gw.Capture(url=urls[0], status=200, reason="OK",
+                         headers=[("x-authentik-id", "abc123")])
+    text = _text(detail.service_detail(svc, host, gw.Captures([capture])))
+    assert "abc123" in text
+    assert "from x-authentik-id" in text, "a guess must be labelled as one"
+
+
+def test_a_derived_name_is_not_repeated_beside_the_header_it_came_from(http_service):
+    host, svc, urls = http_service
+    capture = gw.Capture(url=urls[0], status=200, reason="OK",
+                         headers=[("x-powered-by", "authentik")])
+    text = _text(detail.service_detail(svc, host, gw.Captures([capture])))
+    assert text.count("authentik") == 1, "the same name was printed twice"
+
+
+def test_a_detected_technology_is_shown_without_a_guess_beside_it(http_service):
+    host, svc, urls = http_service
+    capture = gw.Capture(url=urls[0], status=200, reason="OK",
+                         technologies=["Cloudflare"],
+                         headers=[("server", "cloudflare")])
+    text = _text(detail.service_detail(svc, host, gw.Captures([capture])))
+    assert "Cloudflare" in text
+    assert "from server" not in text
+
+
+def test_a_record_with_no_captures_gains_nothing_at_either_depth(http_service):
+    host, svc, _urls = http_service
+    for full in (False, True):
+        text = _text(detail.service_detail(svc, host, gw.Captures(), full=full))
+        assert "headers" not in text.lower().split("scripts")[0]
+        assert "Captures" not in _text(detail.host_detail(host, gw.Captures(), full))
+
+
+def test_a_failed_capture_shows_no_metadata_block(http_service):
+    """There is nothing to lay out - it never answered."""
+    host, svc, urls = http_service
+    shots = gw.Captures()
+    shots.add_failures({urls[0]: "connection refused"})
+    deep = _text(detail.service_detail(svc, host, shots, full=True))
+    assert "connection refused" in deep
+    assert "collected" not in deep
