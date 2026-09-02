@@ -140,15 +140,21 @@ class ChoiceScreen(ModalScreen[str | None]):
     ChoiceScreen #keys { color: $text-muted; }
     """
 
-    def __init__(self, prompt: str, choices: list[tuple[str, str]]) -> None:
+    def __init__(self, prompt: str, choices: list[tuple[str, str]],
+                 disabled: set[str] | None = None) -> None:
         super().__init__()
         self._prompt = prompt
         self._choices = choices
+        # Shown but unpickable, rather than dropped: a choice that vanishes
+        # when its tool is missing teaches nothing, while one that stays and
+        # says why teaches what to install.
+        self._disabled = disabled or set()
 
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Label(self._prompt)
-            yield OptionList(*[Option(label, id=cid) for cid, label in self._choices])
+            yield OptionList(*[Option(label, id=cid, disabled=cid in self._disabled)
+                               for cid, label in self._choices])
             yield Label("↑↓ move · ↵ choose · Esc cancel", id="keys")
 
     def on_mount(self) -> None:
@@ -160,6 +166,8 @@ class ChoiceScreen(ModalScreen[str | None]):
 
     def choose(self, choice_id: str) -> None:
         """Pick by id without pointing at it - for the command palette and tests."""
+        if choice_id in self._disabled:
+            return
         self.dismiss(choice_id)
 
     def action_cancel(self) -> None:

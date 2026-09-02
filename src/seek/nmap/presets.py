@@ -389,6 +389,10 @@ DEFAULT_PRESETS: dict[str, str] = {
     "05 · Names, from service detection (certs, redirects, NTLM)": "-vv -T4 -Pn -sV -p{ports} --script ssl-cert,http-title,http-headers,rdp-ntlm-info,smb-os-discovery,nbstat,ldap-rootdse,ssl-cert-intaddr",  # noqa: E501
     "05 · Names, from certificates (queries crt.sh)": "-vv -T4 -Pn -sV -p{ports} --script hostmap-crtsh",  # noqa: E501
     "05 · Names, from virtual hosts (brute force, noisy)": "-vv -T4 -Pn -p80,443,8080,8443 --script http-vhosts",  # noqa: E501
+
+    "06 · Creds, anon and default logins": "-vv -T4 -n -Pn -p{ports} --script auth",
+    "06 · Creds, brute force logins": "-vv -T4 -n -Pn -p{ports} --script brute",
+
 }
 
 PORTS_PLACEHOLDER = "{ports}"

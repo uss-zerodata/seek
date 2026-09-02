@@ -70,7 +70,8 @@ yourself replaces the drill-down. The filter box uses the same fuzzy grammar (`'
 | `s` | statistics · `b` group by · `u` reachable only |
 | `m` `M` | mark the selected row · clear every mark |
 | `n` | new scan · `o` report view · `p` freeze log · `c` cancel |
-| `x` | export · `?` help · `q` quit |
+| `x` | export, or capture the URLs with gowitness · `?` help · `q` quit |
+| `i` | open a capture's screenshot · `W` serve the capture gallery |
 | `Ctrl+P` | command palette — every action above, searchable by name |
 | `Esc` | leave filter → clear it → back one level → quit |
 
@@ -226,6 +227,31 @@ active search carries across, recounted against each entry, which is the fast
 way to find which host a term actually appears on. The list moves with you:
 leaving the reader lands on the entry you last read, not the one you opened it
 from.
+
+**Screenshot the web servers with gowitness.** The export dialog's last entry
+hands the URL list to [gowitness](https://github.com/sensepost/gowitness)
+instead of writing it to a file, and what comes back lands on the host and
+service records themselves: HTTP status, page title, server, detected
+technologies, a TLS summary, and the screenshot's path. `i` opens one
+screenshot in your image viewer; `W` serves the whole gallery and opens a
+browser. A running capture appears in the Scans tab beside nmap runs, streams
+its output, and can be cancelled — and it may run *while* a scan runs, since
+screenshotting and port scanning do not contend.
+
+It runs in docker by default (`ghcr.io/sensepost/gowitness`, pulled on first
+use) and falls back to a `gowitness` on `PATH`; `gowitness_mode` pins one or
+the other, and a pinned backend never silently falls back. The status bar names
+which is in use, or says `not found` — the export entry stays visible either
+way, with the reason, rather than disappearing. Artefacts go to a `gowitness/`
+directory beside your scans, in gowitness's own formats, so
+`gowitness report server` works on them exactly as it would on a capture you
+ran yourself — and a capture directory produced outside seek is read on start
+up, the same way external scan files are.
+
+The URLs seek sends carry a scheme and an explicit port, which matters more
+than it looks: given a bare name gowitness probes it across http/https × 80/443
+on its own, so two names become seven probes. Sending complete URLs means one
+probe per open port you actually found, and one result per service.
 
 **Export** produces the lists you feed to the next command, from whatever the
 filter has narrowed to: host addresses, open ports comma-separated (the form

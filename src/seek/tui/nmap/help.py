@@ -57,6 +57,13 @@ _GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("x", "export the marked rows, or the rows on screen when none are"),
         ("", "hosts, ports, host:port, URLs, or your own fields"),
         ("", "as plain text, CSV or JSON"),
+        ("", "— or hand the URLs to gowitness and capture them"),
+    ]),
+    ("Capture (gowitness)", [
+        ("x", "the export dialog runs a capture over this view's URLs"),
+        ("", "results land on the host and service records themselves"),
+        ("i", "open a capture's screenshot in the system image viewer"),
+        ("W", "serve the whole gallery and open it in a browser"),
     ]),
     ("Scan", [
         ("n", "new scan: scope, preset, command, then a review before it runs"),

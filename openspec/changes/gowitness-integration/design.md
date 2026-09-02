@@ -43,6 +43,31 @@ Fields used per record: `url`, `final_url`, `response_code`, `response_reason`,
 response body per result and is the difference between a lean results file and
 a huge one. Neither is needed for anything shown.
 
+**Correction, found while implementing: a failure is not a result.** The spec
+requires that a result which failed is carried with its reason. The `failed` and
+`failed_reason` fields in the JSONL schema suggested that would come from the
+results file. It does not. Measured against v3, a target that cannot be loaded
+writes **no JSONL record at all**, and without `--log-scan-errors` it produces
+no output of any kind — a host that refused is indistinguishable from one that
+was never asked:
+
+| flag | unreachable target produces |
+|---|---|
+| (default) | nothing — no record, no line |
+| `--log-scan-errors` | `ERRO failed to witness target target=<url> err="<reason>"` |
+
+So `--log-scan-errors` is mandatory rather than a verbosity preference, and
+failures are recovered from the run's log, not its results file. Two
+consequences follow:
+
+- the progress counter must count *two* different lines to know how many
+  targets are done, which is why `CaptureRun.finished` is captured + failed
+  rather than a single counter;
+- an **externally produced** capture directory yields successes only. gowitness
+  records a failure nowhere on disk, so there is nothing to read back. This is
+  a limit of the tool, not of the reader, and the reader must not present the
+  absence of a failed URL as evidence that it succeeded.
+
 ## Architecture
 
 ### Where the code goes

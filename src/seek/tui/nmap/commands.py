@@ -45,6 +45,12 @@ _STATIC: list[tuple[str, str, str, object]] = [
     ("Clear marks", "Drop every mark (M)", "action_clear_marks", None),
     ("Export", "The marks, or this view — fields and format are yours (x)",
      "action_export", None),
+    ("Capture screenshots", "Run gowitness over this view's URLs (x)",
+     "action_export", None),
+    ("Open a screenshot", "The selected row's capture, in an image viewer (i)",
+     "action_open_shot", None),
+    ("Web report", "Serve the capture gallery and open a browser (W)",
+     "action_report_server", None),
     ("Help", "Key reference (?)", "action_help", None),
     ("Quit", "Leave the viewer (q)", "action_quit_now", None),
 ]

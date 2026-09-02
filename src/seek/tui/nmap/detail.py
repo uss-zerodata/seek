@@ -15,6 +15,7 @@ from __future__ import annotations
 from rich.console import Group, RenderableType
 from rich.text import Text
 
+from seek.gowitness.results import Capture, Captures
 from seek.nmap import names as name_mod
 from seek.nmap import vulns
 from seek.nmap.export import service_url, url_for
@@ -58,6 +59,76 @@ def _bullet(body: str, style: str = "", indent: int = 4) -> Text:
     text.append("• ", style=_KEY)
     text.append(body, style=style)
     return text
+
+
+def _status_style(capture: Capture) -> str:
+    """Colour reinforces the status code; it never replaces it.
+
+    The number is the information - it is printed either way, and a reader who
+    cannot tell the colours apart loses nothing but speed.
+    """
+    if capture.failed or capture.status is None:
+        return "red"
+    if capture.status >= 500:
+        return "red"
+    if capture.status >= 400:
+        return "yellow"
+    if capture.status >= 300:
+        return "cyan"
+    return "green"
+
+
+def _capture_under(capture: Capture, indent: int = 8) -> Text:
+    """What a captured URL answered, as a continuation line under it.
+
+    A dim line under the URL rather than a wide column beside it: the pane is
+    narrow on a split terminal, and a status code that needs horizontal
+    scrolling to reach is a status code nobody reads.
+    """
+    line = Text(" " * indent)
+    if capture.failed:
+        line.append("✗ ", style="red")
+        line.append(capture.failure, style="red")
+        return line
+    head = f"{capture.status} {capture.reason}".strip() if capture.status else "no status"
+    line.append(head, style=_status_style(capture))
+    # An error page's title is usually just its status again ("403 Forbidden"),
+    # and saying it twice on one line reads as a rendering bug.
+    title = "" if capture.title.strip().lower() == head.lower() else capture.title
+    rest = [bit for bit in (title, capture.server,
+                            ", ".join(capture.technologies)) if bit]
+    if rest:
+        line.append("  ·  " + "  ·  ".join(rest), style=_KEY)
+    if capture.redirected:
+        line.append(f"  →  {capture.final_url}", style=_KEY)
+    return line
+
+
+def _capture_rows(urls: list[str], shots: Captures | None) -> list[Text]:
+    """The `Captures` block of a host: one aligned line per captured URL.
+
+    Status first and padded, because the question this block answers is "which
+    of these is worth looking at" - and that is read down a column, not along
+    a sentence.
+    """
+    if shots is None:
+        return []
+    found = shots.for_urls(urls)
+    if not found:
+        return []
+    rows = [_section("Captures", len(found))]
+    width = max(len(u.url) for u in found)
+    for capture in found:
+        line = Text(" " * 4)
+        line.append("• ", style=_KEY)
+        code = "✗" if capture.failed else str(capture.status or "—")
+        line.append(f"{code:<4}", style=_status_style(capture))
+        line.append(f"{capture.url:<{width}}")
+        tail = capture.failure if capture.failed else capture.title
+        if tail:
+            line.append(f"   {tail}", style=_KEY)
+        rows.append(line)
+    return rows
 
 
 def _sub(label: str, value: str, indent: int = 8) -> Text:
@@ -141,7 +212,7 @@ def _state_text(host: Host) -> tuple[str, str]:
     return str(host.state or ABSENT), "bold green"
 
 
-def host_detail(host: Host) -> RenderableType:
+def host_detail(host: Host, shots: Captures | None = None) -> RenderableType:
     state, style = _state_text(host)
     os_text = host.os or ABSENT
     if host.os and host.osclass:
@@ -176,6 +247,12 @@ def host_detail(host: Host) -> RenderableType:
         parts.append(_section("Services", len(host.open_services)))
         for svc in host.open_services:
             parts.append(_bullet(svc.label()))
+    every_url = [url for svc in host.open_services
+                 for url in _service_urls(svc, host)]
+    captures = _capture_rows(list(dict.fromkeys(every_url)), shots)
+    if captures:
+        parts.append(Text(""))
+        parts.extend(captures)
     found = vulns.host_vulnerabilities(host)
     if found:
         parts.append(Text(""))
@@ -188,7 +265,8 @@ def host_detail(host: Host) -> RenderableType:
     return Group(*parts)
 
 
-def service_detail(svc: Service, host: Host | None = None) -> RenderableType:
+def service_detail(svc: Service, host: Host | None = None,
+                   shots: Captures | None = None) -> RenderableType:
     state_line = Text()
     state_line.append(f"  {'state':<{_LABEL_W}}", style=_KEY)
     state_line.append(str(svc.state or ABSENT), style="bold green" if svc.is_open else _KEY)
@@ -223,6 +301,13 @@ def service_detail(svc: Service, host: Host | None = None) -> RenderableType:
         parts.append(_section("URLs", len(urls)))
         for url in urls:
             parts.append(_bullet(url))
+            # Silence, not "not captured": before any capture has been run
+            # every URL in the project would carry the same empty note.
+            capture = shots.get(url) if shots is not None else None
+            if capture is not None:
+                parts.append(_capture_under(capture))
+            if capture is not None and capture.tls:
+                parts.append(_sub("tls", capture.tls))
     if svc.vulnerabilities:
         parts.append(Text(""))
         parts.append(_section("Vulnerabilities", len(svc.vulnerabilities), "bold red"))
@@ -301,13 +386,14 @@ def grouping_detail(group: Grouping) -> RenderableType:
     return Group(*parts)
 
 
-def render(target: object, host: Host | None = None) -> RenderableType:
+def render(target: object, host: Host | None = None,
+           shots: Captures | None = None) -> RenderableType:
     if isinstance(target, ServiceGroup):
         return group_detail(target)
     if isinstance(target, Grouping):
         return grouping_detail(target)
     if isinstance(target, Service):
-        return service_detail(target, host)
+        return service_detail(target, host, shots)
     if isinstance(target, Host):
-        return host_detail(target)
+        return host_detail(target, shots)
     return Text("")

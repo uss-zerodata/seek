@@ -102,6 +102,11 @@ src/seek/
     app.py          NmapApp: table + detail pane, one filter, one breadcrumb
     scans.py        the Scans tab: run list + the three report modes
     scope.py        scope editor, editable command, the review before it runs
+  gowitness/
+    detect.py       docker or native, or neither - never raises
+    capture.py      one argv for both backends, output layout, the CaptureRun
+    results.py      the JSONL contract -> Capture records, indexed by URL
+  runner.py         supervision shared by every tool: stream, cancel, settle
 tests/              pytest; conftest.py has the `tree` / `symlink_loop` fixtures
 tests/fixtures/nmap/  synthetic scan XML (no real addresses)
 ```
@@ -304,6 +309,29 @@ stdout, `cd`) cannot run while Textual owns the screen. They set
   the wrong fix - the key would have been consumed and the modal would still
   never see it. Any `priority=True` binding is a modal leak until it is
   scoped.
+- **A tool's results annotate the list that already shows its subject; they do
+  not get a parallel section.** A service's record already listed every URL it
+  answers on (`_service_urls` - the address plus every name, because virtual
+  hosting means they serve different things). gowitness captures exactly those
+  URLs, so a capture is a dim continuation line *under its own URL*, not a
+  second "Captures" block listing the same URLs again with statuses. The host
+  record does get a block, because there the question is "which of these forty
+  is worth looking at" and that is read down a status column. Before reaching
+  for a new section - or a new tab - check whether the thing the new data
+  describes is already on screen.
+- **One `Runner` slot per tool is the whole concurrency design.** A `Runner`
+  supervises one run, so `self.runner` (nmap) and `self.captures` (gowitness)
+  give "serial within a tool, concurrent across tools" with no scheduler and no
+  locks. nmap's one-at-a-time rule exists because concurrent scans corrupt each
+  other's timing data; that reasoning does not reach HTTP screenshotting, and a
+  capture that had to wait out a `-p-` would be useless in the workflow it
+  exists for. Anything that asks "is something running" must ask both -
+  the quit guard, `on_unmount`, and the run count in the status bar.
+- **A tool's absence is a state to render, not an entry to hide.** The capture
+  entry stays in the export dialog when gowitness is missing, disabled, with
+  the reason as its label; the status bar carries `◉ gowitness not found`. A
+  feature that vanishes teaches nothing about why. `ChoiceScreen` takes a
+  `disabled` set for exactly this.
 - **A modal offers choices as an `OptionList`, never a stack of `Button`s.**
   Textual buttons are three rows tall: six export recipes needed more than
   twenty, ran off a 24-row terminal, and put the last choice out of reach with

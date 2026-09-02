@@ -107,6 +107,16 @@ class Config:
     theme: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_THEME))
     nmap_path: str = "nmap"
     scan_output_dir: str = ""      # empty: the directory the viewer was opened on
+    # How to run gowitness. "auto" prefers the container and falls back to a
+    # native binary; naming one pins it, and a pinned backend never falls back.
+    gowitness_mode: str = "auto"
+    gowitness_path: str = "gowitness"
+    gowitness_image: str = "ghcr.io/sensepost/gowitness"
+    gowitness_report_host: str = "127.0.0.1"
+    gowitness_report_port: int = 7171
+    # Empty: let gowitness fetch its own browser. Set when Chrome is already
+    # installed and the download is unwanted.
+    gowitness_chrome_path: str = ""
     # name -> nmap arguments. Unlike the other tables this one *replaces* the
     # default when the user defines any: a curated list of the commands you
     # actually run should be exactly what the app offers.
@@ -142,6 +152,12 @@ _SCALAR_KEYS: dict[str, type | tuple[type, ...]] = {
     "default_editor": str,
     "nmap_path": str,
     "scan_output_dir": str,
+    "gowitness_mode": str,
+    "gowitness_path": str,
+    "gowitness_image": str,
+    "gowitness_report_host": str,
+    "gowitness_report_port": int,
+    "gowitness_chrome_path": str,
 }
 # Minimum (and where one is meaningful, maximum) for each numeric key.
 # Types alone were checked before, which let values through that quietly break
@@ -160,6 +176,13 @@ _RANGES: dict[str, tuple[int, int | None]] = {
     "publish_interval_ms": (0, 60_000),
     "format_min_line": (1, None),
     "content_cache_budget": (0, None),
+    "gowitness_report_port": (1, 65_535),
+}
+
+# Keys whose value must be one of a fixed set. A typo in one of these is not a
+# preference, it is a setting that will not do what it says.
+_CHOICES: dict[str, tuple[str, ...]] = {
+    "gowitness_mode": ("auto", "docker", "native"),
 }
 
 _LIST_KEYS = {"exclude_globs", "noise_dirs", "format_extensions"}
@@ -194,6 +217,10 @@ def _validate(raw: dict, source: Path) -> Config:
             if value < low or (high is not None and value > high):
                 allowed = f"at least {low}" if high is None else f"between {low} and {high}"
                 raise ConfigError(f"{source}: '{key}' must be {allowed}, got {value}")
+        choices = _CHOICES.get(key)
+        if choices is not None and value not in choices:
+            raise ConfigError(f"{source}: '{key}' must be one of "
+                              f"{', '.join(choices)}, got {value!r}")
         setattr(cfg, key, value)
     for key in _LIST_KEYS:
         if key not in raw:
@@ -351,6 +378,12 @@ _EXAMPLE_COMMENTS = {
     "default_editor": "which [editors] entry the editor action uses",
     "nmap_path": "the nmap program to run (looked up on PATH when not a path)",
     "scan_output_dir": "where scans write; empty means the directory the viewer was opened on",
+    "gowitness_mode": "how to run gowitness: auto (docker, then native), docker, or native",
+    "gowitness_path": "the gowitness program to run, for the native backend",
+    "gowitness_image": "the container image to run, for the docker backend",
+    "gowitness_report_host": "address the gowitness report server binds to",
+    "gowitness_report_port": "port the gowitness report server listens on",
+    "gowitness_chrome_path": "a Chrome binary for gowitness to use; empty lets it fetch its own",
 }
 
 

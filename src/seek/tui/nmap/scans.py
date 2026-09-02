@@ -20,9 +20,11 @@ from datetime import datetime
 from rich.console import Group, RenderableType
 from rich.text import Text
 
+from seek.gowitness.capture import CaptureRun
 from seek.nmap import timeline
 from seek.nmap.diff import ScanDiff
 from seek.nmap.runner import ScanRun, State
+from seek.runner import Run
 from seek.tui.nmap.views import Row
 
 # (columns, default sort) for the Scans tab; the View is built by the app so its
@@ -62,7 +64,7 @@ def _when(start: int | None) -> str:
     return datetime.fromtimestamp(start).strftime("%m-%d %H:%M")
 
 
-def history_rows(history: list[timeline.Scan], live: list[ScanRun]) -> list[Row]:
+def history_rows(history: list[timeline.Scan], live: list[Run]) -> list[Row]:
     """Rows for the file history plus any live run without a file yet.
 
     Pure and recomputed each refresh: `history` is cached by the caller (it
@@ -80,11 +82,11 @@ def history_rows(history: list[timeline.Scan], live: list[ScanRun]) -> list[Row]
     for run in live:
         result = run.progress() if run.running else run.result
         out.append(Row(
-            cells=(f"{_STATE_GLYPH[run.state]} {run.preset}", run.scope,
+            cells=(f"{_STATE_GLYPH[run.state]} {run.label}", run.scope,
                    str(run.state), elapsed(run.elapsed), result),
-            text=f"{run.preset} {run.scope} {run.state} {result}",
+            text=f"{run.label} {run.scope} {run.state} {result}",
             target=run,
-            sort_key=(_NOW, run.preset, str(run.state), run.elapsed, result),
+            sort_key=(_NOW, run.label, str(run.state), run.elapsed, result),
         ))
     return out
 
@@ -128,16 +130,18 @@ def scan_report(scan: timeline.Scan, mode: str) -> RenderableType:
     return Group(header, Text(), *lines)
 
 
-def report(run: ScanRun, mode: str, changes: ScanDiff | None,
+def report(run: Run, mode: str, changes: ScanDiff | None,
            frozen: bool = False) -> RenderableType:
     """A live in-app run, read the way `mode` asks for."""
+    if isinstance(run, CaptureRun):
+        return capture_report(run, mode, frozen)
     note = ""
     style = _KEY
     if mode == "raw" and run.running:
         # A frozen log must never be mistaken for a paused scan.
         note = "frozen — the scan is still running" if frozen else "following"
         style = "bold bright_yellow" if frozen else _KEY
-    header = _mode_header(mode, trailer=run.preset, note=note, note_style=style)
+    header = _mode_header(mode, trailer=run.label, note=note, note_style=style)
 
     if mode == "raw":
         return Group(header, *_log_lines(run))
@@ -147,7 +151,65 @@ def report(run: ScanRun, mode: str, changes: ScanDiff | None,
     return Group(header, Text(), *_condensed_lines(run, changes))
 
 
-def _log_lines(run: ScanRun) -> list[Text]:
+def capture_report(run: CaptureRun, mode: str, frozen: bool = False) -> RenderableType:
+    """A capture, read three ways - the same three a scan reads.
+
+    "diff" here is what this capture found rather than what changed about the
+    network: a capture is a reading of one moment, and the useful comparison is
+    between what answered and what did not.
+    """
+    note = ""
+    style = _KEY
+    if mode == "raw" and run.running:
+        note = "frozen — the capture is still running" if frozen else "following"
+        style = "bold bright_yellow" if frozen else _KEY
+    header = _mode_header(mode, trailer=f"capture · {run.backend}",
+                          note=note, note_style=style)
+    if mode == "raw":
+        return Group(header, *_log_lines(run))
+    if mode == "diff":
+        return Group(header, Text(), *_capture_failures(run))
+    return Group(header, Text(), *_capture_overview(run))
+
+
+def _capture_overview(run: CaptureRun) -> list[Text]:
+    lines = [
+        _pair("targets", str(run.total)),
+        _pair("captured", str(run.captured)),
+        _pair("failed", str(run.failed)),
+        _pair("backend", run.backend or "—"),
+        _pair("output", str(run.paths.root)),
+    ]
+    if run.running:
+        lines.append(_pair("progress", run.progress()))
+    return lines
+
+
+def _capture_failures(run: CaptureRun) -> list[Text]:
+    """What did not answer. gowitness records this nowhere on disk, so this is
+    the only place it can be read."""
+    if not run.failures:
+        text = "nothing failed" if not run.running else "nothing has failed yet"
+        return [Text(f"  {text}", style=_KEY)]
+    out = [Text(f"  {len(run.failures)} target(s) could not be captured",
+                style="bold")]
+    for url, why in run.failures.items():
+        line = Text("    ")
+        line.append("✗ ", style="red")
+        line.append(f"{url}  ")
+        line.append(why, style=_KEY)
+        out.append(line)
+    return out
+
+
+def _pair(label: str, value: str) -> Text:
+    text = Text("  ")
+    text.append(f"{label:<10}", style=_KEY)
+    text.append(value)
+    return text
+
+
+def _log_lines(run: Run) -> list[Text]:
     lines: list[Text] = []
     if run.dropped:
         lines.append(Text(f"  … {run.dropped} earlier line(s) dropped", style=_KEY))

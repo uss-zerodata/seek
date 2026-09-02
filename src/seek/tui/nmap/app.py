@@ -8,6 +8,8 @@ the files named on the command line are the whole truth for the run.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,12 +27,15 @@ from textual.widgets import DataTable, Input, Static, Tab, Tabs
 from seek import actions
 from seek.config import Config
 from seek.engine.score import match_spans
+from seek.gowitness import capture as gw_capture
+from seek.gowitness import detect as gw_detect
+from seek.gowitness import results as gw_results
 from seek.nmap import export as exporter
 from seek.nmap import filtering, timeline
 from seek.nmap import presets as presets_mod
 from seek.nmap import views as proj
 from seek.nmap.diff import ScanDiff, diff
-from seek.nmap.models import ScanSet
+from seek.nmap.models import Host, ScanSet, Service
 from seek.nmap.runner import Runner, ScanRun, State, elevation_help
 from seek.tui.cells import cell_len, clip_cells
 from seek.tui.menu import ChoiceScreen, MultiChoiceScreen, PromptScreen
@@ -243,6 +248,8 @@ class NmapApp(App[int]):
         Binding("m", "mark", "Mark", show=False),
         Binding("M", "clear_marks", "Clear marks", show=False),
         Binding("x", "export", "Export", show=False),
+        Binding("i", "open_shot", "Open the screenshot", show=False),
+        Binding("W", "report_server", "Web report", show=False),
         Binding("question_mark", "help", "Help", show=False),
         Binding("q", "quit_now", "Quit", show=False),
         Binding("up,k", "move(-1)", "Up", show=False),
@@ -267,7 +274,23 @@ class NmapApp(App[int]):
         self.sources: list[Path] = list(sources or [])
         self.scan_dir = Path(self.config.scan_output_dir or scan_dir or Path.cwd())
         self.nmap = presets_mod.probe(self.config.nmap_path)
+        self.gowitness = gw_detect.probe(self.config.gowitness_mode,
+                                         self.config.gowitness_path,
+                                         self.config.gowitness_image)
         self.runner = Runner()
+        # A second slot, not a second scheduler: one `Runner` allows one run,
+        # so a slot per tool is exactly "serial within a tool, concurrent
+        # across them" with no new concurrency logic to get wrong. nmap and a
+        # capture do not contend - one is raw packets, the other is HTTP - and
+        # a capture that had to wait out a long port scan would be useless in
+        # the workflow it exists to serve.
+        self.captures = Runner()
+        self._report_proc: object | None = None
+        # What has been captured, whoever captured it: the directory is read on
+        # startup so a capture someone else ran is picked up, exactly as the
+        # scan history reads scan files it did not produce.
+        self.shots = gw_results.Captures()
+        self._load_captures()
         self._diffs: dict[int, ScanDiff] = {}
         # The file history is expensive to build (it re-parses), so cache it and
         # rebuild only when the model changes - which `self.scans` identity marks,
@@ -570,13 +593,11 @@ class NmapApp(App[int]):
         right = Text(f"{shown} row{'s' if shown != 1 else ''}", style="bold")
         if self._marked:
             right.append(f"  ·  {len(self._marked)} marked", style=_MARK_STYLE)
-        if self.runner.runs:
-            right.append(f"  ·  {len(self.runner.runs)} run(s)", style="dim")
+        total_runs = len(self.runner.runs) + len(self.captures.runs)
+        if total_runs:
+            right.append(f"  ·  {total_runs} run(s)", style="dim")
         # Symbol and words, never colour alone: whether a scan can be started at
         # all is worth knowing before reaching for the key that starts one.
-        right.append("  ·  ")
-        right.append(self.nmap.label(),
-                     style="bold" if self.nmap.available else "dim")
         if self._sort_col < len(self.view.columns):
             arrow = "↓" if self._sort_desc else "↑"
             right.append(
@@ -591,6 +612,19 @@ class NmapApp(App[int]):
         if self._spec.exclude:
             right.append("  ·  not in " + ", ".join(str(n) for n in self._spec.exclude),
                          style="bold")
+        # Last, because the line is clipped from the right on a narrow terminal
+        # and which tools exist matters less than what the list is currently
+        # showing. The two tool tokens sit adjacent with no separator between
+        # them, so they read as one "what is here" cluster.
+        right.append("  ·  ")
+        right.append(self.nmap.label(),
+                     style="bold" if self.nmap.available else "dim")
+        right.append("  ")
+        right.append(self.gowitness.label(),
+                     style="bold" if self.gowitness.available else "dim")
+        if self._report_proc is not None:
+            right.append(f"  ◉ report :{self.config.gowitness_report_port}",
+                         style="bold")
 
         line = Text.assemble(left, "  ", right)
         try:
@@ -600,6 +634,11 @@ class NmapApp(App[int]):
         in_filter = self.focused is self.query_one("#filter", Input)
         items = list(FILTER_HINTS if in_filter else _HINTS.get(self.view.kind, []))
         if not in_filter:
+            # Only once there is something to open: the bar is a scarce
+            # resource that already drops hints on a narrow terminal, and a key
+            # that does nothing yet should not be spending it.
+            if self.shots and self.view.kind in ("hosts", "services", "host-detail"):
+                items.append(("i", "shot"))
             items.append(("Esc", self._esc_label()))
         kept, dropped = _fit_hints(items, max(0, self.size.width - 2))
         hint = Text(no_wrap=True, overflow="ellipsis")
@@ -742,6 +781,9 @@ class NmapApp(App[int]):
             # with no file yet (running, failed, cancelled) get their own row.
             live = [r for r in self.runner.runs
                     if r.state is not State.DONE or str(r.xml_path) not in done]
+            # A capture leaves no scan file, so every one of them keeps its row
+            # rather than being replaced by an entry in the file history.
+            live += list(self.captures.runs)
             return scan_views.history_rows(history, live)
 
         return vdefs.View(
@@ -1005,6 +1047,183 @@ class NmapApp(App[int]):
         self.notify(f"started {run.preset}")
         await self.runner.run(run, self._on_scan_line, self._on_scan_done)
 
+    # --- captures ----------------------------------------------------------
+
+    def _capture_urls(self, records: list) -> list[str]:
+        """The HTTP(S) URLs of a selection, fully qualified.
+
+        `export_urls` is reused rather than reimplemented: it already emits one
+        URL per open HTTP service *and* per name the host answers to, carrying
+        a scheme and an explicit port. That form is what stops gowitness
+        deriving its own candidates, so the list that is written is the list
+        that gets probed.
+        """
+        return exporter.export_urls(records)
+
+    @work(exclusive=True, group="capture")
+    async def _start_capture(self, records: list) -> None:
+        """Capture the selection, if there is anything in it to capture."""
+        if not self.gowitness.available:
+            self.notify(f"gowitness unavailable: {self.gowitness.reason}",
+                        severity="error", timeout=12)
+            return
+        if self.captures.busy() is not None:
+            self.notify("a capture is already running", severity="warning")
+            return
+        urls = self._capture_urls(records)
+        if not urls:
+            # Refused rather than started: a capture of nothing looks like a
+            # capture that found nothing, which is a different finding.
+            self.notify("nothing to capture — no HTTP or HTTPS service in this "
+                        "selection", severity="warning")
+            return
+        paths = gw_capture.capture_dir(self.scan_dir)
+        try:
+            gw_capture.write_urls(paths, urls)
+        except OSError as exc:
+            self.notify(f"could not write the URL list: {exc.strerror or exc}",
+                        severity="error")
+            return
+        argv = gw_capture.scan_argv(self.gowitness, paths,
+                                    chrome_path=self.config.gowitness_chrome_path)
+        run = gw_capture.CaptureRun(argv=argv, paths=paths, urls=urls,
+                                    backend=self.gowitness.backend or "")
+        await self._run_capture(run)
+
+    async def _run_capture(self, run: gw_capture.CaptureRun) -> None:
+        self._log_frozen = False
+        self._report_mode = "raw"
+        self._activate("scans")
+        self._select_target(run)
+        self.notify(f"capturing {run.scope} with gowitness ({run.backend})")
+        await self.captures.run(run, self._on_scan_line, self._on_capture_done)
+
+    def _on_capture_done(self, run) -> None:
+        if run.state is State.DONE:
+            self._load_captures()
+            # The only place a failed target is recorded: gowitness writes it
+            # to neither the results file nor the database.
+            self.shots.add_failures(run.failures)
+            self.notify(f"capture: {run.result}")
+        else:
+            self.notify(f"capture: {run.result}",
+                        severity="warning" if run.state is State.CANCELLED else "error")
+        if self.view.kind == "scans":
+            self._reload_rows(preserve=True)
+        self._refresh_status()
+
+    def _record_captures(self) -> list:
+        """Every capture belonging to the row the cursor is on.
+
+        A record can carry one or twenty, and the detail pane has no line
+        cursor to point at one of them - so the row is what selects, and the
+        picker below is what narrows.
+        """
+        row = self._current_row()
+        if row is None:
+            return []
+        target = row.target
+        host = row.host
+        urls: list[str] = []
+        if isinstance(target, Service):
+            urls = detail_pane._service_urls(target, host)
+        elif isinstance(target, Host):
+            urls = [u for svc in target.open_services
+                    for u in detail_pane._service_urls(svc, target)]
+        elif host is not None:
+            urls = [u for svc in host.open_services
+                    for u in detail_pane._service_urls(svc, host)]
+        return self.shots.for_urls(list(dict.fromkeys(urls)))
+
+    @work(exclusive=True, group="modal")
+    async def action_open_shot(self) -> None:
+        """`i`: look at a capture's picture, since a terminal cannot show it."""
+        found = self._record_captures()
+        if not found:
+            self.notify("no capture for this row", severity="warning")
+            return
+        chosen = found[0]
+        if len(found) > 1:
+            # The picker *is* the selection: the pane is a rendered report, not
+            # a list, so there is no "selected line" for `i` to mean.
+            choices = []
+            disabled = set()
+            for index, capture in enumerate(found):
+                key = str(index)
+                if capture.shot is None or capture.failed:
+                    disabled.add(key)
+                    why = capture.failure or "no screenshot"
+                    choices.append((key, f"{capture.url} — {why}"))
+                else:
+                    status = capture.status or "—"
+                    choices.append((key, f"{status}  {capture.url}"))
+            picked = await self.push_screen_wait(
+                ChoiceScreen("Open which capture?", choices, disabled=disabled))
+            if picked is None:
+                return
+            chosen = found[int(picked)]
+        if chosen.shot is None or chosen.failed:
+            self.notify(f"no screenshot: {chosen.failure or 'it was never taken'}",
+                        severity="warning")
+            return
+        if not chosen.shot.exists():
+            self.notify(f"the screenshot is gone: {chosen.shot}", severity="error")
+            return
+        try:
+            await asyncio.create_subprocess_exec(
+                *actions.opener_argv(chosen.shot),
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        except OSError as exc:
+            self.notify(f"could not open it: {exc.strerror or exc}", severity="error")
+            return
+        self.notify(f"opened {chosen.shot.name}")
+
+    @work(exclusive=True, group="report")
+    async def action_report_server(self) -> None:
+        """`W`: gowitness's own gallery, served from this capture's database."""
+        if not self.gowitness.available:
+            self.notify(f"gowitness unavailable: {self.gowitness.reason}",
+                        severity="error")
+            return
+        paths = gw_capture.capture_dir(self.scan_dir)
+        if not paths.db.exists():
+            self.notify("nothing captured yet — run a capture from the export "
+                        "dialog first", severity="warning")
+            return
+        host = self.config.gowitness_report_host
+        port = self.config.gowitness_report_port
+        url = f"http://{host}:{port}"
+        if self._report_proc is None:
+            argv = gw_capture.report_argv(self.gowitness, paths, host, port)
+            try:
+                self._report_proc = await asyncio.create_subprocess_exec(
+                    *argv, stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL, start_new_session=True)
+            except OSError as exc:
+                self.notify(f"could not start the report server: "
+                            f"{exc.strerror or exc}", severity="error")
+                return
+            self.notify(f"report server on {url}")
+            self._refresh_status()
+        with contextlib.suppress(OSError):
+            await asyncio.create_subprocess_exec(
+                *actions.opener_argv(url),
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+
+    def _load_captures(self) -> None:
+        """Read the capture directory. Absence is the ordinary case, not an error."""
+        paths = gw_capture.capture_dir(self.scan_dir)
+        self.shots.load(paths.jsonl, paths.shots)
+
+    def _stop_report_server(self) -> None:
+        """Never leave a web server running behind a closed viewer."""
+        process = self._report_proc
+        self._report_proc = None
+        if process is None:
+            return
+        with contextlib.suppress(Exception):
+            process.terminate()
+
     def _select_target(self, target: object) -> None:
         """Move the cursor to the row that stands for `target`, if it is shown."""
         for index, row in enumerate(self._rows):
@@ -1106,15 +1325,15 @@ class NmapApp(App[int]):
         throws the work away - which is worth one keypress of confirmation, and
         `Esc` is the answer that keeps scanning.
         """
-        running = self.runner.busy()
+        running = self.runner.busy() or self.captures.busy()
         if running is None:
             self.exit(0)
             return
         answer = await self.push_screen_wait(ChoiceScreen(
-            f"{running.preset} has been running for "
+            f"{running.label} has been running for "
             f"{scan_views.elapsed(running.elapsed)}. Quitting ends it, and a "
-            f"scan that does not finish writes no file.",
-            [("stay", "Keep scanning"), ("quit", "End the scan and quit")]))
+            f"run that does not finish writes no file.",
+            [("stay", "Keep it running"), ("quit", "End it and quit")]))
         if answer == "quit":
             self.exit(0)
 
@@ -1125,9 +1344,11 @@ class NmapApp(App[int]):
         everything nmap spawns - which also means quitting without this would
         leave it scanning the target with nobody watching.
         """
-        running = self.runner.busy()
-        if running is not None:
+        if self.runner.busy() is not None:
             self.runner.cancel()
+        if self.captures.busy() is not None:
+            self.captures.cancel()
+        self._stop_report_server()
 
     def action_reverse(self) -> None:
         self._sort_desc = not self._sort_desc
@@ -1207,7 +1428,7 @@ class NmapApp(App[int]):
             # the row rather than leaving the pane blank
             return Text(row.text, style="dim"), self.view.title
         title = f"{self.view.title} · {row.cells[0]}" if row is not None else self.view.title
-        return detail_pane.render(target, row.host if row else None), title
+        return detail_pane.render(target, row.host if row else None, self.shots), title
 
     def _refresh_detail(self) -> None:
         """Show the full record for the highlighted row - the table only has
@@ -1402,10 +1623,27 @@ class NmapApp(App[int]):
             return
         choices = [(key, label) for key, (label, _, _) in exporter.EXPORTS.items()]
         choices.append(("custom", "custom… (pick the fields)"))
+        disabled: set[str] = set()
         if self.nmap.available:
             choices.append(("scan", "scan these hosts with nmap…"))
-        which = await self.push_screen_wait(ChoiceScreen(f"Export {source}:", choices))
+        # Shown whether or not it can be run: a hidden feature is an
+        # undiscoverable one, while a disabled one with its reason teaches what
+        # is missing. The count is shown before committing because a few
+        # hundred URLs is a capture measured in minutes.
+        urls = len(self._capture_urls(records))
+        if self.gowitness.available:
+            choices.append(("capture",
+                            f"capture {urls} url(s) with gowitness…"))
+        else:
+            disabled.add("capture")
+            choices.append(("capture",
+                            f"capture screenshots — {self.gowitness.reason}"))
+        which = await self.push_screen_wait(
+            ChoiceScreen(f"Export {source}:", choices, disabled=disabled))
         if which is None:
+            return
+        if which == "capture":
+            self._start_capture(records)
             return
         if which == "scan":
             addresses = list(dict.fromkeys(r.host.address for r in records))

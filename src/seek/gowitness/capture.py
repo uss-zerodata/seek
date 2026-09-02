@@ -1,0 +1,212 @@
+"""One gowitness capture: where it writes, what it is told, how it reports.
+
+The supervision is `seek.runner`'s, shared with nmap. What is here is what is
+true of gowitness and of nothing else.
+
+**Targets are sent fully qualified, and gowitness is told nothing else.**
+Measured against v3: `scan file` prepends both `http://` and `https://` to a
+target with no scheme and crosses that with `--port` (default 80 and 443), so
+two bare names produced seven probes. A URL carrying a scheme *and* an explicit
+port is probed exactly once. The viewer already knows which ports are open and
+which names a host answers to - `export_urls` emits exactly that form - so
+sending complete URLs both avoids guessed probes and makes every result
+attributable to one service.
+
+**Both writers are on.** `--write-jsonl` is the parsing contract: one JSON
+object per result, documented and stable. `--write-db` is for `gowitness report
+server`, and because an externally run capture would have left one. `--skip-html`
+and `--skip-network-logs` keep the results file to a readable size - `html`
+carries the whole response body per result, and nothing shown needs it.
+
+**A failure is not a result, so `--log-scan-errors` is not optional.** Measured
+against v3: a target that cannot be loaded writes **no JSONL record at all**,
+and without this flag it produces no output whatsoever - the run simply says
+less than it did about the targets that worked, and a host that refused looks
+identical to one that was never asked. The `failed` / `failed_reason` fields
+exist in the schema but are not what the tool populates for an unreachable
+target. Failures are therefore recovered from the log line the flag turns on:
+
+    ERRO failed to witness target target=http://10.0.0.1:81 err="page load error …"
+
+which is also why the progress counter has to count two different lines to
+know how many targets are done.
+
+**One argv, two backends.** The container sees `/data` where the host sees the
+capture directory, so the only difference between the two commands is that
+prefix and the `docker run` preamble. Keeping that in one function is what stops
+the translation leaking into every flag.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from seek.gowitness.detect import Probe
+from seek.runner import Run
+
+CAPTURE_DIRNAME = "gowitness"
+"""Captures live beside the scans, in their own directory, exactly as an
+externally run capture would have been asked to write them."""
+
+URLS_NAME = "urls.txt"
+DB_NAME = "gowitness.sqlite3"
+JSONL_NAME = "gowitness.jsonl"
+SHOTS_NAME = "screenshots"
+
+_MOUNT = "/data"
+"""Where the capture directory is mounted inside the container."""
+
+# One of these per finished target - the first when it was reached, the second
+# when it was not. Both are needed: they are the only two ways a target ends.
+_RESULT = re.compile(r"\bINFO\b.*\bresult\b.*\btarget=(\S+)")
+_FAILURE = re.compile(r'failed to witness target\s+target=(\S+)\s+err="?(.*?)"?\s*$')
+
+
+@dataclass
+class Paths:
+    """Where a capture's artefacts live, from the host's point of view."""
+
+    root: Path
+
+    @property
+    def urls(self) -> Path:
+        return self.root / URLS_NAME
+
+    @property
+    def db(self) -> Path:
+        return self.root / DB_NAME
+
+    @property
+    def jsonl(self) -> Path:
+        return self.root / JSONL_NAME
+
+    @property
+    def shots(self) -> Path:
+        return self.root / SHOTS_NAME
+
+
+def capture_dir(scan_dir: Path) -> Paths:
+    """The capture directory under the directory scans are written to."""
+    return Paths(Path(scan_dir) / CAPTURE_DIRNAME)
+
+
+def write_urls(paths: Paths, urls: list[str]) -> Path:
+    """Lay the target list down where the capture will read it."""
+    paths.root.mkdir(parents=True, exist_ok=True)
+    paths.shots.mkdir(parents=True, exist_ok=True)
+    paths.urls.write_text("\n".join(urls) + "\n", encoding="utf-8")
+    return paths.urls
+
+
+def scan_argv(probe: Probe, paths: Paths, *, chrome_path: str = "",
+              threads: int = 6, timeout: int = 30, delay: int = 3) -> list[str]:
+    """The command that captures `paths.urls`, for whichever backend is in use."""
+    seen = _MOUNT if probe.backend == "docker" else str(paths.root)
+    flags = [
+        "scan", "file",
+        "-f", f"{seen}/{URLS_NAME}",
+        "--write-db", "--write-db-uri", f"sqlite://{seen}/{DB_NAME}",
+        "--write-jsonl", "--write-jsonl-file", f"{seen}/{JSONL_NAME}",
+        "--screenshot-path", f"{seen}/{SHOTS_NAME}",
+        # The app reads none of this, and `html` carries a whole response body
+        # per result - the difference between a lean results file and a huge one.
+        "--skip-html", "--skip-network-logs",
+        # Not optional: without it an unreachable target is silent in every
+        # output the tool has, and "refused" becomes indistinguishable from
+        # "never asked".
+        "--log-scan-errors",
+        "--threads", str(threads),
+        "--timeout", str(timeout),
+        "--delay", str(delay),
+    ]
+    if chrome_path:
+        flags += ["--chrome-path", chrome_path]
+    if probe.backend == "docker":
+        return [probe.path or "docker", "run", "--rm",
+                "-v", f"{paths.root}:{_MOUNT}", "-w", _MOUNT,
+                probe.image or "", *flags]
+    return [probe.path or "gowitness", *flags]
+
+
+def report_argv(probe: Probe, paths: Paths, host: str, port: int) -> list[str]:
+    """The command that serves a finished capture's own database."""
+    seen = _MOUNT if probe.backend == "docker" else str(paths.root)
+    flags = [
+        "report", "server",
+        "--db-uri", f"sqlite://{seen}/{DB_NAME}",
+        "--screenshot-path", f"{seen}/{SHOTS_NAME}",
+        "--host", "0.0.0.0" if probe.backend == "docker" else host,  # noqa: S104
+        "--port", str(port),
+    ]
+    if probe.backend == "docker":
+        # Published rather than --network=host: the bind stays on the host's
+        # loopback, which is what the configuration asked for, without giving
+        # the container the host's whole network namespace.
+        return [probe.path or "docker", "run", "--rm",
+                "-v", f"{paths.root}:{_MOUNT}", "-w", _MOUNT,
+                "-p", f"{host}:{port}:{port}",
+                probe.image or "", *flags]
+    return [probe.path or "gowitness", *flags]
+
+
+@dataclass
+class CaptureRun(Run):
+    """One capture: the URLs asked for, what came back, what became of it."""
+
+    paths: Paths = field(default_factory=lambda: Paths(Path()))
+    urls: list[str] = field(default_factory=list)
+    backend: str = ""
+    captured: int = 0
+    # url -> why it could not be captured. Kept here because it is the only
+    # place it exists: the results file has no line for a failed target.
+    failures: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def failed(self) -> int:
+        return len(self.failures)
+
+    @property
+    def label(self) -> str:
+        return "capture"
+
+    @property
+    def scope(self) -> str:
+        count = len(self.urls)
+        return f"{count} url{'s' if count != 1 else ''}"
+
+    @property
+    def total(self) -> int:
+        return len(self.urls)
+
+    def read_progress(self, line: str) -> None:
+        failure = _FAILURE.search(line)
+        if failure is not None:
+            self.failures[failure.group(1)] = failure.group(2).strip() or "failed"
+            return
+        if _RESULT.search(line):
+            self.captured += 1
+
+    @property
+    def finished(self) -> int:
+        """Targets that ended, either way."""
+        return self.captured + self.failed
+
+    def progress(self) -> str:
+        if not self.total:
+            return "running"
+        return f"{self.finished}/{self.total} captured"
+
+    def summarise(self) -> str:
+        text = f"{self.captured} captured"
+        if self.failed:
+            text += f", {self.failed} failed"
+        return text
+
+    def failure(self, code: int, tail: list[str]) -> str:
+        if self.finished:
+            # A capture that got some way in and then died has more to say than
+            # its last line: what it managed is the useful half.
+            return f"{self.summarise()}, then failed: {super().failure(code, tail)}"
+        return super().failure(code, tail)
