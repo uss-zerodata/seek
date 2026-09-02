@@ -12,6 +12,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from rich.console import RenderableType
 from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
@@ -38,6 +39,7 @@ from seek.tui.nmap import scans as scan_views
 from seek.tui.nmap import views as vdefs
 from seek.tui.nmap.commands import ScanCommands
 from seek.tui.nmap.help import NmapHelpScreen
+from seek.tui.nmap.reader import DetailReader
 from seek.tui.nmap.scope import (
     CommandScreen,
     PresetScreen,
@@ -112,34 +114,36 @@ class ScanTable(DataTable):
 _HINTS = {
     "hosts": [("↑↓", "select"), ("←→", "scroll detail"), ("↵", "services"), ("v", "swap"),
               ("1-9", "sort"), ("r", "reverse"), ("/", "filter"), ("u", "reachable"),
-              ("s", "stats"), ("b", "group"), ("m", "mark"), ("n", "scan"), ("x", "export"),
-              ("?", "help"), ("^P", "commands")],
+              ("s", "stats"), ("b", "group"), ("d", "detail"), ("m", "mark"), ("n", "scan"),
+              ("x", "export"), ("?", "help"), ("^P", "commands")],
     "services": [("↑↓", "select"), ("←→", "scroll detail"), ("↵", "hosts"), ("v", "swap"),
                  ("1-9", "sort"), ("r", "reverse"), ("/", "filter"), ("s", "stats"),
-                 ("b", "group"), ("m", "mark"), ("n", "scan"), ("x", "export"), ("?", "help"),
-                 ("^P", "commands")],
+                 ("b", "group"), ("d", "detail"), ("m", "mark"), ("n", "scan"),
+                 ("x", "export"), ("?", "help"), ("^P", "commands")],
     "host-detail": [("↑↓", "select"), ("←→", "scroll detail"), ("↵", "same service everywhere"),
                     ("1-9", "sort"), ("r", "reverse"),
-                    ("/", "filter"), ("d", "detail"), ("m", "mark"), ("x", "export"),
-                    ("?", "help"), ("^P", "commands")],
+                    ("/", "filter"), ("d", "detail"), ("D", "pane"), ("m", "mark"),
+                    ("x", "export"), ("?", "help"), ("^P", "commands")],
     "group-hosts": [("↑↓", "select"), ("←→", "scroll detail"), ("↵", "host"), ("1-9", "sort"),
-                    ("r", "reverse"), ("/", "filter"), ("m", "mark"), ("x", "export"),
-                    ("?", "help"), ("^P", "commands")],
+                    ("r", "reverse"), ("/", "filter"), ("d", "detail"), ("m", "mark"),
+                    ("x", "export"), ("?", "help"), ("^P", "commands")],
     "service-detail": [("↑↓", "select"), ("←→", "scroll detail"), ("↵", "host"),
-                       ("1-9", "sort"), ("/", "filter"), ("m", "mark"), ("x", "export"),
-                       ("?", "help"), ("^P", "commands")],
+                       ("1-9", "sort"), ("/", "filter"), ("d", "detail"), ("m", "mark"),
+                       ("x", "export"), ("?", "help"), ("^P", "commands")],
     "grouping": [("↑↓", "select"), ("←→", "scroll detail"), ("↵", "hosts"),
                  ("b", "next grouping"), ("1-9", "sort"), ("/", "filter"),
-                 ("m", "mark"), ("x", "export"), ("?", "help"), ("^P", "commands")],
+                 ("d", "detail"), ("m", "mark"), ("x", "export"), ("?", "help"),
+                 ("^P", "commands")],
     "names": [("↑↓", "select"), ("←→", "scroll detail"), ("↵", "hosts"),
-              ("1-9", "sort"), ("r", "reverse"), ("/", "filter"), ("m", "mark"),
-              ("n", "scan"), ("x", "export"), ("?", "help"), ("^P", "commands")],
-    "scans": [("↑↓", "select"), ("o", "report view"), ("p", "freeze log"),
-              ("c", "cancel"), ("n", "new scan"), ("1-9", "sort"), ("/", "filter"),
-              ("x", "export"), ("?", "help"), ("^P", "commands")],
+              ("1-9", "sort"), ("r", "reverse"), ("/", "filter"), ("d", "detail"),
+              ("m", "mark"), ("n", "scan"), ("x", "export"), ("?", "help"),
+              ("^P", "commands")],
+    "scans": [("↑↓", "select"), ("d", "detail"), ("o", "report view"),
+              ("p", "freeze log"), ("c", "cancel"), ("n", "new scan"), ("1-9", "sort"),
+              ("/", "filter"), ("x", "export"), ("?", "help"), ("^P", "commands")],
     "stats": [("↑↓", "select"), ("↵", "open the figure"), ("1-9", "sort"),
-              ("r", "reverse"), ("/", "filter"), ("s", "back"), ("m", "mark"),
-              ("x", "export"), ("?", "help"), ("^P", "commands")],
+              ("r", "reverse"), ("/", "filter"), ("s", "back"), ("d", "detail"),
+              ("m", "mark"), ("x", "export"), ("?", "help"), ("^P", "commands")],
 }
 
 FILTER_HINTS = [("type", "to filter"), ("↵/Esc", "back to the list"),
@@ -227,7 +231,8 @@ class NmapApp(App[int]):
         Binding("s", "stats", "Statistics", show=False),
         Binding("b", "group", "Group by", show=False),
         Binding("u", "reachable", "Reachable only", show=False),
-        Binding("d", "toggle_detail", "Detail pane", show=False),
+        Binding("d", "open_detail", "Open detail", show=False),
+        Binding("D", "toggle_detail", "Detail pane", show=False),
         # J/K scroll the report below, pairing with j/k moving the list above.
         Binding("K", "scroll_detail(-1)", "Detail up", show=False),
         Binding("J", "scroll_detail(1)", "Detail down", show=False),
@@ -283,6 +288,7 @@ class NmapApp(App[int]):
         self._group_at = 0
         self._only_reachable = False
         self._show_detail = True
+        self._reader: DetailReader | None = None
         self._active_tab = "hosts"
         self._widths: list[int] = []
         self._last_width = 0
@@ -1175,6 +1181,34 @@ class NmapApp(App[int]):
             return None
         return self._rows[row]
 
+    def _detail_content(self, row: vdefs.Row | None) -> tuple[RenderableType, str]:
+        """The renderable and a title for the given row's record.
+
+        The one place that decides what a row's detail *is* - both the inline
+        pane and the full-screen reader (`d`) show exactly this, so the reader
+        can never say something different from the pane it was opened from.
+        """
+        target = row.target if row is not None else None
+        if isinstance(target, timeline.Scan):
+            return (scan_views.scan_report(target, self._report_mode),
+                    f"Scan · {target.label}")
+        if isinstance(target, ScanRun):
+            return (scan_views.report(target, self._report_mode,
+                                      self._diffs.get(id(target)),
+                                      self._log_frozen),
+                    f"Scan · {target.preset}")
+        if row is not None and row.heading:
+            return (Text(f"{row.cells[0]}\n\n"
+                        "Select a line under this heading to open what it counts.",
+                        style="dim"),
+                    row.cells[0])
+        if target is None and row is not None:
+            # views without a drill target (statistics, groupings) still explain
+            # the row rather than leaving the pane blank
+            return Text(row.text, style="dim"), self.view.title
+        title = f"{self.view.title} · {row.cells[0]}" if row is not None else self.view.title
+        return detail_pane.render(target, row.host if row else None), title
+
     def _refresh_detail(self) -> None:
         """Show the full record for the highlighted row - the table only has
         room for a few columns, and script and vulnerability detail has none."""
@@ -1184,14 +1218,18 @@ class NmapApp(App[int]):
             return
         row = self._current_row()
         target = row.target if row is not None else None
+        renderable, _title = self._detail_content(row)
+        pane.update(renderable)
+        if self._reader is not None:
+            # The reader shows exactly what the pane shows, always - this is
+            # what keeps a running scan streaming into an open reader, and a
+            # mode change (`o`) or a freeze toggle (`p`) reflected in it too,
+            # with no separate "is the reader open on this row" bookkeeping.
+            self._reader.update(renderable)
         if isinstance(target, timeline.Scan):
-            pane.update(scan_views.scan_report(target, self._report_mode))
             self._apply_detail_visibility()
             return
         if isinstance(target, ScanRun):
-            pane.update(scan_views.report(target, self._report_mode,
-                                          self._diffs.get(id(target)),
-                                          self._log_frozen))
             self._apply_detail_visibility()
             if self._report_mode == "raw" and target.running and not self._log_frozen:
                 # Follow the newest line, which is why the scroll comes after
@@ -1201,21 +1239,55 @@ class NmapApp(App[int]):
                 except NoMatches:
                     pass
             return
-        if row is not None and row.heading:
-            pane.update(Text(f"{row.cells[0]}\n\n"
-                             "Select a line under this heading to open what it counts.",
-                             style="dim"))
-        elif target is None and row is not None:
-            # views without a drill target (statistics, groupings) still explain
-            # the row rather than leaving the pane blank
-            pane.update(Text(row.text, style="dim"))
-        else:
-            pane.update(detail_pane.render(target, row.host if row else None))
         try:  # a new record starts at the top of its report
             self.query_one("#detail", VerticalScroll).scroll_home(animate=False)
         except NoMatches:
             pass
         self._apply_detail_visibility()
+
+    def _reader_payload(self, row: vdefs.Row | None) -> tuple[str, RenderableType, bool]:
+        """What the reader needs to show one row: title, record, follow-tail."""
+        renderable, title = self._detail_content(row)
+        target = row.target if row is not None else None
+        # Match the pane's own rule for the same case (`_refresh_detail`'s
+        # scroll_end): only a running scan's raw log opens at the newest line.
+        follow = (isinstance(target, ScanRun) and target.running
+                 and self._report_mode == "raw" and not self._log_frozen)
+        return title, renderable, follow
+
+    def _step_detail(self, delta: int) -> tuple[str, RenderableType, bool] | None:
+        """`←`/`→` in the reader: move the list, hand back the row landed on.
+
+        Moving the real cursor rather than tracking a second one in the reader
+        is what keeps the two in step: the pane underneath updates as usual,
+        and leaving the reader lands on the entry last read instead of the one
+        it was opened from. `None` at either end - `action_move` clamps too,
+        and neither skips section headings, so the reader visits exactly the
+        rows the list would.
+        """
+        table = self.query_one(DataTable)
+        limit = min(table.row_count, len(self._rows))
+        target_row = (table.cursor_row or 0) + delta
+        if not (0 <= target_row < limit):
+            return None
+        table.move_cursor(row=target_row)
+        return self._reader_payload(self._rows[target_row])
+
+    @work(exclusive=True, group="modal")
+    async def action_open_detail(self) -> None:
+        """`d`: the selected row's record, full-screen and searchable."""
+        row = self._current_row()
+        if row is None and not self._rows:
+            self.notify("nothing to show", severity="warning")
+            return
+        title, renderable, follow = self._reader_payload(row)
+        reader = DetailReader(title, renderable, on_freeze=self.action_freeze_log,
+                              on_step=self._step_detail, follow=follow)
+        self._reader = reader
+        try:
+            await self.push_screen_wait(reader)
+        finally:
+            self._reader = None
 
     def _on_tick(self) -> None:
         """Both things that depend on the terminal's size, on one timer."""
@@ -1263,6 +1335,20 @@ class NmapApp(App[int]):
         step = max(1, table.size.height - 2)
         table.move_cursor(row=max(0, min(table.row_count - 1,
                                          (table.cursor_row or 0) + direction * step)))
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Keep the priority bindings from piercing a modal.
+
+        `home`/`g` and `end`/`G` are `priority=True` so they beat DataTable's
+        own home/end - but priority is checked before the *screen*, so they
+        also fired straight past every modal: `G` in the reader, the help or
+        the scan dialog silently jumped the list underneath to its last row.
+        Returning `None` here declines the binding rather than swallowing the
+        key, so it goes on to the modal that should have had it all along.
+        """
+        if action.startswith("jump") and len(self.screen_stack) > 1:
+            return None
+        return True
 
     def action_jump(self, where: int) -> None:
         table = self.query_one(DataTable)

@@ -746,3 +746,316 @@ async def test_the_help_body_is_a_grid_of_every_section():
         assert title in text
     # a long description stays on its own indented column, not the left margin
     assert "\nhost →" not in text, "a wrapped description must not fall to column 0"
+
+
+# --- opening the detail full-screen (`d`), collapsing the pane (`D`) --------
+
+
+async def test_d_opens_the_reader_on_a_host_record(tmp_path):
+    from seek.tui.nmap.reader import DetailReader
+
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.3)
+        await pilot.press("d")
+        await pilot.pause(0.3)
+        assert isinstance(app.screen, DetailReader)
+        assert any("192.0.2.1" in line.plain for line in app.screen._lines)
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+        assert not isinstance(app.screen, DetailReader)
+
+
+async def test_d_shows_the_same_content_the_pane_shows(tmp_path):
+
+    app = _app(tmp_path, "scripts")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.3)
+        pane_text = _render(app.query_one("#detail-body"))
+        await pilot.press("d")
+        await pilot.pause(0.3)
+        reader_text = "\n".join(line.plain for line in app.screen._lines)
+        # The pane wraps differently at a different width, but every word in
+        # its narrow rendering must appear in the reader's - same content.
+        for word in pane_text.split():
+            assert word in reader_text
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+
+
+async def test_capital_d_still_collapses_the_inline_pane(tmp_path):
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.3)
+        assert app._show_detail is True
+        await pilot.press("D")
+        await pilot.pause(0.2)
+        assert app._show_detail is False
+        await pilot.press("D")
+        await pilot.pause(0.2)
+        assert app._show_detail is True
+
+
+async def test_lowercase_d_no_longer_collapses_the_pane(tmp_path):
+    """The breaking change the proposal called out: `d` opens, it does not
+    toggle - collapsing moved to `D`."""
+    from seek.tui.nmap.reader import DetailReader
+
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.3)
+        await pilot.press("d")
+        await pilot.pause(0.3)
+        assert isinstance(app.screen, DetailReader)
+        assert app._show_detail is True, "d did not touch the pane's visibility"
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+
+
+async def test_d_works_while_the_pane_is_collapsed(tmp_path):
+    from seek.tui.nmap.reader import DetailReader
+
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.3)
+        await pilot.press("D")
+        await pilot.pause(0.2)
+        assert app._show_detail is False
+        await pilot.press("d")
+        await pilot.pause(0.3)
+        assert isinstance(app.screen, DetailReader)
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+
+
+async def test_d_on_a_heading_shows_the_same_note_the_pane_would(tmp_path):
+    from seek.tui.nmap.reader import DetailReader
+
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.3)
+        await pilot.press("s")                # statistics tab
+        await pilot.pause(0.3)
+        row = next(i for i, r in enumerate(app._rows) if r.heading)
+        app.query_one(DataTable).move_cursor(row=row)
+        await pilot.pause(0.2)
+        await pilot.press("d")
+        await pilot.pause(0.3)
+        assert isinstance(app.screen, DetailReader)
+        text = "\n".join(line.plain for line in app.screen._lines)
+        assert "Select a line under this heading" in text
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+
+
+async def test_d_on_a_scans_tab_raw_report_shows_the_log_and_the_title(tmp_path):
+    from seek.tui.nmap.reader import DetailReader
+
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.3)
+        app.query_one(Tabs).active = "scans"
+        await pilot.pause(0.3)
+        assert app._rows, "basic.xml appears as history"
+        app._report_mode = "raw"
+        app._refresh_detail()
+        await pilot.press("d")
+        await pilot.pause(0.3)
+        assert isinstance(app.screen, DetailReader)
+        title = _render(app.screen.query_one(".title"))
+        assert "Scan" in title and "basic" in title
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+
+
+async def test_a_running_scans_raw_log_keeps_streaming_into_an_open_reader(tmp_path):
+    from seek.tui.nmap.reader import DetailReader
+
+    slow = _stub(tmp_path, "#!/bin/sh\necho first\nsleep 0.4\necho SECOND_LINE\nsleep 5\n",
+                name="slow-nmap")
+    config = Config(nmap_path=slow, nmap_presets={"Quick": "-sV"},
+                    scan_output_dir=str(tmp_path))
+    app = _app(tmp_path, "basic", config=config)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.3)
+        await _run_a_scan(pilot, app)
+        for _ in range(60):
+            await pilot.pause(0.1)
+            if app.runner.runs:
+                break
+        await pilot.press("d")
+        await pilot.pause(0.3)
+        reader = app.screen
+        assert isinstance(reader, DetailReader)
+        assert reader._follow is True
+        for _ in range(20):
+            await pilot.pause(0.1)
+            if any("SECOND_LINE" in line.plain for line in reader._lines):
+                break
+        assert any("SECOND_LINE" in line.plain for line in reader._lines), \
+            "the reader kept receiving output while it was open"
+        await pilot.press("escape")
+        await pilot.pause(0.3)
+        app.runner.cancel()
+        await pilot.pause(1.0)
+
+
+async def test_freezing_from_inside_the_reader_matches_the_pane(tmp_path):
+    """`p` cannot bubble out of a modal - the reader forwards it explicitly."""
+    from seek.tui.nmap.reader import DetailReader
+
+    app = _app(tmp_path, "basic", config=_slow(tmp_path))
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.3)
+        await _run_a_scan(pilot, app)
+        for _ in range(60):
+            await pilot.pause(0.1)
+            if app.runner.runs:
+                break
+        await pilot.press("d")
+        await pilot.pause(0.3)
+        reader = app.screen
+        assert isinstance(reader, DetailReader)
+        await pilot.press("p")
+        await pilot.pause(0.2)
+        assert app._log_frozen is True
+        assert any("still running" in line.plain for line in reader._lines)
+        await pilot.press("p")
+        await pilot.pause(0.2)
+        assert app._log_frozen is False
+        await pilot.press("escape")
+        await pilot.pause(0.3)
+        app.runner.cancel()
+        await pilot.pause(1.0)
+
+
+async def test_the_hint_bar_and_help_mention_both_keys(tmp_path):
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(140, 30)) as pilot:
+        await pilot.pause(0.3)
+        shown = _render(app.query_one("#hint-bar"))
+        assert "detail" in shown or "pane" in shown
+        from rich.console import Console
+
+        from seek.tui.nmap.help import help_body
+        console = Console(width=90)
+        with console.capture() as cap:
+            console.print(help_body())
+        text = cap.get()
+        assert "full-screen" in text or "full screen" in text
+        assert "pane" in text
+
+
+# --- g/G in a modal, and stepping entries from the reader ---------------
+
+
+async def test_g_and_G_move_the_reader_not_the_list_underneath(tmp_path):
+    """`home,g` / `end,G` are priority bindings so they beat DataTable's own
+    home/end - priority is checked before the screen, so they used to fire
+    straight past the reader and jump the list underneath instead."""
+    from seek.tui.nmap.reader import DetailReader
+
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.3)
+        table = app.query_one(DataTable)
+        table.move_cursor(row=1)
+        await pilot.pause(0.2)
+        await pilot.press("d")
+        await pilot.pause(0.3)
+        assert isinstance(app.screen, DetailReader)
+        await pilot.press("G")
+        await pilot.pause(0.2)
+        assert table.cursor_row == 1, "the list stayed where it was"
+        await pilot.press("g")
+        await pilot.pause(0.2)
+        assert table.cursor_row == 1
+        assert app.screen.top_line == 0
+
+
+async def test_g_and_G_still_jump_the_list_with_no_modal_open(tmp_path):
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.3)
+        table = app.query_one(DataTable)
+        await pilot.press("G")
+        await pilot.pause(0.2)
+        assert table.cursor_row == table.row_count - 1
+        await pilot.press("g")
+        await pilot.pause(0.2)
+        assert table.cursor_row == 0
+
+
+async def test_g_and_G_do_not_leak_through_the_help_screen(tmp_path):
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.3)
+        table = app.query_one(DataTable)
+        table.move_cursor(row=1)
+        await pilot.pause(0.2)
+        await pilot.press("question_mark")
+        await pilot.pause(0.3)
+        await pilot.press("G")
+        await pilot.pause(0.2)
+        assert table.cursor_row == 1
+
+
+async def test_arrows_step_through_entries_from_inside_the_reader(tmp_path):
+    from seek.tui.nmap.reader import DetailReader
+
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.3)
+        table = app.query_one(DataTable)
+        table.move_cursor(row=0)
+        await pilot.pause(0.2)
+        await pilot.press("d")
+        await pilot.pause(0.3)
+        reader = app.screen
+        assert isinstance(reader, DetailReader)
+        opened_on = reader._title
+        await pilot.press("right")
+        await pilot.pause(0.3)
+        assert table.cursor_row == 1, "the list moved with the reader"
+        assert reader._title != opened_on, "the title names the new entry"
+        assert reader._title.endswith(app._rows[1].cells[0])
+        await pilot.press("left")
+        await pilot.pause(0.3)
+        assert table.cursor_row == 0
+        assert reader._title == opened_on
+
+
+async def test_leaving_the_reader_lands_on_the_entry_last_read(tmp_path):
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.3)
+        table = app.query_one(DataTable)
+        table.move_cursor(row=0)
+        await pilot.pause(0.2)
+        await pilot.press("d")
+        await pilot.pause(0.3)
+        await pilot.press("right")
+        await pilot.pause(0.3)
+        await pilot.press("escape")
+        await pilot.pause(0.3)
+        assert table.cursor_row == 1
+
+
+async def test_stepping_shows_the_same_record_the_pane_shows(tmp_path):
+    """The reader is a bigger pane, never a second description of a record -
+    stepping must not be the one path where the two drift apart."""
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.3)
+        app.query_one(DataTable).move_cursor(row=0)
+        await pilot.pause(0.2)
+        await pilot.press("d")
+        await pilot.pause(0.3)
+        await pilot.press("right")
+        await pilot.pause(0.3)
+        reader_text = "\n".join(line.plain for line in app.screen._lines)
+        await pilot.press("escape")
+        await pilot.pause(0.3)
+        pane = _render(app.query_one("#detail-body"))
+        for token in app._rows[1].cells[0].split():
+            assert token in reader_text and token in pane

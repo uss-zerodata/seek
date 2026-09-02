@@ -373,6 +373,10 @@ DEFAULT_PRESETS: dict[str, str] = {
     "02 · Services, top 100 TCP (fast)": "-vv -T4 -n -Pn -sS --top-ports 100 --defeat-rst-ratelimit",  # noqa: E501
     "02 · Services, top 1000 TCP": "-vv -T4 -n -Pn -sS --top-ports 1000 --host-timeout 1h",
 
+    "02 · Services, top 100 UDP": "-vv -T4 -n -Pn -sUV --top-ports 100 --host-timeout 3h",
+    "02 · Services, top 100 UDP (fast)": "-vv -T4 -n -Pn -sUV --top-ports 100 --max-retries 1 --host-timeout 3h",  # noqa: E501
+    "02 · Services, top 1000 UDP (fast)": "-vv -T4 -n -Pn -sUV --top-ports 1000 --max-retries 1 --host-timeout 5h",  # noqa: E501
+
     "03 · Details, versions on known ports": "-vv -T4 -n -Pn -sS -A --host-timeout 1h -p{ports}",
     "03 · Details, full TCP (-p-)": "-vv -T4 -n -Pn -sS -A -p- --host-timeout 3h",
 

@@ -369,11 +369,13 @@ async def test_service_group_detail_lists_its_hosts():
 
 
 async def test_detail_pane_can_be_dismissed():
+    """`D` collapses the inline pane - `d` opens the full-screen reader instead;
+    see tests/test_nmap_scanning.py for the reader's own coverage."""
     app = _app("basic")
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.1)
         assert app.query_one("#detail").display is True
-        await pilot.press("d")
+        await pilot.press("D")
         await pilot.pause(0.1)
         assert app.query_one("#detail").display is False
 

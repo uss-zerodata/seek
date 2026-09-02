@@ -37,7 +37,11 @@ _GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("s", "statistics: coverage, services and ports, each one openable"),
         ("b", "group by service, then product, then port"),
         ("u", "only hosts with evidence of being reachable"),
-        ("d", "show or hide the detail pane"),
+        ("d", "open the selected row's detail full-screen and searchable"),
+        ("", "/ searches it; n N jump between matches; ← → read the previous"),
+        ("", "or next entry without leaving; a running scan's raw output"),
+        ("", "keeps streaming in while it is open"),
+        ("D", "show or hide the inline detail pane"),
     ]),
     ("Filter and sort", [
         ("/", "filter; matched characters are highlighted in the list"),

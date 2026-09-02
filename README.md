@@ -66,7 +66,7 @@ yourself replaces the drill-down. The filter box uses the same fuzzy grammar (`'
 | `/` | filter (`Enter` or `Esc` returns to the list) |
 | `1`…`9` | sort by that column, ascending — or click its heading |
 | `r` | reverse the sort |
-| `d` | show / hide the detail pane |
+| `d` | open the detail full-screen: searchable, `←`/`→` steps entries · `D` show / hide the pane |
 | `s` | statistics · `b` group by · `u` reachable only |
 | `m` `M` | mark the selected row · clear every mark |
 | `n` | new scan · `o` report view · `p` freeze log · `c` cancel |
@@ -208,7 +208,24 @@ the cursor is on: a host's OS, the state *and the reason* it was recorded with,
 which scans saw it; a service's product, version, how it was detected; and the
 full text of script results and complete vulnerability records — identifier,
 title, state, CVSS where a script gave one, cross-reference ids, disclosure date
-and reference URLs. `Ctrl+D` hides it; it drops itself on a short terminal.
+and reference URLs. `D` hides it; it drops itself on a short terminal.
+
+**`d` opens that same record full-screen and searchable** — the pane is right
+for a glance, but caps out on anything taller than a few lines, above all a
+scan's raw nmap output. `/` inside the reader highlights every occurrence in
+place rather than filtering lines away, so the context around a hit is never
+lost; `n`/`N` jump between matches, with a running count. Opened on a scan that
+is still running, the raw view keeps streaming as output arrives, and an active
+search keeps matching the new lines; `p` freezes it to read without the scan
+stopping, exactly as it does in the pane. `Esc` clears a search first, then
+leaves the reader.
+
+`←`/`→` inside the reader read the previous and next entry in the list
+without leaving it, so a record can be compared against its neighbours - and an
+active search carries across, recounted against each entry, which is the fast
+way to find which host a term actually appears on. The list moves with you:
+leaving the reader lands on the entry you last read, not the one you opened it
+from.
 
 **Export** produces the lists you feed to the next command, from whatever the
 filter has narrowed to: host addresses, open ports comma-separated (the form

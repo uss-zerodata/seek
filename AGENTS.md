@@ -98,6 +98,7 @@ src/seek/
   tui/nmap/
     views.py        column specs + row builders per view
     detail.py       full record for the selected row (scripts, vulnerabilities)
+    reader.py       `d`: that record full-screen - scroll, search, step entries
     app.py          NmapApp: table + detail pane, one filter, one breadcrumb
     scans.py        the Scans tab: run list + the three report modes
     scope.py        scope editor, editable command, the review before it runs
@@ -274,6 +275,35 @@ stdout, `cd`) cannot run while Textual owns the screen. They set
   flags. Both lines are `no_wrap` + ellipsis so neither the name nor the badge
   can spill onto a line of its own - the bug that made the old single-line
   chooser tear names apart. Scan-flow modals share an 84-wide frame.
+- **Textual auto-focuses the first focusable widget on mount, `display: none`
+  included.** `DetailReader`'s search `Input` was the only focusable widget in
+  its `compose()`, so it silently held focus from the moment the screen
+  mounted - the very `/` that was meant to *open* search instead got typed
+  straight into the (still-hidden) box, and no amount of deferring `.focus()`
+  in the handler fixed it, because the Input already owned focus before the
+  handler ever ran. The fix is a focusable `_Body` (`can_focus = True` on a
+  `Static` subclass) placed before the Input in `compose()`, so auto-focus
+  lands there instead; `action_search()` can then focus the Input directly and
+  synchronously, no workaround needed. Check what a screen's *default* focus
+  lands on before chasing a stray-keystroke bug as a key-event race.
+- **A `ModalScreen` captures unhandled input - but an App binding with
+  `priority=True` pierces it.** Two halves of the same lesson, learned in
+  opposite directions. Going *out*: `DetailReader` assumed `p` (freeze) would
+  reach `NmapApp.action_freeze_log` while it was open, since neither the
+  reader nor its focused child bind `p` - it does not. Unhandled keys stop at
+  the modal, so the fix is an explicit callback
+  (`DetailReader(..., on_freeze=self.action_freeze_log)`) rather than reliance
+  on bubbling. Going *in*: `home,g` / `end,G` are `priority=True` so they beat
+  DataTable's own home/end, and priority is checked *before* the screen - so
+  they fired straight past every modal, and `G` in the reader, the help or the
+  scan dialog silently jumped the list underneath to its last row while the
+  reader's own `G` never ran. `App.check_action` is the fix, returning `None`
+  for `jump` whenever `len(self.screen_stack) > 1`: that *declines* the
+  binding instead of swallowing the key, so it carries on to the modal that
+  should have had it. Returning early from the action itself would have been
+  the wrong fix - the key would have been consumed and the modal would still
+  never see it. Any `priority=True` binding is a modal leak until it is
+  scoped.
 - **A modal offers choices as an `OptionList`, never a stack of `Button`s.**
   Textual buttons are three rows tall: six export recipes needed more than
   twenty, ran off a 24-row terminal, and put the last choice out of reach with
