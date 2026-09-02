@@ -35,8 +35,8 @@ step, no database, nothing written. Parsing is ~11 ms per MB, so a five-scan
 engagement opens in well under a second.
 
 The overviews are tabs — **Hosts**, **Services**, **Statistics**, **By service**,
-**By product**, **By port** — clickable, or `v`/`V` to cycle and `s`/`b`/`u` to
-jump. Hosts shows address, hostname, OS and service count; Services shows port,
+**By product**, **By port**, **Names**, **Scans** — clickable, or `v`/`V` to
+cycle and `s`/`b`/`u` to jump. Hosts shows address, hostname, OS and service count; Services shows port,
 protocol, name, product, version, extra info, host count and vulnerabilities,
 grouped across every host. `Enter` drills in both directions and keeps going:
 a host opens its services, a service opens every host running it, and a host in
@@ -123,6 +123,20 @@ Presets live in the config file, and defining any replaces the shipped set:
 "02 · Services, versions on the ports already found" = "-vv -T4 -n -Pn -sS -A --host-timeout 30m -p{ports}"
 "03 · SMB vulnerabilities (139, 445)"      = "-vv -T4 -n -Pn -p139,445 --script smb-vuln*"
 ```
+
+`03 · DNS names (reverse lookup, sends nothing)` is a list scan (`-sL -R`): it
+resolves the selected hosts without sending them a packet, and the names it
+finds join the model. Names are then visible everywhere they matter — the
+**Names** tab lists each one with where it came from and opens the hosts that
+answer to it, the hostname column reads `web.example +2` when a host has more,
+a host's record lists every name with its source, a service's record shows the
+names its certificate claims and every URL it answers on, and the filter matches
+all of them. The **URLs** export then covers the address *and* every
+name a host is known by — resolved names and the ones a TLS service claims in
+its certificate (`ssl-cert` subject and subject-alternative names, wildcards
+excluded) — which is the combined endpoint list a screenshotting tool wants. The
+`names` field carries the same list into a CSV or JSON export; the `url` field
+stays the address-only form.
 
 Leave out `-iL`, `-oA` and `sudo`: the scope, the output and any elevation are
 added for you. `{ports}` expands to the open ports already in the model — the

@@ -15,7 +15,9 @@ from __future__ import annotations
 from rich.console import Group, RenderableType
 from rich.text import Text
 
+from seek.nmap import names as name_mod
 from seek.nmap import vulns
+from seek.nmap.export import service_url, url_for
 from seek.nmap.models import Host, Service, Vulnerability
 from seek.nmap.views import ServiceGroup
 from seek.tui.nmap.views import Grouping
@@ -159,6 +161,16 @@ def host_detail(host: Host) -> RenderableType:
                        f"{len(host.services) - len(host.open_services)} other"
                        f"   ·   scans: {', '.join(host.sources) or ABSENT}"),
     ]
+    known = name_mod.host_names(host)
+    if known:
+        parts.append(Text(""))
+        parts.append(_section("Names", len(known)))
+        for name, source in known:
+            line = Text(" " * 4)
+            line.append("• ", style=_KEY)
+            line.append(f"{name:<32}")
+            line.append(source, style=_KEY)
+            parts.append(line)
     if host.open_services:
         parts.append(Text(""))
         parts.append(_section("Services", len(host.open_services)))
@@ -196,6 +208,14 @@ def service_detail(svc: Service, host: Host | None = None) -> RenderableType:
               (("info", svc.extrainfo), ("tunnel", svc.tunnel), ("ostype", svc.ostype)) if v]
     if extras:
         parts.append(_pair("also", "   ·   ".join(extras)))
+    if svc.cert_names:
+        parts.append(_pair("cert names", ", ".join(svc.cert_names)))
+    urls = _service_urls(svc, host)
+    if urls:
+        parts.append(Text(""))
+        parts.append(_section("URLs", len(urls)))
+        for url in urls:
+            parts.append(_bullet(url))
     if svc.vulnerabilities:
         parts.append(Text(""))
         parts.append(_section("Vulnerabilities", len(svc.vulnerabilities), "bold red"))
@@ -205,6 +225,21 @@ def service_detail(svc: Service, host: Host | None = None) -> RenderableType:
         parts.append(_section("Scripts", len(svc.scripts)))
         parts.extend(_script_block(svc.scripts))
     return Group(*parts)
+
+
+def _service_urls(svc: Service, host: Host | None) -> list[str]:
+    """Every address the service answers on - the one scanned and every name.
+
+    Virtual hosting means these can serve different things, so a list that shows
+    only the address hides half of what was found.
+    """
+    if host is None:
+        return [u for u in [url_for(n, svc) for n in svc.cert_names] if u]
+    base = service_url(host, svc)
+    if not base:
+        return []
+    known = [n for n, _ in name_mod.host_names(host)]
+    return list(dict.fromkeys([base, *(url_for(n, svc) for n in known)]))
 
 
 def group_detail(group: ServiceGroup) -> RenderableType:

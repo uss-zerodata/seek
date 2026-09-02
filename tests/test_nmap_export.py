@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 from seek.nmap import export, views
+from seek.nmap import names as name_mod
 from seek.nmap.merge import load
 from seek.nmap.views import prepare
 from seek.tui.nmap import views as vdefs
@@ -60,8 +61,79 @@ def test_the_named_recipes_produce_what_they_always_did():
         "192.0.2.1:22", "192.0.2.1:80", "192.0.2.2:80"]
 
 
+# --- the names a host is known by -------------------------------------------
+
+
+def test_the_names_are_the_resolved_ones_and_the_certificates():
+    """A reverse lookup fills `hostnames`; a TLS service claims more in its cert."""
+    record = _records("scripts")[0]
+    assert export.names_for(record) == ["scripted.example", "example.test"]
+
+
+def test_certificate_names_come_from_the_output_and_the_tables():
+    """`ssl-cert` puts the subject in the text but the SANs only in its tables."""
+    host = _hosts("scripts")[0]
+    svc = next(s for s in host.services if s.port == 443)
+    assert name_mod.cert_names(svc) == ["example.test"]
+
+
+def test_a_wildcard_certificate_name_is_not_a_target():
+    from seek.nmap.models import ScriptResult, Service
+
+    svc = Service(protocol="tcp", port=443, state="open", name="https", scripts=[
+        ScriptResult(id="ssl-cert",
+                     output="Subject: commonName=*.example.test",
+                     data={"extensions": [{"value": "DNS:*.example.test, "
+                                                    "DNS:www.example.test"}]}),
+    ])
+    assert name_mod.cert_names(svc) == ["www.example.test"], "nothing resolves a wildcard"
+
+
+def test_a_certificate_naming_an_address_is_not_a_name():
+    from seek.nmap.models import ScriptResult, Service
+
+    svc = Service(protocol="tcp", port=443, state="open", name="https", scripts=[
+        ScriptResult(id="ssl-cert", output="Subject: commonName=10.0.0.5"),
+    ])
+    assert name_mod.cert_names(svc) == []
+
+
+def test_a_service_with_no_certificate_contributes_no_names():
+    host = _hosts("basic")[0]
+    svc = next(s for s in host.services if s.port == 22)
+    assert name_mod.cert_names(svc) == []
+
+
+def test_urls_cover_the_address_and_every_name():
+    """The reference builds an IP list and a domain list, then combines them."""
+    urls = export.export_urls(_records("scripts"))
+    assert urls == ["https://192.0.2.10", "https://scripted.example",
+                    "https://example.test"]
+
+
+def test_a_name_carries_the_port_of_the_service_it_was_found_on():
+    from seek.nmap.models import Host, ScriptResult, Service
+
+    host = Host(address="10.0.0.5", hostnames=["web.example.test"], state="up",
+                reason="syn-ack", services=[
+                    Service(protocol="tcp", port=8443, state="open", name="https",
+                            tunnel="ssl", scripts=[
+                                ScriptResult(id="ssl-cert",
+                                             output="commonName=alt.example.test")]),
+                ])
+    name_mod.attach(host)              # what `views.prepare` does at load time
+    assert export.export_urls([export.Record(host)]) == [
+        "https://10.0.0.5:8443", "https://web.example.test:8443",
+        "https://alt.example.test:8443"]
+
+
+def test_the_names_field_can_be_exported_like_any_other():
+    row = export.rows(_records("scripts"), ["address", "names"])
+    assert row == [("192.0.2.10", "scripted.example,example.test")]
+
+
 def test_urls_use_the_right_scheme_and_keep_odd_ports():
-    assert export.export_urls(_records("scripts")) == ["https://192.0.2.10"]
+    assert "https://192.0.2.10" in export.export_urls(_records("scripts"))
     assert export.export_urls(_records("vuln")) == [
         "http://192.0.2.30", "https://192.0.2.30", "http://192.0.2.30:8080"]
 
@@ -206,3 +278,10 @@ def test_a_statistics_coverage_line_carries_the_hosts_it_counts():
     row = next(r for r in vdefs.statistics_view().rows(scans)
                if r.cells[0] == "With open ports")
     assert [r.identity for r in row.records] == [("192.0.2.1",), ("192.0.2.2",)]
+
+
+def test_the_names_are_attached_at_load_not_re_derived_per_view():
+    """`prepare` runs the recogniser once; the views read the field."""
+    host = _hosts("scripts")[0]
+    svc = next(s for s in host.services if s.port == 443)
+    assert svc.cert_names == ["example.test"], "prepare attached them"

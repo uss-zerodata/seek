@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
-from seek.nmap import vulns
+from seek.nmap import names, vulns
 from seek.nmap.models import Host, ScanSet, Service
 
 
@@ -51,7 +51,9 @@ class ServiceGroup:
 
 
 def host_search_text(host: Host) -> str:
-    parts = [host.address, *host.hostnames, host.os, host.osclass, host.state]
+    # Names a certificate claims are searchable too: a host whose only name is
+    # in its certificate must still be findable by that name.
+    parts = [host.address, *names.names_of(host), host.os, host.osclass, host.state]
     parts += [s.name for s in host.open_services if s.name]
     parts += [s.product for s in host.open_services if s.product]
     return " ".join(p for p in parts if p)
@@ -178,7 +180,8 @@ def group_by(hosts: list[Host], key: str) -> list[tuple[str, list[tuple[Host, Se
 
 
 def prepare(scans: ScanSet) -> ScanSet:
-    """Attach vulnerabilities to every service. Called once after loading."""
+    """Attach vulnerabilities and certificate names. Called once after loading."""
     for host in scans.hosts:
         vulns.attach(host)
+        names.attach(host)
     return scans

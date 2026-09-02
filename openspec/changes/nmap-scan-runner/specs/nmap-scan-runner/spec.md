@@ -165,6 +165,12 @@ SHALL NOT be lost.
 The user SHALL be able to cancel a running scan, which SHALL end the process,
 and the run SHALL be recorded as cancelled with the output it produced.
 
+A running scan SHALL NOT be ended by accident: because a scan writes its output
+only once it finishes, quitting mid-run discards the work, so every route out of
+the application SHALL first say what is running and what leaving costs, and
+SHALL leave only on an explicit answer. Dismissing that question SHALL keep the
+application open. No scan SHALL be left running once the application has gone.
+
 #### Scenario: Live output
 - **WHEN** a scan is running
 - **THEN** its output appears as it is produced and the view follows the newest line
@@ -176,6 +182,18 @@ and the run SHALL be recorded as cancelled with the output it produced.
 #### Scenario: Cancelling
 - **WHEN** the user cancels a running scan
 - **THEN** the process ends, the run is recorded as cancelled, and the output it produced is kept
+
+#### Scenario: Leaving while a scan runs
+- **WHEN** the user quits, by any of the ways the application can be quit, while a scan is running
+- **THEN** the system says which scan is running and that leaving ends it, and quits only on an explicit answer
+
+#### Scenario: The safe answer is the easy one
+- **WHEN** the user dismisses that question rather than answering it
+- **THEN** the application stays open and the scan keeps running
+
+#### Scenario: Leaving with nothing running
+- **WHEN** the user quits and no scan is running
+- **THEN** the application exits without asking
 
 ### Requirement: A finished scan is written where an external one would be
 A successful scan SHALL leave its output in the directory the viewer was opened

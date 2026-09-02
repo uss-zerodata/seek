@@ -80,6 +80,23 @@
 - [x] 10.4 README: the scan workflow end to end, the preset config, `sudo -n` and what to do when it is refused.
 - [x] 10.5 AGENTS.md: the command field is parsed and never shelled; privilege is derived from flags; freezing is a view state; merging is a re-read; tests never run a real nmap.
 
+## 12. Not by accident (follow-up)
+
+- [x] 12.1 Every route out - `q`, the staged `Esc`, `ctrl+c` and the system palette's Quit (`action_quit` overridden: a guard one keypress can walk around is not a guard) - goes through one `_request_quit`.
+- [x] 12.2 With a scan running it names the scan, its elapsed time and what leaving costs (a scan that does not finish writes no file); `Esc` on the question keeps scanning.
+- [x] 12.3 The `Esc` hint says "quit (asks while a scan runs)" while one is running.
+- [x] 12.4 Tests: each route asks; dismissing stays; choosing to quit ends the scan and leaves; with nothing running it exits immediately.
+
+## 13. Names, everywhere they matter (follow-up)
+
+- [x] 13.1 `03 · DNS names (reverse lookup, sends nothing)` preset: `-sL -R`, the one preset without `-n` — resolving is the point, and a list scan sends the targets nothing.
+- [x] 13.2 `nmap/names.py`: the recogniser, run once by `views.prepare`, attaching `Service.cert_names` — the `ssl-cert` subject *and* its SAN table, wildcards and addresses dropped.
+- [x] 13.3 The URL export covers the address and every name; a `names` field carries them into CSV/JSON; `host_search_text` includes them so the filter finds a host by a certificate name.
+- [x] 13.4 The host record lists every name with its source; the service record shows its certificate names and every URL it answers on.
+- [x] 13.5 The hostname column reads `name +N`, in every list that shows one.
+- [x] 13.6 A **Names** tab: each name, its source, its hosts and ports; `Enter` opens the hosts that answer to it; an empty state that says how names are found.
+- [x] 13.7 Tests: extraction from output and tables; wildcards and addresses refused; the column, both panes, the filter, the tab, the drill-down and the empty state.
+
 ## 11. Finalisation
 
 - [x] 11.1 `uv run ruff check` clean.

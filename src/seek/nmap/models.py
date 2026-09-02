@@ -62,7 +62,17 @@ class Service:
     conf: str | None = None
     scripts: list[ScriptResult] = field(default_factory=list)
     vulnerabilities: list[Vulnerability] = field(default_factory=list)
+    # (name, where it came from) for every DNS name this service revealed -
+    # its certificate, a redirect, a Windows identity script. Filled by
+    # `names.attach` during `views.prepare`, like `vulnerabilities` is: the
+    # views must not re-parse script text on every keystroke.
+    names: list[tuple[str, str]] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
+
+    @property
+    def cert_names(self) -> list[str]:
+        """Just the names this service's own certificate claims."""
+        return [n for n, source in self.names if source == "certificate"]
 
     @property
     def key(self) -> tuple[str, int]:

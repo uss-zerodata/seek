@@ -73,7 +73,22 @@ def _scheme(svc: Service) -> str:
     return "http"
 
 
-def _url(host: Host, svc: Service) -> str:
+# --- the names a host is known by -------------------------------------------
+
+
+def names_for(record: Record) -> list[str]:
+    """Every DNS name known for this record: resolved, then certificate-claimed.
+
+    Read from the model rather than re-derived - `names.attach` did the work at
+    load time.
+    """
+    found = list(record.host.hostnames)
+    for svc in record.services:
+        found += svc.cert_names
+    return list(dict.fromkeys(n for n in found if n))
+
+
+def service_url(host: Host, svc: Service) -> str:
     """The URL for a web service, with the port unless it is the default."""
     if not _is_http(svc):
         return ""
@@ -98,6 +113,7 @@ def _svc(record: Record, get: Callable[[Service], object]) -> str:
 FIELDS: list[tuple[str, Callable[[Record], str]]] = [
     ("address", lambda r: r.host.address),
     ("hostname", lambda r: r.host.hostname or ""),
+    ("names", lambda r: ",".join(names_for(r))),
     ("os", lambda r: r.host.os or ""),
     ("state", lambda r: r.host.state or ""),
     ("reachable", lambda r: "yes" if r.host.reachable else "no"),
@@ -111,7 +127,7 @@ FIELDS: list[tuple[str, Callable[[Record], str]]] = [
     ("extrainfo", lambda r: _svc(r, lambda s: s.extrainfo)),
     ("tunnel", lambda r: _svc(r, lambda s: s.tunnel)),
     ("vulns", lambda r: str(sum(len(s.vulnerabilities) for s in r.services))),
-    ("url", lambda r: "" if r.service is None else _url(r.host, r.service)),
+    ("url", lambda r: "" if r.service is None else service_url(r.host, r.service)),
 ]
 FIELD_NAMES = [name for name, _ in FIELDS]
 _ACCESSORS = dict(FIELDS)
@@ -204,8 +220,31 @@ def export_host_ports(records: Iterable[Record]) -> list[str]:
 
 
 def export_urls(records: Iterable[Record]) -> list[str]:
-    """HTTP(S) URLs, including the port whenever it is not the scheme default."""
-    return _unique(_url(r.host, s) for r in records for s in r.services)
+    """HTTP(S) URLs for every host *and* every name it is known by.
+
+    The address is what the scan found; the names are what a web server answers
+    to, and virtual hosting means the two often serve different things. A list
+    meant for a screenshotting tool wants both, which is exactly the two lists
+    the reference workflow builds separately and then combines.
+    """
+    urls: list[str] = []
+    for record in records:
+        known = names_for(record)
+        for svc in record.services:
+            base = service_url(record.host, svc)
+            if not base:                    # not an HTTP service
+                continue
+            urls.append(base)
+            urls += [url_for(name, svc) for name in known]
+    return _unique(urls)
+
+
+def url_for(host_name: str, svc: Service) -> str:
+    """The same URL, for a name the host answers to rather than its address."""
+    scheme = _scheme(svc)
+    if svc.port == _SCHEME_PORTS[scheme]:
+        return f"{scheme}://{host_name}"
+    return f"{scheme}://{host_name}:{svc.port}"
 
 
 # (label, recipe, the column its items are - or None when the shape is fixed and

@@ -1,3 +1,45 @@
+## ADDED Requirements
+
+### Requirement: Every name a host is known by is visible
+A scan learns names two ways — a reverse lookup, and the certificate a TLS
+service presents — and both SHALL be recognised, kept with the host they belong
+to, and shown wherever a name is relevant. A name that nothing could resolve,
+such as a wildcard or an address, SHALL NOT be presented as one.
+
+A host's record SHALL list every name known for it together with where each came
+from. A service's record SHALL show the names its own certificate claims and
+every URL it answers on, the scanned address included. A list that shows a
+host's name SHALL indicate when more names are known for it than the one shown.
+The filter SHALL match any of a host's names, so a host can be found by a name
+no column displays.
+
+The system SHALL also provide an overview of the names themselves: each name,
+where it came from, and the hosts and ports behind it, opening to those hosts.
+
+#### Scenario: A name only a certificate knows
+- **WHEN** a host has no resolved name and its TLS service's certificate names it
+- **THEN** that name is shown for the host rather than the host appearing to have none
+
+#### Scenario: Where a name came from
+- **WHEN** the user looks at the record of a host with a resolved name and a certificate name
+- **THEN** both are listed, each saying whether it was resolved or read from a certificate, and on which port
+
+#### Scenario: A service's own names and addresses
+- **WHEN** the user looks at the record of an HTTP service on a host with two names
+- **THEN** the names its certificate claims are shown, and a URL for the address and for each name
+
+#### Scenario: More names than fit a column
+- **WHEN** a list shows the name of a host that has three
+- **THEN** it shows one and indicates that two more are known
+
+#### Scenario: Finding a host by a certificate name
+- **WHEN** the user filters by a name that appears only in a certificate
+- **THEN** the host that presented it is matched
+
+#### Scenario: The names overview
+- **WHEN** the user opens the names overview
+- **THEN** every name found is listed with its source and the hosts behind it, and opening one shows those hosts
+
 ## MODIFIED Requirements
 
 ### Requirement: Entry point
@@ -65,6 +107,14 @@ selected.
 #### Scenario: Export URLs
 - **WHEN** the user exports URLs and a host offers HTTP on a non-standard port
 - **THEN** a URL including that port is produced, with the scheme reflecting whether the service is TLS-wrapped
+
+#### Scenario: URLs cover the names a host answers to
+- **WHEN** a host has a resolved name and its TLS service's certificate claims another
+- **THEN** the URL export produces the address and both names, each with that service's scheme and port
+
+#### Scenario: A name nothing can resolve is not exported
+- **WHEN** a certificate claims a wildcard name or an address
+- **THEN** it does not appear in the URL export
 
 #### Scenario: Exports respect the filter
 - **WHEN** a filter is active, nothing is marked, and the user exports any derived list

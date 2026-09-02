@@ -550,3 +550,107 @@ async def test_the_shipped_presets_are_the_documented_workflow():
     assert needs_root(parse_args(discovery)), "-PE/-PP/-PU need raw sockets"
     smb = DEFAULT_PRESETS["03 · SMB vulnerabilities (139, 445)"]
     assert not needs_root(parse_args(smb)), "a script scan on two ports does not"
+    dns = parse_args(DEFAULT_PRESETS["03 · DNS names (reverse lookup, sends nothing)"])
+    assert "-n" not in dns, "resolving names is the point of this one"
+    assert "-sL" in dns and "-R" in dns
+    assert not needs_root(dns)
+
+
+# --- not by accident --------------------------------------------------------
+
+
+async def _start_a_slow_scan(pilot, app):
+    await _run_a_scan(pilot, app)
+    for _ in range(60):
+        await pilot.pause(0.1)
+        if app.runner.runs:
+            break
+    assert app.runner.busy() is not None
+
+
+def _slow(tmp_path) -> Config:
+    slow = _stub(tmp_path, "#!/bin/sh\necho going\nsleep 30\n", name="slow-nmap")
+    return Config(nmap_path=slow, nmap_presets={"Quick": "-sV"},
+                  scan_output_dir=str(tmp_path))
+
+
+async def test_quitting_while_a_scan_runs_asks_first(tmp_path):
+    app = _app(tmp_path, "basic", config=_slow(tmp_path))
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        await _start_a_slow_scan(pilot, app)
+        await pilot.press("q")
+        await pilot.pause(0.5)
+        assert app.is_running, "not gone yet"
+        assert any("Quitting ends it" in t for t in _labels(app))
+        await pilot.press("escape")             # the safe answer
+        await pilot.pause(0.4)
+        assert app.is_running and app.runner.busy() is not None
+        app.runner.cancel()
+        await pilot.pause(1.0)
+
+
+async def test_choosing_to_keep_scanning_stays(tmp_path):
+    app = _app(tmp_path, "basic", config=_slow(tmp_path))
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        await _start_a_slow_scan(pilot, app)
+        await pilot.press("q")
+        await pilot.pause(0.5)
+        await _choose(pilot, app, "stay")
+        await pilot.pause(0.4)
+        assert app.is_running and app.runner.busy() is not None
+        app.runner.cancel()
+        await pilot.pause(1.0)
+
+
+async def test_choosing_to_quit_ends_the_scan_and_leaves(tmp_path):
+    app = _app(tmp_path, "basic", config=_slow(tmp_path))
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        await _start_a_slow_scan(pilot, app)
+        await pilot.press("q")
+        await pilot.pause(0.5)
+        await _choose(pilot, app, "quit")
+        await pilot.pause(0.6)
+        assert not app.is_running
+    assert "[seek] cancelling" in "\n".join(app.runner.runs[0].log)
+
+
+async def test_escape_at_the_top_is_guarded_too(tmp_path):
+    app = _app(tmp_path, "basic", config=_slow(tmp_path))
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        await _start_a_slow_scan(pilot, app)
+        app.query_one(Tabs).active = "hosts"     # the first tab, where Esc quits
+        await pilot.pause(0.4)
+        await pilot.press("escape")
+        await pilot.pause(0.5)
+        assert app.is_running
+        assert any("Quitting ends it" in t for t in _labels(app))
+        await pilot.press("escape")
+        await pilot.pause(0.3)
+        app.runner.cancel()
+        await pilot.pause(1.0)
+
+
+async def test_the_hint_bar_says_that_quitting_will_ask(tmp_path):
+    app = _app(tmp_path, "basic", config=_slow(tmp_path))
+    async with app.run_test(size=(200, 40)) as pilot:
+        await pilot.pause(0.3)
+        assert "Esc quit" in _render(app.query_one("#hint-bar"))
+        await _start_a_slow_scan(pilot, app)
+        app.query_one(Tabs).active = "hosts"
+        await pilot.pause(0.4)
+        assert "asks while a scan runs" in _render(app.query_one("#hint-bar"))
+        app.runner.cancel()
+        await pilot.pause(1.0)
+
+
+async def test_quitting_with_nothing_running_is_immediate(tmp_path):
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        await pilot.press("q")
+        await pilot.pause(0.4)
+        assert not app.is_running, "no scan, no question"

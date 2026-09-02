@@ -54,6 +54,7 @@ _TABS: list[tuple[str, str]] = [
     ("group-service", "By service"),
     ("group-product", "By product"),
     ("group-port", "By port"),
+    ("names", "Names"),
     ("scans", "Scans"),
 ]
 _GROUP_TABS = ("group-service", "group-product", "group-port")
@@ -125,6 +126,9 @@ _HINTS = {
     "grouping": [("↑↓", "select"), ("←→", "scroll detail"), ("↵", "hosts"),
                  ("b", "next grouping"), ("1-9", "sort"), ("/", "filter"),
                  ("m", "mark"), ("x", "export"), ("?", "help"), ("^P", "commands")],
+    "names": [("↑↓", "select"), ("←→", "scroll detail"), ("↵", "hosts"),
+              ("1-9", "sort"), ("r", "reverse"), ("/", "filter"), ("m", "mark"),
+              ("n", "scan"), ("x", "export"), ("?", "help"), ("^P", "commands")],
     "scans": [("↑↓", "select"), ("o", "report view"), ("p", "freeze log"),
               ("c", "cancel"), ("n", "new scan"), ("1-9", "sort"), ("/", "filter"),
               ("x", "export"), ("?", "help"), ("^P", "commands")],
@@ -473,6 +477,10 @@ class NmapApp(App[int]):
         if query:
             headline = f'Nothing matches "{query}"'
             hint = f"Esc clears the filter · {self._unfiltered} row(s) without it"
+        elif self._active_tab == "names":
+            headline = "No name is known for any host"
+            hint = ("the DNS names preset resolves them, and a TLS service's "
+                    "certificate is read when it is scanned")
         elif self._active_tab == "scans" and not self.nmap.available:
             headline = "Scanning is unavailable"
             hint = f"{self.nmap.reason} · everything else in the viewer still works"
@@ -595,7 +603,9 @@ class NmapApp(App[int]):
             return "clear filter"
         if len(self.stack) > 1:
             return "back"
-        return "quit" if self._active_tab == _TABS[0][0] else "first tab"
+        if self._active_tab != _TABS[0][0]:
+            return "first tab"
+        return "quit (asks while a scan runs)" if self.runner.busy() else "quit"
 
     # --- interaction -------------------------------------------------------
 
@@ -691,6 +701,8 @@ class NmapApp(App[int]):
     def _view_for_tab(self, tab_id: str) -> vdefs.View:
         if tab_id == "scans":
             return scan_views.scans_view(self.runner.runs, self._diffs)
+        if tab_id == "names":
+            return vdefs.names_view()
         if tab_id == "services":
             return vdefs.services_view()
         if tab_id == "stats":
@@ -1038,7 +1050,35 @@ class NmapApp(App[int]):
         await self.push_screen_wait(NmapHelpScreen())
 
     def action_quit_now(self) -> None:
-        self.exit(0)
+        self._request_quit()
+
+    async def action_quit(self) -> None:
+        """Textual's own quit - `ctrl+c` and the system palette - guarded too.
+
+        Overridden rather than left alone: a guard one keypress can walk around
+        is not a guard.
+        """
+        self._request_quit()
+
+    @work(exclusive=True, group="quit")
+    async def _request_quit(self) -> None:
+        """Leaving while a scan runs ends it, so ask first.
+
+        A scan writes its output only when it finishes, so quitting mid-run
+        throws the work away - which is worth one keypress of confirmation, and
+        `Esc` is the answer that keeps scanning.
+        """
+        running = self.runner.busy()
+        if running is None:
+            self.exit(0)
+            return
+        answer = await self.push_screen_wait(ChoiceScreen(
+            f"{running.preset} has been running for "
+            f"{scan_views.elapsed(running.elapsed)}. Quitting ends it, and a "
+            f"scan that does not finish writes no file.",
+            [("stay", "Keep scanning"), ("quit", "End the scan and quit")]))
+        if answer == "quit":
+            self.exit(0)
 
     def on_unmount(self) -> None:
         """Never leave a scan running behind a closed viewer.
@@ -1083,7 +1123,7 @@ class NmapApp(App[int]):
         if self._active_tab != _TABS[0][0]:
             self._activate(_TABS[0][0])
             return
-        self.exit(0)
+        self._request_quit()
 
     def on_data_table_row_selected(self, _event) -> None:
         self.action_drill()

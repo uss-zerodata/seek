@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from seek.nmap import names as name_mod
 from seek.nmap import views as proj
 from seek.nmap.export import Record
 from seek.nmap.merge import addr_key as _addr
@@ -111,9 +112,21 @@ def _reach(host: Host) -> str:
 HOST_COLUMNS = ("Address", "Hostname", "OS", "State", "Svcs", "Scans")
 
 
+def name_cell(host: Host) -> str:
+    """The name a host is best known by, and how many more it has.
+
+    The hostname column used to read `—` for a host whose only name came from a
+    certificate, which is the app knowing something and not saying it.
+    """
+    known = name_mod.names_of(host)
+    if not known:
+        return ABSENT
+    return known[0] if len(known) == 1 else f"{known[0]} +{len(known) - 1}"
+
+
 def _host_row(h: Host) -> Row:
     return Row(
-        cells=(h.address, _fmt(h.hostname), _fmt(h.os), _reach(h),
+        cells=(h.address, name_cell(h), _fmt(h.os), _reach(h),
                str(len(h.open_services)), str(len(h.sources))),
         text=proj.host_search_text(h) + " " + _reach(h),
         target=h,
@@ -210,7 +223,7 @@ def service_detail(group: proj.ServiceGroup) -> View:
         out = []
         for host, svc in group.members:
             out.append(Row(
-                cells=(host.address, _fmt(host.hostname), _fmt(svc.version),
+                cells=(host.address, name_cell(host), _fmt(svc.version),
                        _fmt(svc.extrainfo), str(len(svc.vulnerabilities)),
                        ",".join(svc.sources)),
                 text=f"{host.address} {host.hostname or ''} {svc.version or ''}",
@@ -273,7 +286,7 @@ def grouping_detail(group: Grouping) -> View:
         for host, svc in sorted(group.members,
                                 key=lambda m: (_addr(m[0].address), m[1].port)):
             out.append(Row(
-                cells=(host.address, _fmt(host.hostname), f"{svc.port}/{svc.protocol}",
+                cells=(host.address, name_cell(host), f"{svc.port}/{svc.protocol}",
                        _fmt(svc.name), _fmt(svc.version),
                        str(len(svc.vulnerabilities)), ",".join(svc.sources)),
                 text=" ".join(filter(None, [host.address, host.hostname, str(svc.port),
@@ -311,6 +324,54 @@ def _heading(name: str, rank: int) -> Row:
     """
     return Row(cells=(name, "", ""), text="", section=name, section_rank=rank,
                heading=True, style=HEADING_STYLE)
+
+
+def names_view() -> View:
+    """Every DNS name the scans revealed, and what it belongs to.
+
+    Names are the half of an engagement that does not fit in an address column:
+    a certificate on one host can name three others, and that is worth seeing as
+    a list rather than only inside one host's record.
+    """
+
+    def build(scans: ScanSet) -> list[Row]:
+        # `Host` and `Service` are unhashable (slots dataclasses with `eq`), so
+        # everything here is keyed by address and port rather than by object.
+        hosts_for: dict[str, dict[str, Host]] = {}
+        sources_for: dict[str, set[str]] = {}
+        members_for: dict[str, dict[tuple, tuple[Host, Service]]] = {}
+        for host in scans.hosts:
+            for name, source in name_mod.host_names(host):
+                hosts_for.setdefault(name, {})[host.address] = host
+                sources_for.setdefault(name, set()).add(
+                    "resolved" if source == "resolved" else "certificate")
+                bucket = members_for.setdefault(name, {})
+                for svc in host.open_services:
+                    bucket[(host.address, svc.protocol, svc.port)] = (host, svc)
+        out = []
+        for name in sorted(hosts_for):
+            hosts = list(hosts_for[name].values())
+            members = list(members_for.get(name, {}).values())
+            ports = sorted({f"{s.port}/{s.protocol}" for _, s in members},
+                           key=lambda p: int(p.split("/")[0]))
+            source = ", ".join(sorted(sources_for[name]))
+            out.append(Row(
+                cells=(name, source, str(len(hosts)),
+                       ", ".join(ports[:6]) + (" …" if len(ports) > 6 else "")),
+                text=f"{name} {source} " + " ".join(h.address for h in hosts),
+                # The pane reports the bucket; `Enter` opens the hosts, which is
+                # right even for a name whose host has no open service.
+                target=(Grouping(key="name", label=name, members=members)
+                        if members else None),
+                drill=host_list(name, hosts, f"{source} · {len(hosts)} host(s)"),
+                addresses=tuple(h.address for h in hosts),
+                records=tuple(Record(h) for h in hosts),
+                sort_key=(name, source, len(hosts), ""),
+            ))
+        return out
+
+    return View(title="Names", columns=("Name", "Source", "Hosts", "Ports"),
+                build=build, kind="names", tab="names")
 
 
 def statistics_view() -> View:

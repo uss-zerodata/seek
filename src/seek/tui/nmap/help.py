@@ -18,7 +18,7 @@ _GROUPS = [
         ("", "a statistics figure opens the hosts, services or ports it counts"),
         ("Esc", "leave the filter → clear it → back one level → quit"),
         ("", "back lands on the row you opened, in the order you left it"),
-        ("q", "quit"),
+        ("q", "quit — asks first while a scan is running"),
         ("Ctrl+P", "command palette — every action here, searchable by name"),
     ]),
     ("Look at", [
@@ -26,6 +26,7 @@ _GROUPS = [
         ("", "the marked tab follows a drill-down onto another overview"),
         ("d", "show / hide the detail pane"),
         ("s", "statistics — coverage, services and ports, each figure openable"),
+        ("", "Names lists every DNS name found, resolved or from a certificate"),
         ("b", "group by service, then product, then port"),
         ("u", "only hosts with evidence of being reachable"),
     ]),

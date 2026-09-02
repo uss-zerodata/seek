@@ -290,6 +290,17 @@ stdout, `cd`) cannot run while Textual owns the screen. They set
   arguments only - no `sudo`, no `-iL`, no `-oA` - and `{ports}` expands to the
   open ports already in the model, which is the grep step the reference does
   between the top-1000 scan and the version scan.
+- **A host is known by more names than its address.** `nmap/names.py` is to
+  names what `vulns.py` is to findings: a recogniser run once by
+  `views.prepare`, attaching `Service.cert_names` so no view re-parses script
+  text on a keystroke. It reads the `ssl-cert` subject *and* its SAN table - the
+  SANs are only in the structured `data`, never in `output`, so text-only
+  parsing misses half. Wildcards and addresses are dropped: nothing resolves
+  `*.example.test`. A hand-built `Host` in a test has no names until
+  `names.attach` is called, exactly as it has no vulnerabilities.
+  Names surface in the Names tab, the hostname column (`name +N`), both detail
+  panes, `host_search_text` (so the filter finds them) and the URL export; the
+  `url` *field* stays address-only, so both forms remain reachable.
 - **Freezing the log is not pausing the scan.** nmap's timers run against the
   wall clock, so `SIGSTOP` can time hosts out on resume; `p` is a view state and
   the pane header says the scan is still running. `runner` only runs or cancels.

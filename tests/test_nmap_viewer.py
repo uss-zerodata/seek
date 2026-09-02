@@ -742,8 +742,8 @@ async def test_the_overviews_are_shown_as_tabs():
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.3)
         labels = [str(t.label) for t in app.query_one(Tabs).query(Tab)]
-        assert labels == ["Hosts", "Services", "Statistics",
-                          "By service", "By product", "By port", "Scans"]
+        assert labels == ["Hosts", "Services", "Statistics", "By service",
+                          "By product", "By port", "Names", "Scans"]
         assert app.query_one(Tabs).active == "hosts"
 
 
@@ -1745,3 +1745,84 @@ async def test_a_modal_moves_with_j_and_k_like_every_other_list():
         assert options.highlighted == start + 1
         await pilot.press("escape")
         await pilot.pause(0.2)
+
+
+# --- the names a host answers to, wherever they are worth showing ------------
+
+
+async def test_the_hostname_column_admits_when_more_names_are_known():
+    """`—` for a host whose only name is in a certificate is the app knowing
+    something and not saying it."""
+    app = _app("scripts")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        assert app._rows[0].cells[1] == "scripted.example +1"
+
+
+async def test_a_host_can_be_filtered_by_a_name_from_its_certificate():
+    app = _app("scripts")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        await _type(pilot, "example.test")
+        assert _cells(app) == ["192.0.2.10"], "found by a name no column shows first"
+
+
+async def test_the_host_record_lists_every_name_and_where_it_came_from():
+    app = _app("scripts")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        shown = _render(app.query_one("#detail-body"))
+        assert "Names (2)" in shown
+        assert "scripted.example" in shown and "resolved" in shown
+        assert "example.test" in shown and "certificate on 443/tcp" in shown
+
+
+async def test_a_service_record_lists_its_certificate_names_and_urls():
+    app = _app("scripts")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        await pilot.press("enter")                  # into the host's services
+        await pilot.pause(0.4)
+        shown = _render(app.query_one("#detail-body"))
+        assert "cert names" in shown and "example.test" in shown
+        assert "URLs (3)" in shown
+        assert "https://192.0.2.10" in shown
+        assert "https://example.test" in shown, "the name, not only the address"
+
+
+async def test_the_names_tab_lists_every_name_with_its_source():
+    app = _app("scripts", "basic")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        app.query_one(Tabs).active = "names"
+        await pilot.pause(0.4)
+        rows = {r.cells[0]: r.cells[1] for r in app._rows}
+        assert rows == {"alpha.example": "resolved",
+                        "example.test": "certificate",
+                        "scripted.example": "resolved"}
+
+
+async def test_a_name_opens_the_hosts_that_answer_to_it():
+    app = _app("scripts", "basic")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        app.query_one(Tabs).active = "names"
+        await pilot.pause(0.4)
+        row = next(i for i, r in enumerate(app._rows) if r.cells[0] == "example.test")
+        app.query_one(DataTable).move_cursor(row=row)
+        await pilot.press("enter")
+        await pilot.pause(0.4)
+        assert app.view.title == "example.test"
+        assert _cells(app) == ["192.0.2.10"]
+
+
+async def test_the_names_tab_says_so_when_nothing_has_a_name():
+    app = _app("pn-asserted")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        app.query_one(Tabs).active = "names"
+        await pilot.pause(0.4)
+        if not app._rows:
+            shown = str(app.query_one("#empty").render())
+            assert "No name is known" in shown
+            assert "DNS names preset" in shown

@@ -281,6 +281,14 @@ def parse_target(line: str) -> Target | None:
     return Target(raw=text, error="not an address, range, hostname or URL")
 
 
+def is_hostname(text: str) -> bool:
+    """Is this a name something could resolve? Not an address, not a wildcard."""
+    candidate = text.strip().rstrip(".")
+    if not candidate or candidate.startswith("*"):
+        return False
+    return bool(_HOSTNAME.match(candidate)) and not _looks_numeric(candidate)
+
+
 def _looks_numeric(text: str) -> bool:
     """`10.0.0.300` is a botched address, not a hostname.
 
@@ -386,6 +394,10 @@ DEFAULT_PRESETS: dict[str, str] = {
         " --script-args smbuser=USERNAME,smbpass=PASSWORD",
     "03 · Siemens S7 (TCP 102)":
         "-vv -T4 -n -Pn -sT --script s7-info.nse -p102",
+    # No `-n` here, unlike every other preset: resolving the names *is* the
+    # point. `-sL` sends nothing to the targets - it only lists and resolves.
+    "03 · DNS names (reverse lookup, sends nothing)":
+        "-vv -T4 -sL -R",
 }
 
 PORTS_PLACEHOLDER = "{ports}"
