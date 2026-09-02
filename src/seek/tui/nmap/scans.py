@@ -81,9 +81,12 @@ def history_rows(history: list[timeline.Scan], live: list[Run]) -> list[Row]:
         ))
     for run in live:
         result = run.progress() if run.running else run.result
+        # A capture read back from disk knows when it was written but has no
+        # meaningful elapsed time: it was not timed here.
+        when = getattr(run, "recorded", "") or elapsed(run.elapsed)
         out.append(Row(
             cells=(f"{_STATE_GLYPH[run.state]} {run.label}", run.scope,
-                   str(run.state), elapsed(run.elapsed), result),
+                   str(run.state), when, result),
             text=f"{run.label} {run.scope} {run.state} {result}",
             target=run,
             sort_key=(_NOW, run.label, str(run.state), run.elapsed, result),
@@ -174,6 +177,11 @@ def capture_report(run: CaptureRun, mode: str, frozen: bool = False) -> Renderab
         header.append(note, style=style)
     header.append(f"   capture · {run.backend}", style=_KEY)
     if mode == "raw":
+        if not run.log:
+            return Group(header, Text(),
+                         Text("  this capture was not run here — its output was "
+                              "not recorded", style=_KEY),
+                         Text(f"  read from {run.paths.db}", style=_KEY))
         return Group(header, *_log_lines(run))
     if mode == "diff":
         return Group(header, Text(), *_capture_failures(run))

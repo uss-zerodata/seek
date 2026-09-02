@@ -192,6 +192,23 @@ def _capture_rows(urls: list[str], shots: Captures | None) -> list[Text]:
     return rows
 
 
+def _member_captures(members: list, shots: Captures | None) -> list[Text]:
+    """The capture block for a bucket of (host, service) pairs.
+
+    The grouping views - by service, by product, by port, and the names list -
+    are where an operator decides what to look at next, so a bucket that says
+    nothing about what its members actually served is the one place the capture
+    is least use. Same URL join as a host or a service record; only the set of
+    URLs is wider.
+    """
+    if shots is None or not members:
+        return []
+    urls: list[str] = []
+    for host, svc in members:
+        urls += _service_urls(svc, host)
+    return _capture_rows(list(dict.fromkeys(urls)), shots)
+
+
 def _sub(label: str, value: str, indent: int = 8) -> Text:
     text = Text(" " * indent)
     text.append(f"{label:<10}", style=_KEY)
@@ -395,7 +412,8 @@ def _service_urls(svc: Service, host: Host | None) -> list[str]:
     return list(dict.fromkeys([base, *(url_for(n, svc) for n in known)]))
 
 
-def group_detail(group: ServiceGroup) -> RenderableType:
+def group_detail(group: ServiceGroup,
+                 shots: Captures | None = None) -> RenderableType:
     parts: list[RenderableType] = [
         _heading(group.label),
         _pair("version", group.version),
@@ -407,6 +425,11 @@ def group_detail(group: ServiceGroup) -> RenderableType:
     for host, svc in group.members:
         extra = f"  {svc.version}" if svc.version else ""
         parts.append(_bullet(f"{host.address}{extra}"))
+
+    captures = _member_captures(group.members, shots)
+    if captures:
+        parts.append(Text(""))
+        parts.extend(captures)
 
     found: list[Vulnerability] = []
     seen: set = set()
@@ -427,7 +450,8 @@ def group_detail(group: ServiceGroup) -> RenderableType:
     return Group(*parts)
 
 
-def grouping_detail(group: Grouping) -> RenderableType:
+def grouping_detail(group: Grouping,
+                    shots: Captures | None = None) -> RenderableType:
     """The report for one `by service` / `by product` / `by port` bucket."""
     hosts = group.hosts
     parts: list[RenderableType] = [
@@ -444,6 +468,10 @@ def grouping_detail(group: Grouping) -> RenderableType:
         )
         name = f" ({host.hostname})" if host.hostname else ""
         parts.append(_bullet(f"{host.address}{name}   {ports}"))
+    captures = _member_captures(group.members, shots)
+    if captures:
+        parts.append(Text(""))
+        parts.extend(captures)
     return Group(*parts)
 
 
@@ -457,9 +485,9 @@ def render(target: object, host: Host | None = None,
     composes its own version of a record.
     """
     if isinstance(target, ServiceGroup):
-        return group_detail(target)
+        return group_detail(target, shots)
     if isinstance(target, Grouping):
-        return grouping_detail(target)
+        return grouping_detail(target, shots)
     if isinstance(target, Service):
         return service_detail(target, host, shots, full)
     if isinstance(target, Host):

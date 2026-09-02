@@ -37,6 +37,7 @@ from seek.nmap import views as proj
 from seek.nmap.diff import ScanDiff, diff
 from seek.nmap.models import Host, ScanSet, Service
 from seek.nmap.runner import Runner, ScanRun, State, elevation_help
+from seek.runner import Run
 from seek.tui.cells import cell_len, clip_cells
 from seek.tui.menu import ChoiceScreen, MultiChoiceScreen, PromptScreen
 from seek.tui.nmap import detail as detail_pane
@@ -286,6 +287,9 @@ class NmapApp(App[int]):
         # the workflow it exists to serve.
         self.captures = Runner()
         self._report_proc: object | None = None
+        # Which record the pane is currently showing, so that a re-render
+        # of the same one leaves the reader's scroll position alone.
+        self._detail_target: int | None = None
         # What has been captured, whoever captured it: the results database is
         # read on startup so a capture someone else ran is picked up, exactly as
         # the scan history reads scan files it did not produce. The database is
@@ -1238,6 +1242,25 @@ class NmapApp(App[int]):
         """Read the capture directory. Absence is the ordinary case, not an error."""
         paths = gw_capture.capture_dir(self.scan_dir)
         self.shots.load(paths.db, paths.shots)
+        self._register_disk_capture(paths)
+
+    def _register_disk_capture(self, paths: gw_capture.Paths) -> None:
+        """List a capture that exists on disk but was not run in this session.
+
+        Without this the Scans tab is empty after a restart even though the
+        database and the screenshots are sitting there - the opposite of the
+        rule the scan history follows, where what is on disk is listed whoever
+        produced it.
+        """
+        if not paths.db.exists() or not self.shots:
+            return
+        # A run started here already stands for this directory; a second row
+        # would be the same capture listed twice.
+        if any(getattr(run, "paths", None) == paths for run in self.captures.runs):
+            return
+        urls = self.shots.urls()
+        self.captures.runs.append(
+            gw_capture.from_disk(paths, urls, captured=len(urls)))
 
     def _stop_report_server(self) -> None:
         """Never leave a web server running behind a closed viewer."""
@@ -1485,23 +1508,28 @@ class NmapApp(App[int]):
             # "is the reader open on this row" bookkeeping.
             deep, _ = self._detail_content(row, full=True)
             self._reader.update(deep)
+        # Scrolling is decided by *what changed*, not by what kind of row this
+        # is. A new record starts at the top; the same record being re-rendered
+        # must not move, or a live run's log throws the reader back to the top
+        # on every line it prints and manual scrolling becomes impossible.
+        moved = id(target) != self._detail_target
+        self._detail_target = id(target)
+        following = (isinstance(target, Run) and target.running
+                     and self._report_mode == "raw" and not self._log_frozen)
         if isinstance(target, timeline.Scan):
             self._apply_detail_visibility()
             return
-        if isinstance(target, ScanRun):
-            self._apply_detail_visibility()
-            if self._report_mode == "raw" and target.running and not self._log_frozen:
-                # Follow the newest line, which is why the scroll comes after
-                # the update rather than the usual scroll-to-top.
-                try:
-                    self.query_one("#detail", VerticalScroll).scroll_end(animate=False)
-                except NoMatches:
-                    pass
-            return
-        try:  # a new record starts at the top of its report
-            self.query_one("#detail", VerticalScroll).scroll_home(animate=False)
+        try:
+            pane_scroll = self.query_one("#detail", VerticalScroll)
         except NoMatches:
-            pass
+            self._apply_detail_visibility()
+            return
+        if following:
+            # Follow the newest line, which is why the scroll comes after the
+            # update rather than the usual scroll-to-top.
+            pane_scroll.scroll_end(animate=False)
+        elif moved:
+            pane_scroll.scroll_home(animate=False)
         self._apply_detail_visibility()
 
     def _reader_payload(self, row: vdefs.Row | None) -> tuple[str, RenderableType, bool]:

@@ -39,12 +39,14 @@ the translation leaking into every flag.
 
 from __future__ import annotations
 
+import contextlib
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from seek.gowitness.detect import Probe
-from seek.runner import Run
+from seek.runner import Run, State
 
 CAPTURE_DIRNAME = "gowitness"
 """Captures live beside the scans, in their own directory, exactly as an
@@ -88,6 +90,25 @@ class Paths:
     @property
     def shots(self) -> Path:
         return self.root / SHOTS_NAME
+
+
+def from_disk(paths: Paths, urls: list[str], captured: int) -> CaptureRun:
+    """A finished capture that this session did not run.
+
+    The Scans tab lists what is on disk whoever produced it - the same
+    principle the scan history follows for nmap files. A capture leaves a
+    database and screenshots but no log, so this run carries its counts and
+    says plainly that its output was not recorded here.
+    """
+    when = ""
+    with contextlib.suppress(OSError):
+        when = datetime.fromtimestamp(paths.db.stat().st_mtime).strftime("%m-%d %H:%M")
+    run = CaptureRun(argv=[], paths=paths, urls=urls, backend="on disk",
+                     captured=captured, recorded=when)
+    run.state = State.DONE
+    run.ended = run.started
+    run.result = run.summarise()
+    return run
 
 
 def capture_dir(scan_dir: Path) -> Paths:
@@ -175,6 +196,10 @@ class CaptureRun(Run):
     urls: list[str] = field(default_factory=list)
     backend: str = ""
     captured: int = 0
+    # Set only for a capture read back from disk rather than run here: the run
+    # list shows this instead of an elapsed time, because "00:00" for something
+    # that finished last week is a lie, and there is no log to time.
+    recorded: str = ""
     # url -> why it could not be captured. Kept here because it is the only
     # place it exists: the results file has no line for a failed target.
     failures: dict[str, str] = field(default_factory=dict)

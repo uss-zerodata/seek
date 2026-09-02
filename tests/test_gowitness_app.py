@@ -474,3 +474,112 @@ async def test_a_cancelled_capture_still_yields_what_it_managed(tmp_path):
         app._on_capture_done(shot)
         await pilot.pause(0.3)
         assert len(app.shots) == 7, "a cancelled capture's results were discarded"
+
+
+# --- three more found in the field ---------------------------------------
+
+
+async def test_a_running_captures_log_follows_its_output(tmp_path):
+    """`isinstance(target, ScanRun)` decided whether to follow the tail, and a
+    capture is not a ScanRun - so it fell through to scroll-to-top and threw
+    the reader back to line one on every line it printed."""
+    from textual.containers import VerticalScroll
+
+    app = _app(tmp_path)
+    async with app.run_test(size=(110, 26)) as pilot:
+        await pilot.pause(0.3)
+        shot = _capture(tmp_path, [f"http://h{i}:80" for i in range(60)])
+        for i in range(60):
+            shot.append(f"INFO result 🤖 target=http://h{i}:80 status-code=200 title=x")
+        app.captures.runs = [shot]
+        app._activate("scans")
+        await pilot.pause(0.4)
+        app.query_one(DataTable).move_cursor(
+            row=next(i for i, r in enumerate(app._rows) if r.target is shot))
+        app._report_mode = "raw"
+        app._log_frozen = False
+        app._refresh_detail()
+        await pilot.pause(0.4)
+        assert app.query_one("#detail", VerticalScroll).scroll_offset.y > 0, \
+            "the log did not follow its output"
+
+
+async def test_a_manual_scroll_survives_an_update(tmp_path):
+    """Re-rendering the same record must not move the reader; only a change of
+    record starts at the top."""
+    from textual.containers import VerticalScroll
+
+    app = _app(tmp_path)
+    async with app.run_test(size=(110, 26)) as pilot:
+        await pilot.pause(0.3)
+        shot = _capture(tmp_path, [f"http://h{i}:80" for i in range(60)])
+        for i in range(60):
+            shot.append(f"INFO result 🤖 target=http://h{i}:80 status-code=200 title=x")
+        shot.state = State.DONE
+        app.captures.runs = [shot]
+        app._activate("scans")
+        await pilot.pause(0.4)
+        app.query_one(DataTable).move_cursor(
+            row=next(i for i, r in enumerate(app._rows) if r.target is shot))
+        app._report_mode = "raw"
+        await pilot.pause(0.3)
+        pane = app.query_one("#detail", VerticalScroll)
+        pane.scroll_to(y=4, animate=False)
+        await pilot.pause(0.2)
+        before = round(pane.scroll_offset.y)
+        for _ in range(3):
+            app._refresh_detail()
+            await pilot.pause(0.15)
+        assert round(pane.scroll_offset.y) == before, "the pane jumped on update"
+
+
+async def test_a_capture_on_disk_is_listed_after_a_restart(tmp_path):
+    """The database and the screenshots are right there; the Scans tab was
+    empty because nothing represented a capture this session did not run."""
+    from seek.gowitness.capture import capture_dir
+
+    fixture = Path(__file__).parent / "fixtures" / "gowitness" / "capture.sqlite3"
+    paths = capture_dir(tmp_path)
+    paths.root.mkdir(parents=True)
+    paths.db.write_bytes(fixture.read_bytes())
+
+    app = _app(tmp_path)
+    async with app.run_test(size=(110, 30)) as pilot:
+        await pilot.pause(0.4)
+        assert len(app.shots) == 7
+        app._activate("scans")
+        await pilot.pause(0.4)
+        rows = [r for r in app._rows if "capture" in str(r.cells[0])]
+        assert rows, "a capture on disk was not listed"
+        assert rows[0].cells[1] == "7 urls"
+        assert "captured" in rows[0].cells[4]
+
+
+async def test_a_disk_capture_says_it_has_no_log(tmp_path):
+    from seek.gowitness.capture import capture_dir, from_disk
+    from seek.tui.nmap import scans as scan_views
+
+    paths = capture_dir(tmp_path)
+    run = from_disk(paths, ["http://a:80"], captured=1)
+    console = Console(width=90, record=True, file=open("/dev/null", "w"))
+    console.print(scan_views.capture_report(run, "raw"))
+    body = console.export_text()
+    assert "not run here" in body
+    assert str(paths.db) in body
+
+
+async def test_a_capture_run_here_is_not_listed_twice(tmp_path):
+    """The in-session run already stands for that directory."""
+    from seek.gowitness.capture import capture_dir
+
+    fixture = Path(__file__).parent / "fixtures" / "gowitness" / "capture.sqlite3"
+    paths = capture_dir(tmp_path)
+    paths.root.mkdir(parents=True)
+    paths.db.write_bytes(fixture.read_bytes())
+    app = _app(tmp_path)
+    async with app.run_test(size=(110, 30)) as pilot:
+        await pilot.pause(0.4)
+        before = len(app.captures.runs)
+        app._load_captures()
+        app._load_captures()
+        assert len(app.captures.runs) == before, "the same capture was listed again"

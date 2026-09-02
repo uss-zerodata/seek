@@ -272,3 +272,55 @@ def test_a_failed_capture_shows_no_metadata_block(http_service):
     deep = _text(detail.service_detail(svc, host, shots, full=True))
     assert "connection refused" in deep
     assert "collected" not in deep
+
+
+# --- every view's record, not only hosts and services --------------------
+
+
+def _grouped(shots):
+    """A by-service style bucket over a real host's services."""
+    from seek.tui.nmap.views import Grouping
+
+    scans = prepare(load([FIX / "basic.xml"]))
+    members = [(h, s) for h in scans.hosts for s in h.open_services
+               if detail._service_urls(s, h)]
+    return Grouping(key="service", label="http", members=members), members
+
+
+def test_a_grouping_record_shows_its_members_captures():
+    """by service / by product / by port and the names list are where the next
+    thing to look at gets chosen; a bucket that says nothing about what its
+    members served is where a capture is least use."""
+    grouping, members = _grouped(None)
+    url = detail._service_urls(members[0][1], members[0][0])[0]
+    shots = gw.Captures([gw.Capture(url=url, status=200, reason="OK", title="Home")])
+    text = _text(detail.grouping_detail(grouping, shots))
+    assert "Captures" in text
+    assert "Home" in text
+
+
+def test_a_grouping_with_no_captures_gains_nothing():
+    grouping, _ = _grouped(None)
+    assert "Captures" not in _text(detail.grouping_detail(grouping, gw.Captures()))
+    assert "Captures" not in _text(detail.grouping_detail(grouping, None))
+
+
+def test_a_service_group_record_shows_its_captures():
+    from seek.nmap.views import service_groups
+
+    scans = prepare(load([FIX / "basic.xml"]))
+    group = next(g for g in service_groups(scans.hosts) if g.members
+                 and detail._service_urls(g.members[0][1], g.members[0][0]))
+    host, svc = group.members[0]
+    url = detail._service_urls(svc, host)[0]
+    shots = gw.Captures([gw.Capture(url=url, status=200, reason="OK", title="Home")])
+    text = _text(detail.group_detail(group, shots))
+    assert "Captures" in text and "Home" in text
+
+
+def test_a_service_group_with_no_captures_gains_nothing():
+    from seek.nmap.views import service_groups
+
+    scans = prepare(load([FIX / "basic.xml"]))
+    group = service_groups(scans.hosts)[0]
+    assert "Captures" not in _text(detail.group_detail(group, gw.Captures()))

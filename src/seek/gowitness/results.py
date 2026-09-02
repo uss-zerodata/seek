@@ -329,6 +329,10 @@ class Captures:
     def get(self, url: str) -> Capture | None:
         return self._by_url.get(url)
 
+    def urls(self) -> list[str]:
+        """Every URL a capture is known for."""
+        return list(self._by_url)
+
     def for_urls(self, urls: Iterable[str]) -> list[Capture]:
         """The captures for these URLs, in the order given, skipping unknowns."""
         out = []
