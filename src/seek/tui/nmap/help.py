@@ -56,10 +56,11 @@ _GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
     ("Scan", [
         ("n", "new scan: scope, preset, command, then a review before it runs"),
-        ("o", "cycle a run's report: overview, what it added, raw output"),
+        ("o", "cycle a scan's report: overview, what it added, raw output"),
         ("p", "freeze the log to read it — the scan keeps running"),
         ("c", "cancel the running scan"),
-        ("", "output lands beside the scans, merged in when it finishes"),
+        ("", "the Scans tab is a history: every scan file present, oldest first,"),
+        ("", "each diffed against the state before it — imported scans included"),
     ]),
 ]
 

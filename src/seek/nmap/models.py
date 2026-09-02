@@ -145,6 +145,7 @@ class ScanFile:
     path: Path
     args: str = ""
     hosts: list[Host] = field(default_factory=list)
+    start: int | None = None        # <nmaprun start="..."> as a unix epoch
 
     @property
     def name(self) -> str:
@@ -164,6 +165,9 @@ class ScanSet:
     sources: list[str] = field(default_factory=list)
     failures: list[tuple[str, str]] = field(default_factory=list)
     disabled_ping: bool = False
+    # The individual parsed files behind this set, kept so the Scans tab can
+    # present each scan on its own and diff them as a history over time.
+    files: list[ScanFile] = field(default_factory=list)
 
     @property
     def asserted_up(self) -> list[Host]:

@@ -324,6 +324,18 @@ stdout, `cd`) cannot run while Textual owns the screen. They set
   incremental merge - one loading path means a scan started here and one run
   outside get identical treatment. The rebuild invalidates marks, so
   `_resolve_marks` re-finds them by identity afterwards.
+- **The Scans tab is a history over `ScanSet.files`, not just this session's
+  runs.** `nmap/timeline.py` orders every scan file by its `<nmaprun start>`
+  epoch and diffs each against the merged state of all earlier ones.
+  Two traps it exists to avoid: (1) `merge` mutates the earliest file's `Host`
+  objects, so the retained per-file `hosts` are NOT "what that scan saw" - the
+  timeline **re-parses** each file pristinely; (2) `merge` mutates in place, so
+  the cumulative `before` snapshot is a `deepcopy` taken ahead of each step, or
+  every diff reads back empty. The build re-parses, so the app caches it
+  (`_scan_history`, keyed on `self.scans` identity) and rebuilds only when the
+  model changes; the Scans `View.build` recomputes only the live-run rows each
+  refresh. A finished in-app run is deduped against its own output file so it is
+  listed once, as the file.
 - **No test ever runs nmap.** `Config.nmap_path` exists so tests can point at a
   stub script; a stub must answer `--version`, because the app probes with it.
 - **Marks are keyed by record identity, never by row.** Every view is rebuilt

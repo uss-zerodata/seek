@@ -103,6 +103,7 @@ def parse_file(path: Path) -> ScanFile:
         if root.tag != "nmaprun":
             raise NmapParseError(f"{path}: not an nmap scan (root element <{root.tag}>)")
         args = root.get("args") or ""
+        start = root.get("start")
         for event, el in stream:
             if event == "end" and el.tag == "host":
                 hosts.append(_host(el, source))
@@ -113,4 +114,5 @@ def parse_file(path: Path) -> ScanFile:
         raise NmapParseError(f"{path}: {exc}") from exc
     except StopIteration:
         raise NmapParseError(f"{path}: empty file") from None
-    return ScanFile(path=path, args=args, hosts=hosts)
+    return ScanFile(path=path, args=args, hosts=hosts,
+                    start=int(start) if start and start.isdigit() else None)

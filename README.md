@@ -107,12 +107,16 @@ vector, the scope, the file it will write and whether it will be elevated.
 Nothing runs until that review is confirmed. Opened on a directory with no scans
 in it, the viewer starts at the editor instead of exiting.
 
-The **Scans** tab lists every run of the session. `o` cycles a run's report
-between an overview, what it added to what you already knew, and the raw output;
-`p` freezes the log so you can read it — **the scan keeps running**; `c` cancels
-for real. Output is written to the launch directory with `-oA`, so a scan run
-here leaves the same three files an external one leaves, and the result is
-merged into the overviews immediately.
+The **Scans** tab is a **history**: every scan file present — whether this
+session ran it or it was there on disk — ordered by the time it started, each
+diffed against the state before it. So a fresh scan dropped into the directory
+reads as *what changed*: a new host, a newly open port, a service finally
+identified. The first scan is the baseline. `o` cycles a scan's report between an
+overview, that diff, and the raw output (the sibling `.nmap` when present, else
+reconstructed from the XML); `p` freezes a running scan's log so you can read it
+— **the scan keeps running**; `c` cancels for real. A scan run here writes to the
+launch directory with `-oA`, leaving the same three files an external one leaves,
+and rejoins the history as its file when it finishes.
 
 Presets live in the config file, and defining any replaces the shipped set:
 

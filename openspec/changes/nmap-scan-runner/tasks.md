@@ -99,6 +99,14 @@
 - [x] 13.9 A `vhosts` fixture covering all five sources; a regression test that a `http-vuln-*` advisory link is not harvested as a name.
 - [x] 13.7 Tests: extraction from output and tables; wildcards and addresses refused; the column, both panes, the filter, the tab, the drill-down and the empty state.
 
+## 14. Scans as a history over time (testing feedback)
+
+- [x] 14.1 `ScanFile.start` parsed from `<nmaprun start>`; `ScanSet.files` retains the per-file parses; `merge` keeps them.
+- [x] 14.2 `nmap/timeline.py` (pure): order scan files by start epoch, re-parse each pristinely (merge mutates the earliest file's hosts), and diff each against a deep-copied cumulative-before snapshot. Baseline for the first.
+- [x] 14.3 Raw view: the sibling `.nmap` when present, else a report synthesized from the XML.
+- [x] 14.4 The Scans tab lists the history (imported + in-app) uniformly, labelled by filename, ordered by time; a finished in-app run is deduped against its own file; running/failed runs show live. Cached (`_scan_history`) and rebuilt only when the model changes; live rows recompute each refresh. Starting a scan focuses its live row.
+- [x] 14.5 Tests: ordering by start; baseline; incremental diff; pristine per-scan hosts; raw sibling-vs-synthesized; the tab lists imported scans and is empty only with none.
+
 ## 11. Finalisation
 
 - [x] 11.1 `uv run ruff check` clean.

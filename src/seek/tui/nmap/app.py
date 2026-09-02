@@ -25,7 +25,7 @@ from seek import actions
 from seek.config import Config
 from seek.engine.score import match_spans
 from seek.nmap import export as exporter
-from seek.nmap import filtering
+from seek.nmap import filtering, timeline
 from seek.nmap import presets as presets_mod
 from seek.nmap import views as proj
 from seek.nmap.diff import ScanDiff, diff
@@ -264,6 +264,11 @@ class NmapApp(App[int]):
         self.nmap = presets_mod.probe(self.config.nmap_path)
         self.runner = Runner()
         self._diffs: dict[int, ScanDiff] = {}
+        # The file history is expensive to build (it re-parses), so cache it and
+        # rebuild only when the model changes - which `self.scans` identity marks,
+        # since a finished scan is absorbed by replacing it.
+        self._history: list[timeline.Scan] = []
+        self._history_for: object = None
         self._report_mode = "condensed"
         self._log_frozen = False
         self.stack: list[vdefs.View] = [vdefs.hosts_view()]
@@ -490,8 +495,8 @@ class NmapApp(App[int]):
             headline = "Scanning is unavailable"
             hint = f"{self.nmap.reason} · everything else in the viewer still works"
         elif self._active_tab == "scans":
-            headline = "No scan has been run in this session"
-            hint = "n starts one · runs stay listed here until you quit"
+            headline = "No scans yet"
+            hint = "every scan file present shows here as a history · n runs one"
         elif self._only_reachable and self._active_tab == "hosts":
             headline = "No host shows evidence of being reachable"
             hint = "u lists every host the scan named"
@@ -705,7 +710,7 @@ class NmapApp(App[int]):
 
     def _view_for_tab(self, tab_id: str) -> vdefs.View:
         if tab_id == "scans":
-            return scan_views.scans_view(self.runner.runs, self._diffs)
+            return self._scans_view()
         if tab_id == "names":
             return vdefs.names_view()
         if tab_id == "services":
@@ -715,6 +720,28 @@ class NmapApp(App[int]):
         if tab_id in _GROUP_TABS:
             return vdefs.grouping_view(tab_id.removeprefix("group-"))
         return vdefs.hosts_view(self._only_reachable)
+
+    def _scan_history(self) -> list[timeline.Scan]:
+        """The file history, rebuilt only when the model actually changes."""
+        if self._history_for is not self.scans:
+            self._history = timeline.build(self.scans.files)
+            self._history_for = self.scans
+        return self._history
+
+    def _scans_view(self) -> vdefs.View:
+        def build(_scans) -> list[vdefs.Row]:
+            history = self._scan_history()
+            done = {str(s.path) for s in history if s.path}
+            # A finished run is already in the history as its file; only runs
+            # with no file yet (running, failed, cancelled) get their own row.
+            live = [r for r in self.runner.runs
+                    if r.state is not State.DONE or str(r.xml_path) not in done]
+            return scan_views.history_rows(history, live)
+
+        return vdefs.View(
+            title="Scans", columns=scan_views.SCANS_COLUMNS, build=build,
+            kind="scans", tab="scans", default_sort=scan_views.SCANS_DEFAULT_SORT,
+        )
 
     def _activate(self, tab_id: str) -> None:
         """Switch overview. A tab replaces the stack: drill-downs belong to the
@@ -968,8 +995,17 @@ class NmapApp(App[int]):
         self._log_frozen = False
         self._report_mode = "raw"
         self._activate("scans")
+        self._select_target(run)        # focus the live run, not the oldest scan
         self.notify(f"started {run.preset}")
         await self.runner.run(run, self._on_scan_line, self._on_scan_done)
+
+    def _select_target(self, target: object) -> None:
+        """Move the cursor to the row that stands for `target`, if it is shown."""
+        for index, row in enumerate(self._rows):
+            if row.target is target:
+                self.query_one(DataTable).move_cursor(row=index)
+                self._refresh_detail()
+                return
 
     def _on_scan_line(self, _line: str) -> None:
         """The run list carries progress; the pane carries the log."""
@@ -1148,6 +1184,10 @@ class NmapApp(App[int]):
             return
         row = self._current_row()
         target = row.target if row is not None else None
+        if isinstance(target, timeline.Scan):
+            pane.update(scan_views.scan_report(target, self._report_mode))
+            self._apply_detail_visibility()
+            return
         if isinstance(target, ScanRun):
             pane.update(scan_views.report(target, self._report_mode,
                                           self._diffs.get(id(target)),

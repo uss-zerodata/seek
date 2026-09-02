@@ -108,6 +108,7 @@ def merge(files: list[ScanFile]) -> ScanSet:
         hosts=sorted(hosts.values(), key=lambda h: addr_key(h.address)),
         sources=[sf.name for sf in files],
         disabled_ping=any(sf.disabled_ping for sf in files),
+        files=list(files),
     )
 
 

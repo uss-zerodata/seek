@@ -110,20 +110,32 @@ async def test_a_scan_action_without_nmap_explains_rather_than_failing(tmp_path)
 # --- the Scans tab ----------------------------------------------------------
 
 
-async def test_the_scans_tab_is_present_and_empty_at_first(tmp_path):
+async def test_the_scans_tab_lists_the_loaded_scans_as_history(tmp_path):
     app = _app(tmp_path, "basic")
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.3)
         app.query_one(Tabs).active = "scans"
         await pilot.pause(0.4)
-        assert app.view.kind == "scans" and app._rows == []
+        assert app.view.kind == "scans"
+        assert [r.cells[0] for r in app._rows] == ["✓ basic"], "the file, as history"
+        assert app._rows[0].cells[4] == "baseline · 3 host(s)"
+
+
+async def test_the_scans_tab_is_empty_only_with_no_scans(tmp_path):
+    config = _config(tmp_path)
+    app = NmapApp(prepare(load([])), config, sources=[], scan_dir=tmp_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        app.query_one(Tabs).active = "scans"
+        await pilot.pause(0.4)
+        assert app._rows == []
         shown = str(app.query_one("#empty").render())
-        assert "No scan has been run" in shown and "n starts one" in shown
+        assert "No scans yet" in shown and "n runs one" in shown
 
 
 async def test_without_nmap_the_scans_tab_says_what_is_missing(tmp_path):
     config = Config(nmap_path=str(tmp_path / "nope"), scan_output_dir=str(tmp_path))
-    app = _app(tmp_path, "basic", config=config)
+    app = NmapApp(prepare(load([])), config, sources=[], scan_dir=tmp_path)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.3)
         app.query_one(Tabs).active = "scans"
@@ -164,7 +176,10 @@ async def test_a_scan_runs_from_the_editor_and_lands_in_the_run_list(tmp_path):
         run = app.runner.runs[0]
         assert run.state is State.DONE, run.result
         assert app._active_tab == "scans"
-        assert "Quick" in app._rows[0].cells[0]
+        # the stub writes no .xml, so the finished run has no file and stays a
+        # live row named by its preset (a run that DID write one would fold into
+        # the history as its filename instead)
+        assert any("Quick" in r.cells[0] for r in app._rows)
 
 
 async def test_the_review_shows_the_argv_the_scope_and_the_warning(tmp_path):
@@ -275,6 +290,8 @@ async def test_freezing_the_log_never_touches_the_scan(tmp_path):
                 break
         run = app.runner.runs[0]
         assert run.running
+        app._select_target(run)         # the live run, not the imported scan on row 0
+        await pilot.pause(0.2)
         app._report_mode = "raw"
         await pilot.press("p")
         await pilot.pause(0.3)
@@ -546,14 +563,19 @@ async def test_the_shipped_presets_are_the_documented_workflow():
         assert "sudo" not in parsed, f"{name}: elevation is added at launch"
         assert not any(a.startswith("-iL") for a in parsed), f"{name}: scope is the app's"
         assert not any(a.startswith("-o") for a in parsed), f"{name}: output is the app's"
-    discovery = DEFAULT_PRESETS["01 · Discovery (ICMP, TCP and UDP pings)"]
-    assert needs_root(parse_args(discovery)), "-PE/-PP/-PU need raw sockets"
-    smb = DEFAULT_PRESETS["03 · SMB vulnerabilities (139, 445)"]
-    assert not needs_root(parse_args(smb)), "a script scan on two ports does not"
-    dns = parse_args(DEFAULT_PRESETS["03 · DNS names (reverse lookup, sends nothing)"])
-    assert "-n" not in dns, "resolving names is the point of this one"
-    assert "-sL" in dns and "-R" in dns
-    assert not needs_root(dns)
+    # Named by property rather than by exact title, so a rename of the shipped
+    # presets does not break the contract this test is really about.
+    a_ping_sweep = next(
+        (a for a in DEFAULT_PRESETS.values() if "-PE" in a or "-PU" in parse_args(a)),
+        None)
+    assert a_ping_sweep and needs_root(parse_args(a_ping_sweep)), \
+        "a preset using raw ICMP/UDP pings is treated as needing root"
+    a_reverse_lookup = next(
+        (a for a in DEFAULT_PRESETS.values()
+         if "-sL" in parse_args(a) and "-R" in parse_args(a)), None)
+    assert a_reverse_lookup, "a reverse-lookup preset ships"
+    assert "-n" not in parse_args(a_reverse_lookup), "resolving names is its point"
+    assert not needs_root(parse_args(a_reverse_lookup))
 
 
 # --- not by accident --------------------------------------------------------

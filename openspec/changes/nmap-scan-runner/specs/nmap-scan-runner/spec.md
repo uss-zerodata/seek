@@ -218,6 +218,43 @@ immediately.
 - **WHEN** a scan fails or is cancelled
 - **THEN** the model is unchanged and the run says what happened
 
+### Requirement: The scans are a history over time
+The Scans tab SHALL present every scan file that is loaded, whether the
+application ran it or it was already on disk, not only the runs of the current
+session. Each SHALL be placed in the list by the time the scan started, so an
+externally-run scan takes its true place in the order, and each SHALL be shown
+alike — a scan is a scan.
+
+Each scan SHALL be diffed against the merged state of every scan that started
+before it, so the list reads as a history unfolding: the earliest is a baseline,
+and each later one shows what it added — a host not seen before, a port not
+previously open, a service identification that changed. A per-scan diff SHALL
+reflect what that scan alone recorded, not the consolidated model.
+
+A run started in the application that has produced its file SHALL appear once, as
+that file; one that has not yet produced a file — still running, or failed before
+writing — SHALL appear on its own with its live log.
+
+#### Scenario: An externally-run scan appears
+- **WHEN** the viewer is opened on a directory of scans none of which this session ran
+- **THEN** each is listed in the Scans tab in the order it was started
+
+#### Scenario: A later scan reads as what it added
+- **WHEN** a service scan follows an earlier discovery scan of the same hosts
+- **THEN** its entry lists the ports it opened that the discovery scan had not seen
+
+#### Scenario: The baseline
+- **WHEN** the earliest scan is viewed
+- **THEN** it is shown as a baseline rather than a diff against nothing
+
+#### Scenario: A per-scan view is that scan's own
+- **WHEN** a scan is viewed whose hosts a later scan also covered
+- **THEN** it shows what that scan alone recorded, not the merged total
+
+#### Scenario: A finished run is listed once
+- **WHEN** a scan run in the application finishes and writes its file
+- **THEN** it appears once, as that file in the history, not also as a separate run
+
 ### Requirement: A run is reported three ways
 Each finished run SHALL offer three views of its result, one at a time, with the
 current one named: a condensed overview, a difference against what was known

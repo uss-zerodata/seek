@@ -366,25 +366,25 @@ DEFAULT_PRESETS: dict[str, str] = {
     "00 · Lookup, DNS names (forward lookup)": "-vv -T4 -sL",
 
     "01 · Discovery, null scan (ICMP/TCP/UDP filtered)": "-vv -T4 -n -sn -sN",
-    "01 · Discovery, common ports (ICMP/TCP/UDP) ": "-vv -T4 -n -sn -PE -PP -PS22,80,445 -PA80 -PU53,123,161,500,31347",
-    "01 · Discovery, top ports (TCP/UDP)": "-vv -T4 -n -Pn --open -PS20,21,22,23,25,53,67,68,69,80,110,111,123,135,137,138,139,143,161,162,443,445,500,514,520,631,993,995,1434,1723,1900,3306,3389,4500,5900,8080,49152 -PU20,21,22,23,25,53,67,68,69,80,110,111,123,135,137,138,139,143,161,162,443,445,500,514,520,631,993,995,1434,1723,1900,3306,3389,4500,5900,8080,49152",
+    "01 · Discovery, common ports (ICMP/TCP/UDP) ": "-vv -T4 -n -sn -PE -PP -PS22,80,445 -PA80 -PU53,123,161,500,31347",  # noqa: E501
+    "01 · Discovery, top ports (TCP/UDP)": "-vv -T4 -n -Pn --open -PS20,21,22,23,25,53,67,68,69,80,110,111,123,135,137,138,139,143,161,162,443,445,500,514,520,631,993,995,1434,1723,1900,3306,3389,4500,5900,8080,49152 -PU20,21,22,23,25,53,67,68,69,80,110,111,123,135,137,138,139,143,161,162,443,445,500,514,520,631,993,995,1434,1723,1900,3306,3389,4500,5900,8080,49152",  # noqa: E501
     "01 · Discovery, DNS servers (UDP 53)": "-vv -T4 -n -Pn -sU -p53",
 
-    "02 · Services, top 100 TCP (fast)": "-vv -T4 -n -Pn -sS --top-ports 100 --defeat-rst-ratelimit",
+    "02 · Services, top 100 TCP (fast)": "-vv -T4 -n -Pn -sS --top-ports 100 --defeat-rst-ratelimit",  # noqa: E501
     "02 · Services, top 1000 TCP": "-vv -T4 -n -Pn -sS --top-ports 1000 --host-timeout 1h",
 
     "03 · Details, versions on known ports": "-vv -T4 -n -Pn -sS -A --host-timeout 1h -p{ports}",
     "03 · Details, full TCP (-p-)": "-vv -T4 -n -Pn -sS -A -p- --host-timeout 3h",
 
-    "04 · Vuln, SMB shares (edit the credentials first)": "-vv -T4 -n -Pn -p139,445 --script smb-enum-shares --script-args smbuser=USERNAME,smbpass=PASSWORD",
+    "04 · Vuln, SMB shares (edit the credentials first)": "-vv -T4 -n -Pn -p139,445 --script smb-enum-shares --script-args smbuser=USERNAME,smbpass=PASSWORD",  # noqa: E501
     "04 · Vuln, SMB vulnerabilities (139, 445)": "-vv -T4 -n -Pn -p139,445 --script smb-vuln*",
-    "04 · Vuln, SSH vulnerabilities (22)": "-vv -T4 -n -Pn -p22 --script sshv1,ssh2-enum-algos,ssh-hostkey",
+    "04 · Vuln, SSH vulnerabilities (22)": "-vv -T4 -n -Pn -p22 --script sshv1,ssh2-enum-algos,ssh-hostkey",  # noqa: E501
     "04 · Vuln, HTTP vulnerabilities (80, 443)": "-vv -T4 -n -Pn -p80,443 --script http-vuln*",
-    "04 · Vuln, general vulnerabilities (all known ports)": "-vv -T4 -n -Pn -p{ports} --script vuln",
+    "04 · Vuln, general vulnerabilities (all known ports)": "-vv -T4 -n -Pn -p{ports} --script vuln",  # noqa: E501
 
-    "05 · Names, from service detection (certs, redirects, NTLM)": "-vv -T4 -Pn -sV -p{ports} --script ssl-cert,http-title,http-headers,rdp-ntlm-info,smb-os-discovery,nbstat,ldap-rootdse,ssl-cert-intaddr",
-    "05 · Names, from certificates (queries crt.sh)": "-vv -T4 -Pn -sV -p{ports} --script hostmap-crtsh",
-    "05 · Names, from virtual hosts (brute force, noisy)": "-vv -T4 -Pn -p80,443,8080,8443 --script http-vhosts",
+    "05 · Names, from service detection (certs, redirects, NTLM)": "-vv -T4 -Pn -sV -p{ports} --script ssl-cert,http-title,http-headers,rdp-ntlm-info,smb-os-discovery,nbstat,ldap-rootdse,ssl-cert-intaddr",  # noqa: E501
+    "05 · Names, from certificates (queries crt.sh)": "-vv -T4 -Pn -sV -p{ports} --script hostmap-crtsh",  # noqa: E501
+    "05 · Names, from virtual hosts (brute force, noisy)": "-vv -T4 -Pn -p80,443,8080,8443 --script http-vhosts",  # noqa: E501
 }
 
 PORTS_PLACEHOLDER = "{ports}"
