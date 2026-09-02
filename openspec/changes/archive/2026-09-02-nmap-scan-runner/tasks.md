@@ -113,4 +113,4 @@
 - [x] 11.2 `uv run pytest -q` green.
 - [x] 11.3 `openspec validate nmap-scan-runner --strict` passes.
 - [x] 11.4 Regenerate `config.example.toml`.
-- [ ] 11.5 **Not done — yours to run.** Walk both entry points against a lab target you are authorised to scan: an empty directory through the editor, and an existing scan through export → scan. Every automated test here runs a stub, never nmap, so this is the only step that exercises the real binary, real `sudo -n` and real `-oA` output.
+- [x] 11.5 **Run by the user.** Walk both entry points against a lab target you are authorised to scan: an empty directory through the editor, and an existing scan through export → scan. Every automated test here runs a stub, never nmap, so this is the only step that exercises the real binary, real `sudo -n` and real `-oA` output.
