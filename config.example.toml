@@ -1,0 +1,85 @@
+# seek configuration - every key shown at its default value.
+# Copy to the path reported by `seek --config-path` and edit.
+
+debounce_ms = 150  # idle ms after the last keystroke before re-searching
+min_content_query = 2  # min positive-term length before content search runs
+preview_size_cap = 5242880  # bytes; larger files are truncated in the side preview
+detail_size_cap = 5242880  # bytes; larger files are truncated in the detail view
+content_size_cap = 5242880  # bytes; at most this much of any one file is content-searched
+preview_window_lines = 200  # lines shown in the side preview window
+max_results = 500  # max rows kept in the result list (rest shown as '+N more')
+publish_interval_ms = 500  # min ms between streamed partial-result updates (0 = every batch)
+format_content = true  # re-indent over-long structured files before indexing them
+format_min_line = 500  # chars; a file is only reformatted if some line exceeds this
+content_cache_budget = 536870912  # bytes of decoded file content kept in memory
+honor_gitignore = false  # apply .gitignore / .ignore rules while walking
+apply_noise_excludes = true  # prune noise_dirs (.git is always pruned)
+absolute_output = false  # emit absolute paths instead of root-relative ones
+wrap_results = false  # wrap long result rows instead of shortening them to one line
+default_editor = "nvim"  # which [editors] entry the editor action uses
+nmap_path = "nmap"  # the nmap program to run (looked up on PATH when not a path)
+scan_output_dir = ""  # where scans write; empty means the directory the viewer was opened on
+exclude_globs = []  # extra globs pruned from the walk
+noise_dirs = ["node_modules", ".venv", "__pycache__", "target", "dist"]  # directory names pruned unless apply_noise_excludes is false
+format_extensions = ["json", "jsonl", "yaml", "yml", "xml", "html", "htm", "svg", "css", "js"]  # file extensions considered for re-indenting
+
+[editors]  # name = command template, with {file} and {line}
+nvim = "nvim +{line} {file}"
+vim = "vim +{line} {file}"
+code = "code --goto {file}:{line}"
+emacs = "emacs +{line} {file}"
+hx = "hx {file}:{line}"
+
+[keys]  # action = key (Textual key names)
+open_default = "ctrl+o"
+open_editor = "ctrl+e"
+open_code = "ctrl+b"
+copy = "ctrl+y"
+export = "ctrl+x"
+goto_dir = "alt+c"
+action_menu = "ctrl+k"
+toggle_file = "ctrl+f"
+toggle_dir = "ctrl+underscore"
+toggle_content = "ctrl+t"
+toggle_format = "ctrl+n"
+reroot = "ctrl+r"
+breadcrumb_pop = "alt+left"
+refresh = "ctrl+g"
+history_prev = "alt+up"
+history_next = "alt+down"
+mark = "tab"
+clear_marks = "shift+tab"
+help = "question_mark"
+
+# Scan presets: a name you pick from, and the nmap arguments it stands
+# for. Defining any replaces this whole table, so your list is exactly
+# what the app offers. Whether a preset needs root is worked out from
+# its flags - do not declare it. The output flags, the targets and any
+# elevation are added for you, so leave out -iL, -oA/-oX and sudo.
+# `{ports}` expands to the open ports already in the model - the step
+# you would otherwise grep out of the previous scan's .gnmap.
+[nmap_presets]
+"01 · Discovery (ICMP, TCP and UDP pings)" = "-vv -T4 -n -sn -PE -PP -PS22,80,445 -PA80 -PU53,123,161,500,31347"
+"01 · Discovery, null scan (ICMP/TCP/UDP filtered)" = "-vv -T4 -n -sn -sN"
+"01 · Discovery, top TCP and UDP ping ports" = "-vv -T4 -n -Pn --open -PS20,21,22,23,25,53,67,68,69,80,110,111,123,135,137,138,139,143,161,162,443,445,500,514,520,631,993,995,1434,1723,1900,3306,3389,4500,5900,8080,49152 -PU20,21,22,23,25,53,67,68,69,80,110,111,123,135,137,138,139,143,161,162,443,445,500,514,520,631,993,995,1434,1723,1900,3306,3389,4500,5900,8080,49152"
+"01 · DNS servers (UDP 53)" = "-vv -T4 -n -Pn -sU -p53"
+"02 · Services, top 1000 TCP" = "-vv -T4 -n -Pn -sS --host-timeout 30m"
+"02 · Services, top 100 TCP (fast)" = "-vv -T4 -n -Pn -sS --top-ports 100 --defeat-rst-ratelimit"
+"02 · Services, versions on the ports already found" = "-vv -T4 -n -Pn -sS -A --host-timeout 30m -p{ports}"
+"02 · Services, full TCP (-p-)" = "-vv -T4 -n -Pn -sS -A -p- --host-timeout 3h"
+"03 · SMB vulnerabilities (139, 445)" = "-vv -T4 -n -Pn -p139,445 --script smb-vuln*"
+"03 · SMB shares (edit the credentials first)" = "-vv -T4 -n -Pn -p139,445 --script smb-enum-shares --script-args smbuser=USERNAME,smbpass=PASSWORD"
+"03 · Siemens S7 (TCP 102)" = "-vv -T4 -n -Pn -sT --script s7-info.nse -p102"
+
+[theme]  # style name = Rich/Textual color
+match = "bold bright_yellow"
+marker_filename = "blue"
+marker_dirname = "cyan"
+marker_content = "green"
+selected = "bright_magenta"
+matched_line = "bright_black"
+path = "cyan"
+basename = "default"
+content = "default"
+tree_dir = "bold blue"
+tree_branch = "bright_black"

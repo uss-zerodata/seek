@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nmaprun scanner="nmap" args="nmap -sV --script default -oX scripts.xml 192.0.2.10" start="1756000100" version="7.94" xmloutputversion="1.05">
+<host><status state="up" reason="syn-ack" reason_ttl="64"/>
+<address addr="192.0.2.10" addrtype="ipv4"/>
+<hostnames><hostname name="scripted.example" type="PTR"/></hostnames>
+<ports>
+<port protocol="tcp" portid="443"><state state="open" reason="syn-ack" reason_ttl="64"/>
+<service name="http" product="Apache httpd" version="2.4.52" tunnel="ssl" method="probed" conf="10"/>
+<script id="http-title" output="Example Site"><elem key="title">Example Site</elem></script>
+<script id="ssl-cert" output="Subject: commonName=example.test">
+<table key="subject"><elem key="commonName">example.test</elem><elem key="organizationName">Example Org</elem></table>
+<table key="extensions"><table><elem key="name">X509v3 Subject Alternative Name</elem><elem key="value">DNS:example.test</elem></table></table>
+</script>
+<script id="http-methods" output="Supported Methods: GET HEAD POST"/>
+</port>
+</ports>
+<hostscript><script id="smb2-time" output="date: 2026-08-31"><table key="date"><elem key="value">2026-08-31</elem></table></script></hostscript>
+</host>
+<runstats><finished time="1756000110" elapsed="10.00" exit="success"/><hosts up="1" down="0" total="1"/></runstats>
+</nmaprun>

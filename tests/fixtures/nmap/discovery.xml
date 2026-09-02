@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nmaprun scanner="nmap" args="nmap -sn -n -oX discovery.xml 203.0.113.0/29" start="1756000600" version="7.94" xmloutputversion="1.05">
+<host><status state="up" reason="syn-ack" reason_ttl="64"/><address addr="203.0.113.1" addrtype="ipv4"/><hostnames></hostnames></host>
+<host><status state="up" reason="syn-ack" reason_ttl="64"/><address addr="203.0.113.2" addrtype="ipv4"/><hostnames></hostnames></host>
+<host><status state="up" reason="conn-refused" reason_ttl="64"/><address addr="203.0.113.3" addrtype="ipv4"/><hostnames></hostnames></host>
+<host><status state="up" reason="syn-ack" reason_ttl="64"/><address addr="203.0.113.4" addrtype="ipv4"/><hostnames></hostnames></host>
+<host><status state="down" reason="no-response" reason_ttl="0"/><address addr="203.0.113.9" addrtype="ipv4"/></host>
+<runstats><finished time="1756000601" elapsed="1.00" exit="success"/><hosts up="4" down="1" total="5"/></runstats>
+</nmaprun>

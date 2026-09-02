@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nmaprun scanner="nmap" args="nmap -Pn -n -sS -oX pn-asserted.xml 198.51.100.1-10" start="1756000500" version="7.94" xmloutputversion="1.05">
+<host><status state="up" reason="user-set" reason_ttl="0"/><address addr="198.51.100.1" addrtype="ipv4"/><hostnames></hostnames></host>
+<host><status state="up" reason="user-set" reason_ttl="0"/><address addr="198.51.100.2" addrtype="ipv4"/><hostnames></hostnames></host>
+<host><status state="up" reason="user-set" reason_ttl="0"/><address addr="198.51.100.3" addrtype="ipv4"/><hostnames></hostnames><ports><port protocol="tcp" portid="80"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="http" product="lighttpd" version="1.4.5" method="probed" conf="10"/></port></ports></host>
+<host><status state="up" reason="user-set" reason_ttl="0"/><address addr="198.51.100.4" addrtype="ipv4"/><hostnames></hostnames></host>
+<host><status state="up" reason="user-set" reason_ttl="0"/><address addr="198.51.100.5" addrtype="ipv4"/><hostnames></hostnames></host>
+<host><status state="up" reason="user-set" reason_ttl="0"/><address addr="198.51.100.6" addrtype="ipv4"/><hostnames></hostnames></host>
+<host><status state="up" reason="user-set" reason_ttl="0"/><address addr="198.51.100.7" addrtype="ipv4"/><hostnames></hostnames><ports><port protocol="tcp" portid="80"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="http" product="lighttpd" version="1.4.5" method="probed" conf="10"/></port></ports></host>
+<host><status state="up" reason="user-set" reason_ttl="0"/><address addr="198.51.100.8" addrtype="ipv4"/><hostnames></hostnames></host>
+<host><status state="up" reason="user-set" reason_ttl="0"/><address addr="198.51.100.9" addrtype="ipv4"/><hostnames></hostnames></host>
+<host><status state="up" reason="user-set" reason_ttl="0"/><address addr="198.51.100.10" addrtype="ipv4"/><hostnames></hostnames></host>
+<runstats><finished time="1756000520" elapsed="20.00" exit="success"/><hosts up="10" down="0" total="10"/></runstats>
+</nmaprun>

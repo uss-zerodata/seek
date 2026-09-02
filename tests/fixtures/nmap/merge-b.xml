@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nmaprun scanner="nmap" args="nmap -Pn -n -sV -p 22,3128,8000 -oX merge-b.xml 192.0.2.40,42" start="1756000800" version="7.94" xmloutputversion="1.05">
+<host><status state="up" reason="user-set" reason_ttl="0"/>
+<address addr="192.0.2.40" addrtype="ipv4"/>
+<hostnames><hostname name="forty.example" type="PTR"/></hostnames>
+<ports>
+<port protocol="tcp" portid="22"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="ssh" product="OpenSSH" version="10.0p2" extrainfo="Debian 7" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="3128"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="http" product="Proxmox VE REST API" version="3.0" method="probed" conf="10"/></port>
+</ports>
+<os><osmatch name="Linux 6.X" accuracy="97" line="2"><osclass type="general purpose" vendor="Linux" osfamily="Linux" osgen="6.X" accuracy="97"/></osmatch></os>
+</host>
+<host><status state="up" reason="user-set" reason_ttl="0"/>
+<address addr="192.0.2.42" addrtype="ipv4"/><hostnames></hostnames>
+<ports><port protocol="tcp" portid="8000" ><state state="open" reason="syn-ack" reason_ttl="64"/><service name="http-alt" product="Kestrel" method="probed" conf="10"/></port></ports>
+</host>
+<runstats><finished time="1756000810" elapsed="10.00" exit="success"/><hosts up="2" down="0" total="2"/></runstats>
+</nmaprun>

@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nmaprun scanner="nmap" args="nmap -sn -oX empty-run.xml 198.51.100.0/30" start="1756000200" version="7.94" xmloutputversion="1.05">
+<runstats><finished time="1756000201" elapsed="1.00" exit="success"/><hosts up="0" down="4" total="4"/></runstats>
+</nmaprun>

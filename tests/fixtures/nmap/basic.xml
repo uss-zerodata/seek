@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nmaprun scanner="nmap" args="nmap -sV -oX basic.xml 192.0.2.0/29" start="1756000000" version="7.94" xmloutputversion="1.05">
+<scaninfo type="syn" protocol="tcp" numservices="3" services="22,80,443"/>
+<host starttime="1756000001" endtime="1756000009"><status state="up" reason="syn-ack" reason_ttl="64"/>
+<address addr="192.0.2.1" addrtype="ipv4"/>
+<hostnames><hostname name="alpha.example" type="PTR"/></hostnames>
+<ports>
+<port protocol="tcp" portid="22"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="ssh" product="OpenSSH" version="9.2p1" extrainfo="Debian 2" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="80"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="http" product="nginx" version="1.22.1" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="443"><state state="closed" reason="conn-refused" reason_ttl="64"/><service name="https" method="table" conf="3"/></port>
+</ports>
+<os><osmatch name="Linux 5.X" accuracy="95" line="1"><osclass type="general purpose" vendor="Linux" osfamily="Linux" osgen="5.X" accuracy="95"/></osmatch></os>
+</host>
+<host starttime="1756000001" endtime="1756000009"><status state="up" reason="syn-ack" reason_ttl="64"/>
+<address addr="192.0.2.2" addrtype="ipv4"/>
+<hostnames></hostnames>
+<ports>
+<port protocol="tcp" portid="80"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="http" product="nginx" version="1.22.1" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="22"><state state="filtered" reason="no-response" reason_ttl="0"/></port>
+</ports>
+</host>
+<host><status state="down" reason="no-response" reason_ttl="0"/><address addr="192.0.2.3" addrtype="ipv4"/></host>
+<runstats><finished time="1756000010" elapsed="9.00" exit="success"/><hosts up="2" down="1" total="3"/></runstats>
+</nmaprun>

@@ -1,0 +1,552 @@
+"""The scan flow in the viewer: the tab, the review, and folding a run back in.
+
+**No test here runs nmap.** `Config.nmap_path` points at a stub script that
+prints canned output, which is exactly why the runner takes its program from
+configuration.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from textual.geometry import Region
+from textual.widgets import Button, DataTable, Label, OptionList, Tabs, TextArea
+
+from seek.config import Config
+from seek.nmap.merge import load
+from seek.nmap.runner import State
+from seek.nmap.views import prepare
+from seek.tui.nmap.app import NmapApp
+from seek.tui.nmap.scope import CommandScreen, ReviewScreen, ScopeScreen
+
+pytestmark = pytest.mark.asyncio
+FIX = Path(__file__).parent / "fixtures" / "nmap"
+
+_DONE = """#!/bin/sh
+echo "Starting Nmap 7.94 ( https://nmap.org )"
+echo "Nmap done: 1 IP address (1 host up) scanned in 0.10 seconds"
+"""
+
+
+_VERSION = ('case "$1" in --version) '
+            'echo "Nmap version 7.94 ( https://nmap.org )"; exit 0;; esac\n')
+
+
+def _stub(tmp_path: Path, body: str = _DONE, name: str = "fake-nmap") -> str:
+    """A stand-in for nmap. It answers `--version` because the app probes with it."""
+    path = tmp_path / name
+    head, _, rest = body.partition("\n")
+    path.write_text(f"{head}\n{_VERSION}{rest}")
+    path.chmod(0o755)
+    return str(path)
+
+
+def _config(tmp_path: Path, **kwargs) -> Config:
+    return Config(nmap_path=_stub(tmp_path), nmap_presets={"Quick": "-sV"},
+                  scan_output_dir=str(tmp_path), **kwargs)
+
+
+def _app(tmp_path, *names, config: Config | None = None) -> NmapApp:
+    paths = [FIX / f"{n}.xml" for n in names]
+    return NmapApp(prepare(load(paths)), config or _config(tmp_path),
+                   sources=paths, scan_dir=tmp_path)
+
+
+def _render(w) -> str:
+    region = Region(0, 0, w.size.width, max(1, w.size.height))
+    return "\n".join("".join(s.text for s in strip) for strip in w.render_lines(region))
+
+
+def _labels(app) -> list[str]:
+    return [str(w.render()) for w in app.screen.query(Label)]
+
+
+def _modal_text(app) -> str:
+    """A modal covers the app, so render its own widgets rather than the screen."""
+    from textual.widgets import Static
+    return "\n".join(str(w.render()) for w in app.screen.query(Static))
+
+
+async def _choose(pilot, app, choice_id):
+    options = app.screen.query_one(OptionList)
+    options.highlighted = options.get_option_index(choice_id)
+    await pilot.press("enter")
+    await pilot.pause(0.3)
+
+
+# --- availability -----------------------------------------------------------
+
+
+async def test_the_status_line_says_whether_a_scan_can_be_run(tmp_path):
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause(0.3)
+        assert "⌁ nmap" in _render(app.query_one("#status"))
+        assert app.nmap.available
+
+
+async def test_without_nmap_the_viewer_is_otherwise_unchanged(tmp_path):
+    config = Config(nmap_path=str(tmp_path / "nope"), scan_output_dir=str(tmp_path))
+    app = _app(tmp_path, "basic", config=config)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause(0.3)
+        assert not app.nmap.available
+        assert "⌁ nmap not found" in _render(app.query_one("#status"))
+        assert [r.cells[0] for r in app._rows] == ["192.0.2.1", "192.0.2.2", "192.0.2.3"]
+
+
+async def test_a_scan_action_without_nmap_explains_rather_than_failing(tmp_path):
+    config = Config(nmap_path=str(tmp_path / "nope"), scan_output_dir=str(tmp_path))
+    app = _app(tmp_path, "basic", config=config)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        await pilot.press("n")
+        await pilot.pause(0.4)
+        assert app.runner.runs == [], "nothing was started"
+        assert not isinstance(app.screen, ScopeScreen)
+
+
+# --- the Scans tab ----------------------------------------------------------
+
+
+async def test_the_scans_tab_is_present_and_empty_at_first(tmp_path):
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        app.query_one(Tabs).active = "scans"
+        await pilot.pause(0.4)
+        assert app.view.kind == "scans" and app._rows == []
+        shown = str(app.query_one("#empty").render())
+        assert "No scan has been run" in shown and "n starts one" in shown
+
+
+async def test_without_nmap_the_scans_tab_says_what_is_missing(tmp_path):
+    config = Config(nmap_path=str(tmp_path / "nope"), scan_output_dir=str(tmp_path))
+    app = _app(tmp_path, "basic", config=config)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        app.query_one(Tabs).active = "scans"
+        await pilot.pause(0.4)
+        shown = str(app.query_one("#empty").render())
+        assert "Scanning is unavailable" in shown
+        assert "still works" in shown
+
+
+# --- the flow ---------------------------------------------------------------
+
+
+async def _run_a_scan(pilot, app, targets="10.0.0.1\n"):
+    """scope → preset → command → review → run, the way a user does it."""
+    await pilot.press("n")
+    await pilot.pause(0.4)
+    app.screen.query_one(TextArea).text = targets
+    await pilot.pause(0.3)
+    await pilot.press("ctrl+s")
+    await pilot.pause(0.4)
+    await _choose(pilot, app, "Quick")
+    await pilot.pause(0.3)
+    await pilot.press("ctrl+s")             # the command, unedited
+    await pilot.pause(0.4)
+    app.screen.query_one(Button).press()
+    await pilot.pause(0.6)
+
+
+async def test_a_scan_runs_from_the_editor_and_lands_in_the_run_list(tmp_path):
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        await _run_a_scan(pilot, app)
+        for _ in range(60):
+            await pilot.pause(0.1)
+            if app.runner.runs and not app.runner.runs[0].running:
+                break
+        run = app.runner.runs[0]
+        assert run.state is State.DONE, run.result
+        assert app._active_tab == "scans"
+        assert "Quick" in app._rows[0].cells[0]
+
+
+async def test_the_review_shows_the_argv_the_scope_and_the_warning(tmp_path):
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        await pilot.press("n")
+        await pilot.pause(0.4)
+        app.screen.query_one(TextArea).text = "10.0.0.1\n10.0.0.2\n"
+        await pilot.pause(0.3)
+        await pilot.press("ctrl+s")
+        await pilot.pause(0.4)
+        await _choose(pilot, app, "Quick")
+        await pilot.press("ctrl+s")
+        await pilot.pause(0.5)
+        assert isinstance(app.screen, ReviewScreen)
+        shown = _modal_text(app)
+        assert "-sV" in shown and "-oA" in shown
+        assert "2 target(s)" in shown
+        assert "authorised" in shown, "the reminder is part of the review"
+        await pilot.press("escape")
+        await pilot.pause(0.3)
+        assert app.runner.runs == [], "backing out of the review runs nothing"
+
+
+async def test_a_command_that_would_need_a_shell_is_refused_at_the_command_step(tmp_path):
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        await pilot.press("n")
+        await pilot.pause(0.4)
+        app.screen.query_one(TextArea).text = "10.0.0.1\n"
+        await pilot.pause(0.3)
+        await pilot.press("ctrl+s")
+        await pilot.pause(0.4)
+        await _choose(pilot, app, "Quick")
+        app.screen.query_one(TextArea).text = f"{app.config.nmap_path} -sV | tee x"
+        await pilot.press("ctrl+s")
+        await pilot.pause(0.5)
+        assert isinstance(app.screen, CommandScreen), "back on the command, not running"
+        assert app.runner.runs == []
+
+
+async def test_cancelling_the_scope_runs_nothing(tmp_path):
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        await pilot.press("n")
+        await pilot.pause(0.4)
+        assert isinstance(app.screen, ScopeScreen)
+        await pilot.press("escape")
+        await pilot.pause(0.3)
+        assert app.runner.runs == []
+
+
+async def test_a_scope_with_no_valid_target_is_refused(tmp_path):
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        await pilot.press("n")
+        await pilot.pause(0.4)
+        screen = app.screen
+        screen.query_one(TextArea).text = "not a target!\n"
+        await pilot.pause(0.3)
+        await pilot.press("ctrl+s")
+        await pilot.pause(0.3)
+        assert app.screen is screen, "still in the editor"
+        assert "not an address" in _render(screen.query_one("#summary"))
+
+
+async def test_an_unwritable_scan_directory_stops_before_the_review(tmp_path):
+    import os
+    if os.geteuid() == 0:
+        pytest.skip("root can write anywhere")
+    locked = tmp_path / "locked"
+    locked.mkdir(mode=0o500)
+    config = Config(nmap_path=_stub(tmp_path), nmap_presets={"Quick": "-sV"},
+                    scan_output_dir=str(locked))
+    app = _app(tmp_path, "basic", config=config)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        await pilot.press("n")
+        await pilot.pause(0.4)
+        app.screen.query_one(TextArea).text = "10.0.0.1\n"
+        await pilot.pause(0.3)
+        await pilot.press("ctrl+s")
+        await pilot.pause(0.4)
+        await _choose(pilot, app, "Quick")
+        await pilot.pause(0.4)
+        assert not isinstance(app.screen, (CommandScreen, ReviewScreen))
+        assert app.runner.runs == []
+
+
+# --- while it runs ----------------------------------------------------------
+
+
+async def test_freezing_the_log_never_touches_the_scan(tmp_path):
+    slow = _stub(tmp_path, "#!/bin/sh\necho going\nsleep 5\n", name="slow-nmap")
+    config = Config(nmap_path=slow, nmap_presets={"Quick": "-sV"},
+                    scan_output_dir=str(tmp_path))
+    app = _app(tmp_path, "basic", config=config)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        await _run_a_scan(pilot, app)
+        for _ in range(60):
+            await pilot.pause(0.1)
+            if app.runner.runs:
+                break
+        run = app.runner.runs[0]
+        assert run.running
+        app._report_mode = "raw"
+        await pilot.press("p")
+        await pilot.pause(0.3)
+        assert app._log_frozen
+        assert run.running, "freezing is a view state; the process is untouched"
+        assert "still running" in _render(app.query_one("#detail-body"))
+        await pilot.press("c")
+        await pilot.pause(1.0)
+        for _ in range(80):
+            await pilot.pause(0.1)
+            if not run.running:
+                break
+        assert run.state is State.CANCELLED
+
+
+async def test_a_second_scan_is_refused_while_one_runs(tmp_path):
+    slow = _stub(tmp_path, "#!/bin/sh\necho going\nsleep 5\n", name="slow-nmap")
+    config = Config(nmap_path=slow, nmap_presets={"Quick": "-sV"},
+                    scan_output_dir=str(tmp_path))
+    app = _app(tmp_path, "basic", config=config)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        await _run_a_scan(pilot, app)
+        for _ in range(60):
+            await pilot.pause(0.1)
+            if app.runner.runs:
+                break
+        await pilot.press("n")
+        await pilot.pause(0.4)
+        assert not isinstance(app.screen, ScopeScreen), "refused, naming the running one"
+        app.runner.cancel()
+        await pilot.pause(1.0)
+
+
+# --- the report -------------------------------------------------------------
+
+
+async def test_the_report_cycles_through_its_three_modes(tmp_path):
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        await _run_a_scan(pilot, app)
+        for _ in range(60):
+            await pilot.pause(0.1)
+            if app.runner.runs and not app.runner.runs[0].running:
+                break
+        app._report_mode = "condensed"
+        app._refresh_detail()
+        await pilot.pause(0.2)
+        seen = []
+        for _ in range(3):
+            seen.append(_render(app.query_one("#detail-body")).strip().splitlines()[0])
+            await pilot.press("o")
+            await pilot.pause(0.3)
+        assert any("overview" in line for line in seen)
+        assert any("added" in line for line in seen)
+        assert any("raw output" in line for line in seen)
+
+
+# --- folding it back in -----------------------------------------------------
+
+
+async def test_a_finished_scan_is_merged_and_diffed(tmp_path):
+    """The stub writes an XML file exactly as nmap's -oA would."""
+    xml = (FIX / "scripts.xml").read_text()
+    writer = tmp_path / "writing-nmap"
+    writer.write_text(
+        "#!/bin/sh\n"
+        + _VERSION +
+        "echo 'Nmap done: 1 IP address (1 host up) scanned'\n"
+        'while [ $# -gt 0 ]; do\n'
+        '  if [ "$1" = "-oA" ]; then base="$2"; fi\n'
+        '  shift\n'
+        'done\n'
+        f'cat > "$base.xml" <<\'XML\'\n{xml}\nXML\n'
+    )
+    writer.chmod(0o755)
+    config = Config(nmap_path=str(writer), nmap_presets={"Quick": "-sV"},
+                    scan_output_dir=str(tmp_path))
+    app = _app(tmp_path, "basic", config=config)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        before = {h.address for h in app.scans.hosts}
+        await _run_a_scan(pilot, app)
+        for _ in range(80):
+            await pilot.pause(0.1)
+            if app.runner.runs and not app.runner.runs[0].running:
+                break
+        run = app.runner.runs[0]
+        assert run.state is State.DONE, run.result
+        after = {h.address for h in app.scans.hosts}
+        assert after > before, "the new host is in the model"
+        changes = app._diffs[id(run)]
+        assert changes.new_hosts and "new host" in changes.summary()
+
+
+# --- export → scan ----------------------------------------------------------
+
+
+async def test_the_export_dialog_offers_scanning_when_nmap_is_there(tmp_path):
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        await pilot.press("x")
+        await pilot.pause(0.4)
+        options = app.screen.query_one(OptionList)
+        assert options.get_option_index("scan") is not None
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+
+
+async def test_the_export_dialog_hides_scanning_without_nmap(tmp_path):
+    config = Config(nmap_path=str(tmp_path / "nope"), scan_output_dir=str(tmp_path))
+    app = _app(tmp_path, "basic", config=config)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        await pilot.press("x")
+        await pilot.pause(0.4)
+        options = app.screen.query_one(OptionList)
+        ids = [options.get_option_at_index(i).id for i in range(options.option_count)]
+        assert "scan" not in ids
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+
+
+async def test_scanning_the_selection_carries_its_addresses(tmp_path):
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        app.query_one(DataTable).move_cursor(row=1)
+        await pilot.press("m")                       # 192.0.2.2
+        await pilot.pause(0.3)
+        await pilot.press("x")
+        await pilot.pause(0.4)
+        await _choose(pilot, app, "scan")
+        await pilot.pause(0.5)
+        options = app.screen.query_one(OptionList)   # straight to the presets
+        assert options.get_option_index("Quick") is not None
+        assert "1 target(s)" in " ".join(_labels(app))
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+
+
+# --- the entry point --------------------------------------------------------
+# (async only because this module carries a module-wide asyncio mark; these
+# three drive the CLI, not the app.)
+
+
+async def test_an_empty_directory_is_an_invitation_when_nmap_is_there(tmp_path, monkeypatch):
+    """A directory with nothing in it is the case for starting a scan."""
+    from typer.testing import CliRunner
+
+    from seek.cli import app as cli
+
+    _stub(tmp_path, name="nmap")
+    monkeypatch.setenv("PATH", str(tmp_path))
+    empty = tmp_path / "engagement"
+    empty.mkdir()
+    monkeypatch.setattr("seek.cli._stdout_is_usable", lambda: False)
+    result = CliRunner().invoke(cli, ["nmap", str(empty)])
+    assert "no readable nmap output" not in result.output
+    assert "requires an interactive terminal" in result.output, \
+        "it got as far as wanting a terminal, rather than refusing the directory"
+
+
+async def test_an_empty_directory_without_nmap_still_reports_nothing_to_read(
+    tmp_path, monkeypatch
+):
+    from typer.testing import CliRunner
+
+    from seek.cli import app as cli
+
+    monkeypatch.setenv("PATH", str(tmp_path / "empty-path"))
+    empty = tmp_path / "engagement"
+    empty.mkdir()
+    result = CliRunner().invoke(cli, ["nmap", str(empty)])
+    assert result.exit_code == 1
+    assert "no readable nmap output" in result.output
+    assert "no scan can be started" in result.output
+
+
+async def test_a_directory_with_scans_opens_on_them_as_before(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from seek.cli import app as cli
+
+    _stub(tmp_path, name="nmap")
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setattr("seek.cli._stdout_is_usable", lambda: False)
+    result = CliRunner().invoke(cli, ["nmap", str(FIX / "basic.xml")])
+    assert "requires an interactive terminal" in result.output
+
+
+async def test_quitting_does_not_leave_a_scan_running(tmp_path):
+    """The child is in its own session, so nothing else would reap it."""
+    slow = _stub(tmp_path, "#!/bin/sh\necho going\nsleep 30\n", name="slow-nmap")
+    config = Config(nmap_path=slow, nmap_presets={"Quick": "-sV"},
+                    scan_output_dir=str(tmp_path))
+    app = _app(tmp_path, "basic", config=config)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        await _run_a_scan(pilot, app)
+        for _ in range(60):
+            await pilot.pause(0.1)
+            if app.runner.runs:
+                break
+        assert app.runner.busy() is not None
+        app.exit(0)
+        await pilot.pause(0.5)
+    # The process is signalled on the way out. Its *state* cannot settle - the
+    # worker that would have awaited it went with the app - and a terminated
+    # child stays a zombie until something reaps it, so asserting liveness here
+    # would be asserting the reaper, not the app.
+    assert "[seek] cancelling" in "\n".join(app.runner.runs[0].log)
+
+
+# --- the ports the model already knows --------------------------------------
+
+
+async def test_a_preset_can_reuse_the_ports_already_found(tmp_path):
+    """The reference workflow greps these out of the last .gnmap; we know them."""
+    config = Config(nmap_path=_stub(tmp_path),
+                    nmap_presets={"Versions": "-sV -p{ports}"},
+                    scan_output_dir=str(tmp_path))
+    app = _app(tmp_path, "basic", config=config)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        await pilot.press("n")
+        await pilot.pause(0.4)
+        app.screen.query_one(TextArea).text = "10.0.0.1\n"
+        await pilot.pause(0.3)
+        await pilot.press("ctrl+s")
+        await pilot.pause(0.4)
+        await _choose(pilot, app, "Versions")
+        await pilot.pause(0.4)
+        shown = app.screen.query_one(TextArea).text
+        assert "-p22,80" in shown, "the open ports of the current model"
+        assert "{ports}" not in shown
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+
+
+async def test_a_ports_preset_is_refused_when_nothing_is_known_yet(tmp_path):
+    config = Config(nmap_path=_stub(tmp_path),
+                    nmap_presets={"Versions": "-sV -p{ports}"},
+                    scan_output_dir=str(tmp_path))
+    app = NmapApp(prepare(load([])), config, sources=[], scan_dir=tmp_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.4)
+        # the empty model opens the editor by itself
+        app.screen.query_one(TextArea).text = "10.0.0.1\n"
+        await pilot.pause(0.3)
+        await pilot.press("ctrl+s")
+        await pilot.pause(0.4)
+        await _choose(pilot, app, "Versions")
+        await pilot.pause(0.4)
+        assert not isinstance(app.screen, CommandScreen), "refused, not a broken -p"
+        assert app.runner.runs == []
+
+
+async def test_the_shipped_presets_are_the_documented_workflow():
+    from seek.nmap.presets import DEFAULT_PRESETS, needs_root, parse_args
+
+    names = list(DEFAULT_PRESETS)
+    assert [n[:2] for n in names] == sorted(n[:2] for n in names), \
+        "the phases read in the order the work is done"
+    for name, args in DEFAULT_PRESETS.items():
+        parsed = parse_args(args)
+        assert "sudo" not in parsed, f"{name}: elevation is added at launch"
+        assert not any(a.startswith("-iL") for a in parsed), f"{name}: scope is the app's"
+        assert not any(a.startswith("-o") for a in parsed), f"{name}: output is the app's"
+    discovery = DEFAULT_PRESETS["01 · Discovery (ICMP, TCP and UDP pings)"]
+    assert needs_root(parse_args(discovery)), "-PE/-PP/-PU need raw sockets"
+    smb = DEFAULT_PRESETS["03 · SMB vulnerabilities (139, 445)"]
+    assert not needs_root(parse_args(smb)), "a script scan on two ports does not"
