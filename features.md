@@ -61,7 +61,6 @@ alpha.hektor.cc
 beta.hektor.cc
 gamma.hektor.cc
 10.10.10.0/24
-10.10.11.0/24
 ~~~
 
 if additional information or decisions are required, prompt me to provide them. for the tui design, use the tui-design skill.
