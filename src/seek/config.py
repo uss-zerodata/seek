@@ -369,7 +369,9 @@ def example_toml() -> str:
     d = Config()
     out = [
         "# seek configuration - every key shown at its default value.",
-        "# Copy to the path reported by `seek --config-path` and edit.",
+        "# Install a copy at the right path with `seek --init-config`, then edit",
+        "# that file (its path is `seek --config-path`). Editing THIS example does",
+        "# nothing - the app reads the installed copy, not this template.",
         "",
     ]
     for key in _SCALAR_KEYS:

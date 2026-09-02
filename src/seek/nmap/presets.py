@@ -362,54 +362,29 @@ class Scope:
 # `{ports}` expands to the open ports already in the model, which is the step
 # the reference does with grep between the top-1000 scan and the version scan.
 DEFAULT_PRESETS: dict[str, str] = {
-    # --- 01 discovery: which hosts are alive ---
-    "01 · Discovery (ICMP, TCP and UDP pings)":
-        "-vv -T4 -n -sn -PE -PP -PS22,80,445 -PA80 -PU53,123,161,500,31347",
-    "01 · Discovery, null scan (ICMP/TCP/UDP filtered)":
-        "-vv -T4 -n -sn -sN",
-    "01 · Discovery, top TCP and UDP ping ports":
-        "-vv -T4 -n -Pn --open"
-        " -PS20,21,22,23,25,53,67,68,69,80,110,111,123,135,137,138,139,143,161,162,"
-        "443,445,500,514,520,631,993,995,1434,1723,1900,3306,3389,4500,5900,8080,49152"
-        " -PU20,21,22,23,25,53,67,68,69,80,110,111,123,135,137,138,139,143,161,162,"
-        "443,445,500,514,520,631,993,995,1434,1723,1900,3306,3389,4500,5900,8080,49152",
-    "01 · DNS servers (UDP 53)":
-        "-vv -T4 -n -Pn -sU -p53",
+    "00 · Lookup, DNS names (reverse lookup)": "-vv -T4 -sL -R",
+    "00 · Lookup, DNS names (forward lookup)": "-vv -T4 -sL",
 
-    # --- 02 services: what those hosts run ---
-    "02 · Services, top 1000 TCP":
-        "-vv -T4 -n -Pn -sS --host-timeout 30m",
-    "02 · Services, top 100 TCP (fast)":
-        "-vv -T4 -n -Pn -sS --top-ports 100 --defeat-rst-ratelimit",
-    "02 · Services, versions on the ports already found":
-        "-vv -T4 -n -Pn -sS -A --host-timeout 30m -p{ports}",
-    "02 · Services, full TCP (-p-)":
-        "-vv -T4 -n -Pn -sS -A -p- --host-timeout 3h",
+    "01 · Discovery, null scan (ICMP/TCP/UDP filtered)": "-vv -T4 -n -sn -sN",
+    "01 · Discovery, common ports (ICMP/TCP/UDP) ": "-vv -T4 -n -sn -PE -PP -PS22,80,445 -PA80 -PU53,123,161,500,31347",
+    "01 · Discovery, top ports (TCP/UDP)": "-vv -T4 -n -Pn --open -PS20,21,22,23,25,53,67,68,69,80,110,111,123,135,137,138,139,143,161,162,443,445,500,514,520,631,993,995,1434,1723,1900,3306,3389,4500,5900,8080,49152 -PU20,21,22,23,25,53,67,68,69,80,110,111,123,135,137,138,139,143,161,162,443,445,500,514,520,631,993,995,1434,1723,1900,3306,3389,4500,5900,8080,49152",
+    "01 · Discovery, DNS servers (UDP 53)": "-vv -T4 -n -Pn -sU -p53",
 
-    # --- 03 service-specific ---
-    "03 · SMB vulnerabilities (139, 445)":
-        "-vv -T4 -n -Pn -p139,445 --script smb-vuln*",
-    "03 · SMB shares (edit the credentials first)":
-        "-vv -T4 -n -Pn -p139,445 --script smb-enum-shares"
-        " --script-args smbuser=USERNAME,smbpass=PASSWORD",
-    "03 · Siemens S7 (TCP 102)":
-        "-vv -T4 -n -Pn -sT --script s7-info.nse -p102",
-    # The name presets. No `-n` on any of them, unlike every other preset:
-    # resolving is the point. A reverse lookup gives at most the one PTR the
-    # address owner published, so the rest come from what the server says about
-    # itself - which is where a multi-site host's vhosts actually surface.
-    "03 · DNS names (reverse lookup, sends nothing)":
-        "-vv -T4 -sL -R",
-    "03 · Names the services reveal (certs, redirects, NTLM)":
-        "-vv -T4 -Pn -sV -p{ports} --script "
-        "ssl-cert,http-title,http-headers,rdp-ntlm-info,smb-os-discovery,"
-        "nbstat,ldap-rootdse,ssl-cert-intaddr",
-    # Reaches a third party (crt.sh), not the target: check that it is within
-    # the engagement's rules before running it.
-    "03 · Names from certificate transparency (queries crt.sh)":
-        "-vv -T4 -Pn -sV -p{ports} --script hostmap-crtsh",
-    "03 · Virtual hosts (brute force, noisy)":
-        "-vv -T4 -Pn -p80,443,8080,8443 --script http-vhosts",
+    "02 · Services, top 100 TCP (fast)": "-vv -T4 -n -Pn -sS --top-ports 100 --defeat-rst-ratelimit",
+    "02 · Services, top 1000 TCP": "-vv -T4 -n -Pn -sS --top-ports 1000 --host-timeout 1h",
+
+    "03 · Details, versions on known ports": "-vv -T4 -n -Pn -sS -A --host-timeout 1h -p{ports}",
+    "03 · Details, full TCP (-p-)": "-vv -T4 -n -Pn -sS -A -p- --host-timeout 3h",
+
+    "04 · Vuln, SMB shares (edit the credentials first)": "-vv -T4 -n -Pn -p139,445 --script smb-enum-shares --script-args smbuser=USERNAME,smbpass=PASSWORD",
+    "04 · Vuln, SMB vulnerabilities (139, 445)": "-vv -T4 -n -Pn -p139,445 --script smb-vuln*",
+    "04 · Vuln, SSH vulnerabilities (22)": "-vv -T4 -n -Pn -p22 --script sshv1,ssh2-enum-algos,ssh-hostkey",
+    "04 · Vuln, HTTP vulnerabilities (80, 443)": "-vv -T4 -n -Pn -p80,443 --script http-vuln*",
+    "04 · Vuln, general vulnerabilities (all known ports)": "-vv -T4 -n -Pn -p{ports} --script vuln",
+
+    "05 · Names, from service detection (certs, redirects, NTLM)": "-vv -T4 -Pn -sV -p{ports} --script ssl-cert,http-title,http-headers,rdp-ntlm-info,smb-os-discovery,nbstat,ldap-rootdse,ssl-cert-intaddr",
+    "05 · Names, from certificates (queries crt.sh)": "-vv -T4 -Pn -sV -p{ports} --script hostmap-crtsh",
+    "05 · Names, from virtual hosts (brute force, noisy)": "-vv -T4 -Pn -p80,443,8080,8443 --script http-vhosts",
 }
 
 PORTS_PLACEHOLDER = "{ports}"

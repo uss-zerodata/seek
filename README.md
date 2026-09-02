@@ -253,6 +253,7 @@ seek [OPTIONS] [PATTERNS]...
   -r, --regex         treat PATTERNS as regexes instead of globs
       --gitignore     honor .gitignore / .ignore while walking
       --config-path   print the config file path and exit
+      --init-config   write a starter config to that path and exit
 
 Examples:
   seek
@@ -372,9 +373,16 @@ shows at most `max_results` rows (default 500); the status line shows
 
 ## Configuration
 
-Optional TOML file; print its location with `seek --config-path`
-(`~/.config/seek/config.toml` on Linux). A fully commented example with every
-key at its default is in [`config.example.toml`](config.example.toml).
+Optional TOML file at `~/.config/seek/config.toml` (Linux; `seek --config-path`
+prints the exact location). Install a fully-commented starter there with
+
+```bash
+seek --init-config      # writes the file; won't overwrite an existing one
+```
+
+then edit that file — the app reads it on the next run. The shipped
+[`config.example.toml`](config.example.toml) is the same content for reference;
+editing the example does nothing, because the app reads the installed copy.
 
 ## Development
 

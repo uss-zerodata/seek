@@ -654,3 +654,73 @@ async def test_quitting_with_nothing_running_is_immediate(tmp_path):
         await pilot.press("q")
         await pilot.pause(0.4)
         assert not app.is_running, "no scan, no question"
+
+
+# --- the preset chooser reads cleanly ---------------------------------------
+
+
+async def test_the_preset_chooser_shows_each_preset_and_its_privilege(tmp_path):
+    from textual.widgets import OptionList
+
+    from seek.tui.nmap.scope import PresetScreen
+    presets = {
+        "02 · Services, top 1000 TCP": "-vv -T4 -n -Pn -sS --host-timeout 30m",
+        "03 · SMB vulnerabilities (139, 445)": "-vv -Pn -p139,445 --script smb-vuln*",
+    }
+    screen = PresetScreen("New scan · 1 target(s)", "10.0.0.1", presets)
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(96, 30)) as pilot:
+        await pilot.pause(0.2)
+        await app.push_screen(screen)
+        await pilot.pause(0.3)
+        options = app.screen.query_one(OptionList)
+        assert options.option_count == 2, "one entry per preset, not one per line"
+        ids = [options.get_option_at_index(i).id for i in range(options.option_count)]
+        assert ids == list(presets), "the id is the preset name"
+        rendered = _render(options)
+        assert "needs root" in rendered, "the SYN preset's privilege shows"
+        assert "-sS --host-timeout 30m" in rendered, "and a preview of its flags"
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+
+
+async def test_a_long_preset_name_does_not_wrap_into_the_next(tmp_path):
+    from textual.geometry import Region
+    from textual.widgets import OptionList
+
+    from seek.tui.nmap.scope import PresetScreen
+    presets = {"02 · Services, versions on the ports already found":
+               "-vv -T4 -n -Pn -sS -A --host-timeout 30m -p1-65535"}
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(96, 30)) as pilot:
+        await pilot.pause(0.2)
+        await app.push_screen(PresetScreen("New scan", "10.0.0.1", presets))
+        await pilot.pause(0.3)
+        options = app.screen.query_one(OptionList)
+        strips = options.render_lines(Region(0, 0, options.size.width, 6))
+        lines = ["".join(sg.text for sg in s) for s in strips]
+        # the whole name and its badge sit on one line, uncut; the flags on one
+        # more - the wrapping that used to tear them apart is gone
+        name_line = next(ln for ln in lines if "already found" in ln)
+        assert "needs root" in name_line, "name and badge share one intact line"
+        assert any("-p1-65535" in ln for ln in lines), "the preview is one line too"
+        assert not any(ln.strip().startswith("needs root") for ln in lines), \
+            "the badge never falls onto a line of its own"
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+
+
+async def test_the_help_body_is_a_grid_of_every_section():
+    # async only because this module carries a module-wide asyncio mark.
+    from rich.console import Console
+
+    from seek.tui.nmap.help import _GROUPS, help_body
+
+    console = Console(width=78)
+    with console.capture() as cap:
+        console.print(help_body())
+    text = cap.get()
+    for title, _ in _GROUPS:
+        assert title in text
+    # a long description stays on its own indented column, not the left margin
+    assert "\nhost →" not in text, "a wrapped description must not fall to column 0"

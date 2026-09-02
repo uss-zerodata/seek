@@ -66,7 +66,14 @@ def nmap(
         )
         raise typer.Exit(code=2)
 
-    config = load_config_or_default()
+    try:
+        config = load_config()
+    except ConfigError as exc:
+        # Surface it, exactly as `search` does: a typo in the config must not be
+        # swallowed into a silent fall-back to defaults, which reads to the user
+        # as "my edits are being ignored".
+        typer.echo(f"seek: {exc}", err=True)
+        raise typer.Exit(code=2) from None
     scans = prepare(load(list(paths)))
     for name, message in scans.failures:
         typer.echo(f"seek: skipped {name}: {message}", err=True)
@@ -95,16 +102,14 @@ def nmap(
                                      scan_dir=scan_dir))
 
 
-def load_config_or_default():
-    try:
-        return load_config()
-    except ConfigError:
-        from seek.config import Config
-
-        return Config()
+_OTHER_COMMANDS = (
+    "Other commands (run `seek <command> --help`):\n"
+    "  seek nmap <files|dir>   browse or run nmap scans\n"
+    "  seek init <bash|zsh>    print shell-integration code"
+)
 
 
-@app.command()
+@app.command(epilog=_OTHER_COMMANDS)
 def search(
     patterns: Annotated[
         list[str] | None,
@@ -127,11 +132,21 @@ def search(
     config_path: Annotated[
         bool, typer.Option("--config-path", help="Print the config file path and exit.")
     ] = False,
+    init_config: Annotated[
+        bool,
+        typer.Option(
+            "--init-config",
+            help="Write a starter config to the config path (won't overwrite an "
+            "existing one) and exit.",
+        ),
+    ] = False,
 ) -> None:
     """Launch the interactive search session (default command)."""
     if config_path:
         typer.echo(str(config_file()))
         raise typer.Exit()
+    if init_config:
+        raise typer.Exit(code=_write_starter_config())
 
     try:
         cfg = load_config()
@@ -165,17 +180,43 @@ def search(
     raise typer.Exit(code=run_session(session))
 
 
+def _write_starter_config() -> int:
+    """Install a starter config at the standard path, without clobbering one.
+
+    The shipped `config.example.toml` is only a template inside the package -
+    editing it changes nothing, because the app reads the per-user path below.
+    This writes that template where the app will actually read it.
+    """
+    from seek.config import example_toml
+
+    dest = config_file()
+    if dest.exists():
+        typer.echo(f"seek: a config already exists at {dest}", err=True)
+        typer.echo("seek: edit it, or delete it and run --init-config again", err=True)
+        return 1
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(example_toml(), encoding="utf-8")
+    except OSError as exc:
+        typer.echo(f"seek: could not write {dest}: {exc.strerror or exc}", err=True)
+        return 1
+    typer.echo(f"seek: wrote a starter config to {dest}")
+    typer.echo("seek: edit it and run seek again to pick up the changes")
+    return 0
+
+
 def _stdout_is_usable() -> bool:
     """The interactive UI needs a real terminal on stdout (and stdin)."""
     return sys.stdout.isatty() and sys.stdin.isatty()
 
 
 def main() -> None:
+    # `search` is the default command; anything that is not another subcommand is
+    # handed to it - including a bare `-h`/`--help`, so the main help screen is
+    # the search command's own (every option visible) rather than a bare list of
+    # subcommands that hides them. The other commands are named in search's
+    # epilog, so nothing is lost.
     argv = sys.argv[1:]
-    if not argv or argv[0] not in _KNOWN_SUBCOMMANDS and not _is_help_only(argv):
+    if not argv or argv[0] not in _KNOWN_SUBCOMMANDS:
         argv = ["search", *argv]
     app(argv)
-
-
-def _is_help_only(argv: list[str]) -> bool:
-    return len(argv) == 1 and argv[0] in {"-h", "--help"}

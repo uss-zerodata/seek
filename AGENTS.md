@@ -263,6 +263,17 @@ stdout, `cd`) cannot run while Textual owns the screen. They set
 - **The detail pane is where most parsed data actually surfaces.** Script output
   and vulnerability records (title, ids, refs, disclosure) have no column; if you
   add a field to the models, render it in `tui/nmap/detail.py` or it is invisible.
+- **Reference text is a grid, not space-padded strings.** The help overlay
+  builds a `rich.table.Table.grid` per section: a long description wraps *inside
+  its own column* instead of falling back to the left margin, which is what made
+  the old `{key:<20} {desc}` version unreadable. Titles carry weight, keys the
+  cyan accent, secondary lines are dim - ANSI names, not hex, so it adapts to
+  the terminal palette like the rest of the viewer.
+- **The preset chooser is two lines per option** (`PresetScreen`): a bold name
+  with the privilege badge right-aligned, and a dim, clipped preview of the
+  flags. Both lines are `no_wrap` + ellipsis so neither the name nor the badge
+  can spill onto a line of its own - the bug that made the old single-line
+  chooser tear names apart. Scan-flow modals share an 84-wide frame.
 - **A modal offers choices as an `OptionList`, never a stack of `Button`s.**
   Textual buttons are three rows tall: six export recipes needed more than
   twenty, ran off a 24-row terminal, and put the last choice out of reach with

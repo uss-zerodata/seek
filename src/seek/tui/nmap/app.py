@@ -38,7 +38,12 @@ from seek.tui.nmap import scans as scan_views
 from seek.tui.nmap import views as vdefs
 from seek.tui.nmap.commands import ScanCommands
 from seek.tui.nmap.help import NmapHelpScreen
-from seek.tui.nmap.scope import CommandScreen, ReviewScreen, ScopeScreen
+from seek.tui.nmap.scope import (
+    CommandScreen,
+    PresetScreen,
+    ReviewScreen,
+    ScopeScreen,
+)
 
 # The filter box keeps focus, exactly as the query box does in a search session,
 # so every action is on a modifier - a bare digit has to reach the filter, since
@@ -906,9 +911,9 @@ class NmapApp(App[int]):
         if not presets:
             self.notify("no scan presets configured", severity="error")
             return
-        name = await self.push_screen_wait(ChoiceScreen(
-            f"Scan {len(targets)} target(s) with:",
-            [(key, self._preset_label(key, args)) for key, args in presets.items()]))
+        scope_line = ", ".join(targets[:4]) + (" …" if len(targets) > 4 else "")
+        name = await self.push_screen_wait(PresetScreen(
+            f"New scan · {len(targets)} target(s)", scope_line, presets))
         if name is None:
             return
 
@@ -957,15 +962,6 @@ class NmapApp(App[int]):
             return
         self._run_scan(ScanRun(preset=name, argv=argv, targets=chosen,
                                out_base=out_base, elevated=elevate))
-
-    @staticmethod
-    def _preset_label(name: str, args: str) -> str:
-        try:
-            parsed = presets_mod.parse_args(args)
-        except presets_mod.CommandError:
-            return name
-        root = presets_mod.needs_root(parsed)
-        return f"{name}{'   ⚠ needs root' if root else ''}"
 
     @work(group="scan")
     async def _run_scan(self, run: ScanRun) -> None:

@@ -16,14 +16,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from rich.console import Group
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Label, Static, TextArea
+from textual.widgets import Button, Label, OptionList, Static, TextArea
+from textual.widgets.option_list import Option
 
-from seek.nmap.presets import Scope
+from seek.nmap.presets import Scope, needs_root, parse_args
 
 
 @dataclass(slots=True)
@@ -50,7 +52,7 @@ class ScopeScreen(ModalScreen[list[str] | None]):
     DEFAULT_CSS = """
     ScopeScreen { align: center middle; }
     ScopeScreen > Vertical {
-        width: 78; height: auto; max-height: 90%; background: $panel;
+        width: 84; height: auto; max-height: 90%; background: $panel;
         border: round $primary; padding: 1 2;
     }
     ScopeScreen TextArea { height: 12; border: none; }
@@ -102,6 +104,77 @@ class ScopeScreen(ModalScreen[list[str] | None]):
             self.notify(f"{len(scope.invalid)} line(s) will be skipped",
                         severity="warning")
         self.dismiss(scope.values())
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class PresetScreen(ModalScreen[str | None]):
+    """Choose a scan preset. Returns the preset name, or None if cancelled.
+
+    Each preset is two lines - its name, and a dim preview of the flags it
+    stands for - so the list can be told apart at a glance without every long
+    name wrapping into its neighbour. The privilege badge sits at the right of
+    the name line, where it cannot be torn onto a line of its own.
+    """
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+    DEFAULT_CSS = """
+    PresetScreen { align: center middle; }
+    PresetScreen > Vertical {
+        width: 84; height: auto; max-height: 90%; background: $panel;
+        border: round $primary; padding: 1 2;
+    }
+    PresetScreen OptionList {
+        height: auto; max-height: 22; background: transparent; padding: 0;
+    }
+    PresetScreen OptionList > .option-list--option { padding: 0 0 1 0; }
+    PresetScreen #scope, PresetScreen #keys { color: $text-muted; }
+    """
+    # Text budget for one line inside the box: width, less the border, the
+    # padding and the option list's own gutter. Kept as a constant so the name
+    # and the flag preview are trimmed to the same edge.
+    _WIDTH = 74
+
+    def __init__(self, title: str, scope_line: str,
+                 presets: dict[str, str]) -> None:
+        super().__init__()
+        self._title = title
+        self._scope_line = scope_line
+        self._presets = presets
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label(self._title)
+            yield Label(self._scope_line, id="scope")
+            yield OptionList(*[self._option(name, args)
+                               for name, args in self._presets.items()])
+            yield Label("↑↓ move · ↵ choose · Esc cancel", id="keys")
+
+    def _option(self, name: str, args: str) -> Option:
+        try:
+            root = "needs root" if needs_root(parse_args(args)) else ""
+        except Exception:                       # noqa: BLE001 - a bad preset still lists
+            root = ""
+        # Both lines are no-wrap and clip with an ellipsis, so neither the name
+        # nor the flag preview can spill onto a line of its own - the bug that
+        # made the old chooser unreadable. The badge is right-aligned by padding
+        # the name to the same edge the clip uses.
+        head = Text(no_wrap=True, overflow="ellipsis")
+        head.append(name, style="bold")
+        if root:
+            head.append(" " * max(2, self._WIDTH - len(name) - len(root)))
+            head.append(root, style="yellow")
+        body = Text("  ", no_wrap=True, overflow="ellipsis")
+        body.append(args, style="dim")
+        return Option(Group(head, body), id=name)
+
+    def on_mount(self) -> None:
+        self.query_one(OptionList).focus()
+
+    @on(OptionList.OptionSelected)
+    def _chosen(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(event.option.id)
 
     def action_cancel(self) -> None:
         self.dismiss(None)
