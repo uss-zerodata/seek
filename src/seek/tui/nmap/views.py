@@ -341,10 +341,9 @@ def names_view() -> View:
         sources_for: dict[str, set[str]] = {}
         members_for: dict[str, dict[tuple, tuple[Host, Service]]] = {}
         for host in scans.hosts:
-            for name, source in name_mod.host_names(host):
+            for name, kinds in name_mod.kinds_of(host).items():
                 hosts_for.setdefault(name, {})[host.address] = host
-                sources_for.setdefault(name, set()).add(
-                    "resolved" if source == "resolved" else "certificate")
+                sources_for.setdefault(name, set()).update(kinds)
                 bucket = members_for.setdefault(name, {})
                 for svc in host.open_services:
                     bucket[(host.address, svc.protocol, svc.port)] = (host, svc)

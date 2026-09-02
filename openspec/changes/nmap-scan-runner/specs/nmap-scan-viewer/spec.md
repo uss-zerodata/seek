@@ -1,9 +1,12 @@
 ## ADDED Requirements
 
 ### Requirement: Every name a host is known by is visible
-A scan learns names two ways — a reverse lookup, and the certificate a TLS
-service presents — and both SHALL be recognised, kept with the host they belong
-to, and shown wherever a name is relevant. A name that nothing could resolve,
+A scan learns a host's names from several kinds of evidence — a reverse lookup,
+the certificate a TLS service presents, where an HTTP service redirects, what a
+Windows service announces about itself, and a certificate-transparency lookup —
+and every kind SHALL be recognised, kept with the host it belongs to, and shown
+wherever a name is relevant. A name found more than once SHALL keep every piece
+of evidence behind it, not the first. A name that nothing could resolve,
 such as a wildcard or an address, SHALL NOT be presented as one.
 
 A host's record SHALL list every name known for it together with where each came
@@ -35,6 +38,18 @@ where it came from, and the hosts and ports behind it, opening to those hosts.
 #### Scenario: Finding a host by a certificate name
 - **WHEN** the user filters by a name that appears only in a certificate
 - **THEN** the host that presented it is matched
+
+#### Scenario: A host serving several sites
+- **WHEN** a host presents a certificate naming three sites and redirects to a fourth
+- **THEN** all four are known for that host, each attributed to what revealed it
+
+#### Scenario: Corroboration is kept
+- **WHEN** a name is both a certificate subject and a redirect target
+- **THEN** both are shown for it rather than only the first
+
+#### Scenario: A cited URL is not a name
+- **WHEN** a script's output cites an advisory URL on another host
+- **THEN** that host is not recorded as a name of the scanned host
 
 #### Scenario: The names overview
 - **WHEN** the user opens the names overview

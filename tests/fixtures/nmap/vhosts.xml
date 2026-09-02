@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nmaprun scanner="nmap" args="nmap -sV --script ssl-cert,http-title,rdp-ntlm-info,hostmap-crtsh -oX vhosts.xml 192.0.2.50" start="1756000200" version="7.94" xmloutputversion="1.05">
+<host starttime="1756000201" endtime="1756000260"><status state="up" reason="syn-ack" reason_ttl="64"/>
+<address addr="192.0.2.50" addrtype="ipv4"/>
+<hostnames><hostname name="gamma.example" type="PTR"/></hostnames>
+<ports>
+<port protocol="tcp" portid="80"><state state="open" reason="syn-ack" reason_ttl="64"/>
+<service name="http" product="nginx" version="1.24.0" method="probed" conf="10"/>
+<script id="http-title" output="Did not follow redirect to https://shop.example.test/"/>
+</port>
+<port protocol="tcp" portid="443"><state state="open" reason="syn-ack" reason_ttl="64"/>
+<service name="http" product="nginx" version="1.24.0" tunnel="ssl" method="probed" conf="10"/>
+<script id="ssl-cert" output="Subject: commonName=shop.example.test">
+<table key="subject"><elem key="commonName">shop.example.test</elem></table>
+<table key="extensions"><table><elem key="name">X509v3 Subject Alternative Name</elem><elem key="value">DNS:shop.example.test, DNS:blog.example.test, DNS:www.example.test</elem></table></table>
+</script>
+<script id="hostmap-crtsh" output="&#10;  hosts:&#10;    api.example.test&#10;    staging.example.test">
+<table key="hosts"><elem>api.example.test</elem><elem>staging.example.test</elem></table>
+</script>
+</port>
+<port protocol="tcp" portid="3389"><state state="open" reason="syn-ack" reason_ttl="64"/>
+<service name="ms-wbt-server" method="table" conf="3"/>
+<script id="rdp-ntlm-info" output="DNS_Computer_Name: gamma.corp.example&#10;DNS_Domain_Name: corp.example"/>
+</port>
+</ports>
+</host>
+<runstats><finished time="1756000260" elapsed="59.00" exit="success"/><hosts up="1" down="0" total="1"/></runstats>
+</nmaprun>

@@ -1784,7 +1784,8 @@ async def test_a_service_record_lists_its_certificate_names_and_urls():
         await pilot.press("enter")                  # into the host's services
         await pilot.pause(0.4)
         shown = _render(app.query_one("#detail-body"))
-        assert "cert names" in shown and "example.test" in shown
+        assert "Names (1)" in shown and "example.test" in shown
+        assert "certificate" in shown, "and what revealed it"
         assert "URLs (3)" in shown
         assert "https://192.0.2.10" in shown
         assert "https://example.test" in shown, "the name, not only the address"
@@ -1826,3 +1827,40 @@ async def test_the_names_tab_says_so_when_nothing_has_a_name():
             shown = str(app.query_one("#empty").render())
             assert "No name is known" in shown
             assert "DNS names preset" in shown
+
+
+async def test_the_names_tab_shows_every_kind_of_evidence():
+    app = _app("vhosts")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        app.query_one(Tabs).active = "names"
+        await pilot.pause(0.4)
+        rows = {r.cells[0]: r.cells[1] for r in app._rows}
+        assert rows["gamma.example"] == "resolved"
+        assert rows["blog.example.test"] == "certificate"
+        assert rows["api.example.test"] == "certificate transparency"
+        assert rows["gamma.corp.example"] == "host identity"
+        assert rows["shop.example.test"] == "certificate, redirect", "both"
+
+
+async def test_a_multi_site_host_says_so_in_its_row_and_its_record():
+    app = _app("vhosts")
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause(0.3)
+        assert app._rows[0].cells[1] == "gamma.example +7"
+        shown = _render(app.query_one("#detail-body"))
+        assert "Names (8)" in shown
+        assert "blog.example.test" in shown and "certificate on 443/tcp" in shown
+
+
+async def test_a_web_service_lists_the_vhosts_to_try_against_it():
+    app = _app("vhosts")
+    async with app.run_test(size=(140, 44)) as pilot:
+        await pilot.pause(0.3)
+        await pilot.press("enter")                   # the host's services
+        await pilot.pause(0.4)
+        app.query_one(DataTable).move_cursor(row=1)  # 443/tcp
+        await pilot.pause(0.3)
+        shown = _render(app.query_one("#detail-body"))
+        assert "https://blog.example.test" in shown
+        assert "https://www.example.test" in shown

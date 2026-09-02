@@ -394,10 +394,22 @@ DEFAULT_PRESETS: dict[str, str] = {
         " --script-args smbuser=USERNAME,smbpass=PASSWORD",
     "03 · Siemens S7 (TCP 102)":
         "-vv -T4 -n -Pn -sT --script s7-info.nse -p102",
-    # No `-n` here, unlike every other preset: resolving the names *is* the
-    # point. `-sL` sends nothing to the targets - it only lists and resolves.
+    # The name presets. No `-n` on any of them, unlike every other preset:
+    # resolving is the point. A reverse lookup gives at most the one PTR the
+    # address owner published, so the rest come from what the server says about
+    # itself - which is where a multi-site host's vhosts actually surface.
     "03 · DNS names (reverse lookup, sends nothing)":
         "-vv -T4 -sL -R",
+    "03 · Names the services reveal (certs, redirects, NTLM)":
+        "-vv -T4 -Pn -sV -p{ports} --script "
+        "ssl-cert,http-title,http-headers,rdp-ntlm-info,smb-os-discovery,"
+        "nbstat,ldap-rootdse,ssl-cert-intaddr",
+    # Reaches a third party (crt.sh), not the target: check that it is within
+    # the engagement's rules before running it.
+    "03 · Names from certificate transparency (queries crt.sh)":
+        "-vv -T4 -Pn -sV -p{ports} --script hostmap-crtsh",
+    "03 · Virtual hosts (brute force, noisy)":
+        "-vv -T4 -Pn -p80,443,8080,8443 --script http-vhosts",
 }
 
 PORTS_PLACEHOLDER = "{ports}"

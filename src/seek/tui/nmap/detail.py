@@ -208,8 +208,15 @@ def service_detail(svc: Service, host: Host | None = None) -> RenderableType:
               (("info", svc.extrainfo), ("tunnel", svc.tunnel), ("ostype", svc.ostype)) if v]
     if extras:
         parts.append(_pair("also", "   ·   ".join(extras)))
-    if svc.cert_names:
-        parts.append(_pair("cert names", ", ".join(svc.cert_names)))
+    if svc.names:
+        parts.append(Text(""))
+        parts.append(_section("Names", len(svc.names)))
+        for name, source in svc.names:
+            line = Text(" " * 4)
+            line.append("• ", style=_KEY)
+            line.append(f"{name:<32}")
+            line.append(source, style=_KEY)
+            parts.append(line)
     urls = _service_urls(svc, host)
     if urls:
         parts.append(Text(""))
@@ -234,7 +241,7 @@ def _service_urls(svc: Service, host: Host | None) -> list[str]:
     only the address hides half of what was found.
     """
     if host is None:
-        return [u for u in [url_for(n, svc) for n in svc.cert_names] if u]
+        return [u for u in [url_for(n, svc) for n, _ in svc.names] if u]
     base = service_url(host, svc)
     if not base:
         return []

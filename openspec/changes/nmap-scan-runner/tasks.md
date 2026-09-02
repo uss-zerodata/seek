@@ -95,6 +95,8 @@
 - [x] 13.4 The host record lists every name with its source; the service record shows its certificate names and every URL it answers on.
 - [x] 13.5 The hostname column reads `name +N`, in every list that shows one.
 - [x] 13.6 A **Names** tab: each name, its source, its hosts and ports; `Enter` opens the hosts that answer to it; an empty state that says how names are found.
+- [x] 13.8 The vhost question: an address cannot be asked which names point at it, so the recogniser reads what the server gives away — certificate subjects and SANs, redirect targets, Windows identity FQDNs, certificate transparency — each with its own narrow pattern, and every name keeps all of its evidence. Three further presets find them (service-revealed, crt.sh, `http-vhosts`), with the external one labelled as querying a third party.
+- [x] 13.9 A `vhosts` fixture covering all five sources; a regression test that a `http-vuln-*` advisory link is not harvested as a name.
 - [x] 13.7 Tests: extraction from output and tables; wildcards and addresses refused; the column, both panes, the filter, the tab, the drill-down and the empty state.
 
 ## 11. Finalisation

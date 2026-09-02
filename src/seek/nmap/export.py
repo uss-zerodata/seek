@@ -84,7 +84,7 @@ def names_for(record: Record) -> list[str]:
     """
     found = list(record.host.hostnames)
     for svc in record.services:
-        found += svc.cert_names
+        found += [name for name, _ in svc.names]
     return list(dict.fromkeys(n for n in found if n))
 
 

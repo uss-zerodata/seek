@@ -124,9 +124,23 @@ Presets live in the config file, and defining any replaces the shipped set:
 "03 · SMB vulnerabilities (139, 445)"      = "-vv -T4 -n -Pn -p139,445 --script smb-vuln*"
 ```
 
-`03 · DNS names (reverse lookup, sends nothing)` is a list scan (`-sL -R`): it
-resolves the selected hosts without sending them a packet, and the names it
-finds join the model. Names are then visible everywhere they matter — the
+**Finding the names a host serves.** An address cannot be asked which names
+point at it — DNS resolves names to addresses, and a `CNAME` is only visible to
+someone who already knows the alias. A reverse lookup returns at most the one
+`PTR` the address owner published, which is why a host running six sites usually
+looks like it has one name. What the *server* gives away is another matter, and
+four presets read it:
+
+| Preset | What it finds |
+| --- | --- |
+| `03 · DNS names (reverse lookup, sends nothing)` | the published `PTR` — `-sL -R` sends the targets nothing |
+| `03 · Names the services reveal (certs, redirects, NTLM)` | certificate subjects and SANs (the vhost list itself), where HTTP redirects, and the FQDN Windows services announce |
+| `03 · Names from certificate transparency (queries crt.sh)` | names issued under the domain — **this queries a third party, not the target** |
+| `03 · Virtual hosts (brute force, noisy)` | `http-vhosts` against common names |
+
+Every name is kept with what revealed it, so `shop.example.test` reads
+`redirect on 80/tcp, certificate on 443/tcp` — corroborated twice — while a name
+seen once says so. Names are then visible everywhere they matter — the
 **Names** tab lists each one with where it came from and opens the hosts that
 answer to it, the hostname column reads `web.example +2` when a host has more,
 a host's record lists every name with its source, a service's record shows the

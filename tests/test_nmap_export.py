@@ -74,7 +74,7 @@ def test_certificate_names_come_from_the_output_and_the_tables():
     """`ssl-cert` puts the subject in the text but the SANs only in its tables."""
     host = _hosts("scripts")[0]
     svc = next(s for s in host.services if s.port == 443)
-    assert name_mod.cert_names(svc) == ["example.test"]
+    assert name_mod.service_names(svc) == [("example.test", "certificate")]
 
 
 def test_a_wildcard_certificate_name_is_not_a_target():
@@ -86,7 +86,8 @@ def test_a_wildcard_certificate_name_is_not_a_target():
                      data={"extensions": [{"value": "DNS:*.example.test, "
                                                     "DNS:www.example.test"}]}),
     ])
-    assert name_mod.cert_names(svc) == ["www.example.test"], "nothing resolves a wildcard"
+    assert name_mod.service_names(svc) == [("www.example.test", "certificate")], \
+        "nothing resolves a wildcard"
 
 
 def test_a_certificate_naming_an_address_is_not_a_name():
@@ -95,13 +96,13 @@ def test_a_certificate_naming_an_address_is_not_a_name():
     svc = Service(protocol="tcp", port=443, state="open", name="https", scripts=[
         ScriptResult(id="ssl-cert", output="Subject: commonName=10.0.0.5"),
     ])
-    assert name_mod.cert_names(svc) == []
+    assert name_mod.service_names(svc) == []
 
 
 def test_a_service_with_no_certificate_contributes_no_names():
     host = _hosts("basic")[0]
     svc = next(s for s in host.services if s.port == 22)
-    assert name_mod.cert_names(svc) == []
+    assert name_mod.service_names(svc) == []
 
 
 def test_urls_cover_the_address_and_every_name():
@@ -284,4 +285,57 @@ def test_the_names_are_attached_at_load_not_re_derived_per_view():
     """`prepare` runs the recogniser once; the views read the field."""
     host = _hosts("scripts")[0]
     svc = next(s for s in host.services if s.port == 443)
-    assert svc.cert_names == ["example.test"], "prepare attached them"
+    assert svc.names == [("example.test", "certificate")], "prepare attached them"
+    assert svc.cert_names == ["example.test"], "and the certificate ones are nameable"
+
+
+# --- the names a multi-site host gives away ---------------------------------
+
+
+def test_a_multi_site_host_gives_up_its_vhosts():
+    """An address cannot be asked which names point at it - the server can."""
+    host = _hosts("vhosts")[0]
+    found = dict(name_mod.host_names(host))
+    assert list(found) == [
+        "gamma.example",          # the one PTR the address owner published
+        "shop.example.test",      # where port 80 redirects, and the cert subject
+        "blog.example.test",      # subject-alternative names: the vhost list
+        "www.example.test",
+        "api.example.test",       # a certificate-transparency lookup
+        "staging.example.test",
+        "gamma.corp.example",     # what RDP announces about itself
+        "corp.example",
+    ]
+    assert found["gamma.example"] == "resolved"
+    assert found["blog.example.test"] == "certificate on 443/tcp"
+    assert found["api.example.test"] == "certificate transparency on 443/tcp"
+    assert found["gamma.corp.example"] == "host identity on 3389/tcp"
+
+
+def test_a_name_seen_twice_keeps_both_pieces_of_evidence():
+    host = _hosts("vhosts")[0]
+    found = dict(name_mod.host_names(host))
+    assert found["shop.example.test"] == "redirect on 80/tcp, certificate on 443/tcp"
+
+
+def test_an_advisory_link_is_not_a_name_the_server_answers_to():
+    """`http-vuln-*` scripts cite URLs; those hosts are not this host."""
+    assert name_mod.host_names(_hosts("vuln")[0]) == []
+
+
+def test_the_sources_behind_a_hosts_names_can_be_summarised():
+    assert name_mod.sources_of(_hosts("vhosts")[0]) == [
+        "certificate", "certificate transparency", "host identity", "redirect",
+        "resolved"]
+
+
+def test_every_vhost_becomes_a_url_on_the_port_that_revealed_it():
+    urls = export.export_urls(_records("vhosts"))
+    assert "https://blog.example.test" in urls
+    assert "https://www.example.test" in urls
+    assert "http://shop.example.test" in urls, "port 80 as well as 443"
+    assert "https://192.0.2.50" in urls, "and the address that was scanned"
+    # A name RDP announced is still worth trying against this host's web server:
+    # whether it is served there is exactly what a vhost check answers, and the
+    # provenance is on screen for the reader to judge.
+    assert "https://gamma.corp.example" in urls
