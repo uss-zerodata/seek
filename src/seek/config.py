@@ -117,10 +117,11 @@ class Config:
     # Empty: let gowitness fetch its own browser. Set when Chrome is already
     # installed and the download is unwanted.
     gowitness_chrome_path: str = ""
-    # Off by default: gowitness warns that recording response content can
-    # make a capture directory grow without a useful bound, and nothing
-    # shown by default needs it. Affects collection only, never reading.
-    gowitness_collect_all: bool = False
+    # On by default: a capture that quietly drops its network log and response
+    # bodies is a capture that did not record what it saw, and the operator has
+    # no way to tell. Set false when the size of a capture directory matters
+    # more than its completeness. Affects collection only, never reading.
+    gowitness_collect_all: bool = True
     # name -> nmap arguments. Unlike the other tables this one *replaces* the
     # default when the user defines any: a curated list of the commands you
     # actually run should be exactly what the app offers.

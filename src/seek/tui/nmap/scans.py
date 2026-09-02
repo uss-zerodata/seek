@@ -133,17 +133,37 @@ def scan_report(scan: timeline.Scan, mode: str) -> RenderableType:
     return Group(header, Text(), *lines)
 
 
+def follow_note(running: bool, frozen: bool, following: bool,
+                what: str = "scan") -> tuple[str, str]:
+    """How a live log says which of its three states it is in.
+
+    Three, not two, and each has to read differently or the reader cannot tell
+    which action gets them back:
+
+    - **following** - pinned to the end, new output arrives;
+    - **paused** - they scrolled up to read something, so the tail stopped
+      pulling the view away. Implicit, and undone by scrolling back;
+    - **frozen** - `p`, an explicit choice, undone by pressing it again. The
+      one that must never be mistaken for the process having stopped.
+    """
+    if not running:
+        return "", _KEY
+    if frozen:
+        return f"frozen — the {what} is still running", "bold bright_yellow"
+    if not following:
+        return "paused here — scroll to the end to follow again", "bold"
+    return "following", _KEY
+
+
 def report(run: Run, mode: str, changes: ScanDiff | None,
-           frozen: bool = False) -> RenderableType:
+           frozen: bool = False, following: bool = True) -> RenderableType:
     """A live in-app run, read the way `mode` asks for."""
     if isinstance(run, CaptureRun):
-        return capture_report(run, mode, frozen)
+        return capture_report(run, mode, frozen, following)
     note = ""
     style = _KEY
-    if mode == "raw" and run.running:
-        # A frozen log must never be mistaken for a paused scan.
-        note = "frozen — the scan is still running" if frozen else "following"
-        style = "bold bright_yellow" if frozen else _KEY
+    if mode == "raw":
+        note, style = follow_note(run.running, frozen, following, "scan")
     header = _mode_header(mode, trailer=run.label, note=note, note_style=style)
 
     if mode == "raw":
@@ -154,7 +174,8 @@ def report(run: Run, mode: str, changes: ScanDiff | None,
     return Group(header, Text(), *_condensed_lines(run, changes))
 
 
-def capture_report(run: CaptureRun, mode: str, frozen: bool = False) -> RenderableType:
+def capture_report(run: CaptureRun, mode: str, frozen: bool = False,
+                   following: bool = True) -> RenderableType:
     """A capture, read three ways - the same three a scan reads.
 
     "diff" here is what this capture found rather than what changed about the
@@ -163,9 +184,8 @@ def capture_report(run: CaptureRun, mode: str, frozen: bool = False) -> Renderab
     """
     note = ""
     style = _KEY
-    if mode == "raw" and run.running:
-        note = "frozen — the capture is still running" if frozen else "following"
-        style = "bold bright_yellow" if frozen else _KEY
+    if mode == "raw":
+        note, style = follow_note(run.running, frozen, following, "capture")
     # A capture's three modes are not a scan's: there is no "added since the
     # last scan" here, so the diff view is what did not answer instead.
     label = {"condensed": "overview", "diff": "what did not answer",

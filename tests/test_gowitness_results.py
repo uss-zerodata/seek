@@ -264,3 +264,60 @@ def test_an_error_pages_title_names_no_system():
                           (400, "400 The plain HTTP request was sent to HTTPS port")):
         assert res.Capture(url="http://x:80", status=status,
                            title=title).derived_system() == ("", "")
+
+
+# --- the join: two sides spelling the same address differently ----------
+
+
+def test_a_default_port_is_made_explicit():
+    """`export_urls` omits a default port, as a URL should. gowitness records
+    what it probed, and it probes the port set - so the same page comes back
+    as `http://host:80`. Measured: two port-less URLs produced four recorded
+    results, none matching the URL they came from, and nothing linked."""
+    assert res.canonical_url("http://fritz.box") == "http://fritz.box:80"
+    assert res.canonical_url("https://sso.example") == "https://sso.example:443"
+    assert res.canonical_url("http://fritz.box:80") == "http://fritz.box:80"
+    assert res.canonical_url("https://x:8443") == "https://x:8443"
+    assert res.canonical_url("http://fritz.box/") == "http://fritz.box:80"
+
+
+def test_a_capture_recorded_with_a_port_is_found_without_one():
+    """The real failure: the tool records `:80`, the record looks up neither."""
+    index = res.Captures([res.Capture(url="http://fritz.box:80", status=200)])
+    assert index.get("http://fritz.box") is not None
+    assert index.get("http://fritz.box:80") is not None
+
+
+def test_a_capture_recorded_without_a_port_is_found_with_one():
+    index = res.Captures([res.Capture(url="https://sso.example", status=200)])
+    assert index.get("https://sso.example:443") is not None
+
+
+def test_for_urls_matches_across_the_two_spellings():
+    index = res.Captures([res.Capture(url="http://a:80", status=200),
+                          res.Capture(url="https://b:443", status=200)])
+    found = index.for_urls(["http://a", "https://b"])
+    assert len(found) == 2
+
+
+def test_a_capture_is_yielded_once_however_many_ways_it_is_asked_for():
+    index = res.Captures([res.Capture(url="http://a:80", status=200)])
+    assert len(index.for_urls(["http://a", "http://a:80", "http://a/"])) == 1
+
+
+def test_a_failure_is_indexed_canonically_too():
+    index = res.Captures()
+    index.add_failures({"http://a": "refused"})
+    assert index.get("http://a:80") is not None
+
+
+def test_something_that_is_not_a_url_survives_canonicalisation():
+    for odd in ("", "not a url", "mailto:x@y"):
+        assert isinstance(res.canonical_url(odd), str)
+
+
+def test_network_logs_are_read_when_the_capture_recorded_them():
+    captures, _ = _read()
+    assert any(c.network for c in captures), "no network log rows were read"
+    url, label = next(c.network[0] for c in captures if c.network)
+    assert isinstance(url, str) and isinstance(label, str)

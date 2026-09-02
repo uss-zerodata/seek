@@ -583,3 +583,78 @@ async def test_a_capture_run_here_is_not_listed_twice(tmp_path):
         app._load_captures()
         app._load_captures()
         assert len(app.captures.runs) == before, "the same capture was listed again"
+
+
+# --- following only while pinned to the end ------------------------------
+
+
+async def _live_log(app, pilot, tmp_path):
+    shot = _capture(tmp_path, [f"http://h{i}:80" for i in range(80)])
+    for i in range(80):
+        shot.append(f"INFO result 🤖 target=http://h{i}:80 status-code=200 title=x")
+    app.captures.runs = [shot]
+    app._activate("scans")
+    await pilot.pause(0.4)
+    app.query_one(DataTable).move_cursor(
+        row=next(i for i, r in enumerate(app._rows) if r.target is shot))
+    app._report_mode = "raw"
+    app._log_frozen = False
+    app._refresh_detail()
+    await pilot.pause(0.4)
+    return shot
+
+
+async def test_scrolling_up_stops_the_log_from_following(tmp_path):
+    """Position is the mode: reading something part way up must not be undone
+    by the next line of output."""
+    from textual.containers import VerticalScroll
+
+    app = _app(tmp_path)
+    async with app.run_test(size=(110, 26)) as pilot:
+        await pilot.pause(0.3)
+        shot = await _live_log(app, pilot, tmp_path)
+        pane = app.query_one("#detail", VerticalScroll)
+        assert pane.scroll_offset.y > 0, "it was not following to begin with"
+
+        pane.scroll_to(y=3, animate=False)
+        await pilot.pause(0.3)
+        for i in range(80, 90):
+            shot.append(f"INFO result 🤖 target=http://h{i}:80 status-code=200 title=x")
+            app._refresh_detail()
+            await pilot.pause(0.1)
+        assert round(pane.scroll_offset.y) == 3, "the tail yanked the view away"
+
+
+async def test_returning_to_the_end_follows_again(tmp_path):
+    from textual.containers import VerticalScroll
+
+    app = _app(tmp_path)
+    async with app.run_test(size=(110, 26)) as pilot:
+        await pilot.pause(0.3)
+        shot = await _live_log(app, pilot, tmp_path)
+        pane = app.query_one("#detail", VerticalScroll)
+        pane.scroll_to(y=3, animate=False)
+        await pilot.pause(0.3)
+        pane.scroll_end(animate=False)
+        await pilot.pause(0.3)
+        at_end = round(pane.scroll_offset.y)
+        for i in range(80, 92):
+            shot.append(f"INFO result 🤖 target=http://h{i}:80 status-code=200 title=x")
+            app._refresh_detail()
+            await pilot.pause(0.08)
+        assert round(pane.scroll_offset.y) > at_end, "it did not resume following"
+
+
+async def test_the_three_follow_states_read_differently(tmp_path):
+    """An implicit pause must not look like the explicit `p` freeze, or the
+    reader cannot tell which action gets them back."""
+    from seek.tui.nmap.scans import follow_note
+
+    following, _ = follow_note(True, False, True)
+    paused, _ = follow_note(True, False, False)
+    frozen, _ = follow_note(True, True, False)
+    assert following == "following"
+    assert "scroll" in paused and "frozen" not in paused
+    assert "frozen" in frozen and "still running" in frozen
+    assert len({following, paused, frozen}) == 3
+    assert follow_note(False, False, True)[0] == "", "a finished run says nothing"

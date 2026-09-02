@@ -149,7 +149,8 @@ def _capture_extra(capture: Capture, full: bool) -> list[Text]:
         out.append(line)
     for title, items in (("headers", capture.headers),
                          ("cookies", capture.cookies),
-                         ("console", capture.console)):
+                         ("console", capture.console),
+                         ("requests", capture.network)):
         if not items:
             continue
         heading = Text(" " * 8)

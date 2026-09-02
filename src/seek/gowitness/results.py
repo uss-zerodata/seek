@@ -31,6 +31,34 @@ import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
+
+_DEFAULT_PORT = {"http": 80, "https": 443}
+
+
+def canonical_url(url: str) -> str:
+    """`scheme://host:port`, with the default port made explicit.
+
+    Captures are joined to services by URL, and the two sides spell the same
+    address differently. `export_urls` omits a default port, as a URL should:
+    `http://fritz.box`. gowitness records what it *probed*, and it probes the
+    port set - so the same page comes back as `http://fritz.box:80`. Measured:
+    two port-less URLs produced four recorded results, none of which matched
+    the URL they came from, which is why nothing linked.
+
+    Both sides go through here, so the join no longer depends on either of them
+    spelling it the same way.
+    """
+    if not url:
+        return url
+    split = urlsplit(url)
+    if not split.scheme or not split.hostname:
+        return url.rstrip("/")
+    port = split.port or _DEFAULT_PORT.get(split.scheme.lower())
+    host = split.hostname
+    if port is None:
+        return f"{split.scheme}://{host}".rstrip("/")
+    return f"{split.scheme}://{host}:{port}"
 
 # Looked for by name so that their *absence* can be reported. A missing
 # security header cannot be noticed by reading the headers that are present,
@@ -68,6 +96,7 @@ class Capture:
     headers: list[tuple[str, str]] = field(default_factory=list)
     cookies: list[tuple[str, str]] = field(default_factory=list)
     console: list[tuple[str, str]] = field(default_factory=list)
+    network: list[tuple[str, str]] = field(default_factory=list)
     tls: str = ""
     sans: list[str] = field(default_factory=list)
     shot: Path | None = None
@@ -235,6 +264,19 @@ def read_database(path: Path, shots: Path | None = None
                          "result_id", "name", "value")
         console = _pairs(_rows(con, "console_logs", ("result_id", "type", "value"),
                                tables), "result_id", "type", "value")
+        # Recorded only when the capture was told to collect everything, so an
+        # absent table here is the ordinary case rather than a gap.
+        network: dict[int, list[tuple[str, str]]] = {}
+        for row in _rows(con, "network_logs",
+                         ("result_id", "url", "status_code", "mime_type"), tables):
+            keys = row.keys()
+            if "result_id" not in keys:
+                continue
+            status = row["status_code"] if "status_code" in keys else ""
+            mime = row["mime_type"] if "mime_type" in keys else ""
+            label = " ".join(str(x) for x in (status, mime) if x)
+            network.setdefault(row["result_id"], []).append(
+                (str(row["url"]) if "url" in keys else "", label))
 
         sans: dict[int, list[str]] = {}
         for row in _rows(con, "tls_san_lists", ("tls_id", "value"), tables):
@@ -287,6 +329,7 @@ def read_database(path: Path, shots: Path | None = None
                 headers=headers.get(rid, []),
                 cookies=cookies.get(rid, []),
                 console=console.get(rid, []),
+                network=network.get(rid, []),
                 tls=tls_line.get(rid, ""),
                 sans=tls_sans.get(rid, []),
                 shot=(shots / name) if (name and shots is not None) else None,
@@ -319,26 +362,34 @@ class Captures:
 
     def add(self, captures: Iterable[Capture]) -> None:
         for capture in captures:
-            self._by_url[capture.url] = capture
+            self._by_url[canonical_url(capture.url)] = capture
 
     def add_failures(self, failures: dict[str, str]) -> None:
         """Record what a run could not capture - the only source there is."""
         for url, reason in failures.items():
-            self._by_url[url] = Capture(url=url, failure=reason)
+            self._by_url[canonical_url(url)] = Capture(url=url, failure=reason)
 
     def get(self, url: str) -> Capture | None:
-        return self._by_url.get(url)
+        return self._by_url.get(canonical_url(url))
 
     def urls(self) -> list[str]:
-        """Every URL a capture is known for."""
-        return list(self._by_url)
+        """Every URL a capture is known for, as it was recorded."""
+        return [c.url for c in self._by_url.values()]
 
     def for_urls(self, urls: Iterable[str]) -> list[Capture]:
-        """The captures for these URLs, in the order given, skipping unknowns."""
-        out = []
+        """The captures for these URLs, in the order given, skipping unknowns.
+
+        One service's URLs can canonicalise to the same key - a scan that found
+        both `:80` and the bare form - so a capture is yielded once however many
+        ways it was asked for.
+        """
+        out: list[Capture] = []
+        seen: set[str] = set()
         for url in urls:
-            found = self._by_url.get(url)
-            if found is not None:
+            key = canonical_url(url)
+            found = self._by_url.get(key)
+            if found is not None and key not in seen:
+                seen.add(key)
                 out.append(found)
         return out
 

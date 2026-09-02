@@ -46,6 +46,7 @@ from datetime import datetime
 from pathlib import Path
 
 from seek.gowitness.detect import Probe
+from seek.gowitness.results import canonical_url
 from seek.runner import Run, State
 
 CAPTURE_DIRNAME = "gowitness"
@@ -127,15 +128,23 @@ def capture_dir(scan_dir: Path) -> Paths:
 
 
 def write_urls(paths: Paths, urls: list[str]) -> Path:
-    """Lay the target list down where the capture will read it."""
+    """Lay the target list down where the capture will read it.
+
+    Written with the port made explicit. A URL properly omits its default port,
+    but gowitness crosses a port-less target with its whole port set: two such
+    URLs measured as four probes, each recorded under a port the URL never
+    carried. Spelling the port out means one probe per open port the scan
+    actually found, and a result recorded under the address it was asked for.
+    """
     paths.root.mkdir(parents=True, exist_ok=True)
     paths.shots.mkdir(parents=True, exist_ok=True)
-    paths.urls.write_text("\n".join(urls) + "\n", encoding="utf-8")
+    written = list(dict.fromkeys(canonical_url(u) for u in urls))
+    paths.urls.write_text("\n".join(written) + "\n", encoding="utf-8")
     return paths.urls
 
 
 def scan_argv(probe: Probe, paths: Paths, *, chrome_path: str = "",
-              collect_all: bool = False,
+              collect_all: bool = True,
               threads: int = 6, timeout: int = 30, delay: int = 3) -> list[str]:
     """The command that captures `paths.urls`, for whichever backend is in use."""
     seen = _MOUNT if probe.backend == "docker" else str(paths.root)

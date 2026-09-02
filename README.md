@@ -263,7 +263,11 @@ up, the same way external scan files are.
 The URLs seek sends carry a scheme and an explicit port, which matters more
 than it looks: given a bare name gowitness probes it across http/https × 80/443
 on its own, so two names become seven probes. Sending complete URLs means one
-probe per open port you actually found, and one result per service.
+probe per open port you actually found, and one result per service — and since
+gowitness records results under the port it probed, spelling the port out is
+also what lets a result be matched back to the service it came from. Captures
+are matched on `scheme://host:port` with the default port made explicit, so a
+capture made by hand under either spelling still links up.
 
 **Export** produces the lists you feed to the next command, from whatever the
 filter has narrowed to: host addresses, open ports comma-separated (the form

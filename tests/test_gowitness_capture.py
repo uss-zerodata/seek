@@ -97,7 +97,7 @@ def test_both_backends_ask_for_the_same_writers(tmp_path):
     paths = _paths(tmp_path)
     for argv in (scan_argv(DOCKER, paths), scan_argv(NATIVE, paths)):
         assert "--write-db" in argv
-        assert "--skip-html" in argv and "--skip-network-logs" in argv
+        assert "--log-scan-errors" in argv
 
 
 def test_scan_errors_are_always_logged(tmp_path):
@@ -194,11 +194,11 @@ def test_the_run_describes_itself_for_the_list(tmp_path):
 # --- how much a capture collects ----------------------------------------
 
 
-def test_the_default_capture_skips_the_heavy_writers(tmp_path):
-    """gowitness warns that recording response content can make storage
-    explode, and nothing shown by default needs it."""
+def test_trimmed_collection_skips_the_heavy_writers(tmp_path):
+    """Still available for when the size of a capture directory matters more
+    than its completeness."""
     for probe in (DOCKER, NATIVE):
-        argv = scan_argv(probe, _paths(tmp_path))
+        argv = scan_argv(probe, _paths(tmp_path), collect_all=False)
         assert "--skip-html" in argv and "--skip-network-logs" in argv
 
 
@@ -211,9 +211,10 @@ def test_collecting_everything_drops_the_skips(tmp_path):
 def test_the_setting_changes_collection_only(tmp_path):
     """Everything else about the command is identical, so a database recorded
     either way is read the same."""
-    off = [a for a in scan_argv(DOCKER, _paths(tmp_path)) if not a.startswith("--skip")]
-    on = scan_argv(DOCKER, _paths(tmp_path), collect_all=True)
-    assert off == on
+    trimmed = [a for a in scan_argv(DOCKER, _paths(tmp_path), collect_all=False)
+               if not a.startswith("--skip")]
+    full = scan_argv(DOCKER, _paths(tmp_path), collect_all=True)
+    assert trimmed == full
 
 
 def test_the_results_file_is_no_longer_written(tmp_path):
@@ -276,3 +277,32 @@ def test_the_last_line_is_still_used_when_it_is_all_there_is(tmp_path):
     assert "boom" in run.failure(1, ["boom"])
     # even a lone help pointer beats saying nothing
     assert run.failure(1, ["Run 'docker run --help' for more information"])
+
+
+def test_the_url_list_is_written_with_explicit_ports(tmp_path):
+    """A port-less target is crossed with gowitness's whole port set, so it is
+    probed twice and recorded under a port it never carried."""
+    paths = _paths(tmp_path)
+    write_urls(paths, ["http://fritz.box", "https://sso.example", "https://x:8443"])
+    written = paths.urls.read_text().split()
+    assert written == ["http://fritz.box:80", "https://sso.example:443",
+                       "https://x:8443"]
+
+
+def test_urls_that_canonicalise_together_are_written_once(tmp_path):
+    paths = _paths(tmp_path)
+    write_urls(paths, ["http://a", "http://a:80", "http://a/"])
+    assert paths.urls.read_text().split() == ["http://a:80"]
+
+
+def test_everything_is_recorded_by_default(tmp_path):
+    """A capture that quietly drops its network log recorded less than it saw,
+    and the operator has no way to tell."""
+    argv = scan_argv(DOCKER, _paths(tmp_path))
+    assert "--skip-network-logs" not in argv
+    assert "--skip-html" not in argv
+
+
+def test_collection_can_still_be_trimmed(tmp_path):
+    argv = scan_argv(DOCKER, _paths(tmp_path), collect_all=False)
+    assert "--skip-network-logs" in argv and "--skip-html" in argv

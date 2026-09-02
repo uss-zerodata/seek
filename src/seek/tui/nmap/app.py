@@ -290,6 +290,9 @@ class NmapApp(App[int]):
         # Which record the pane is currently showing, so that a re-render
         # of the same one leaves the reader's scroll position alone.
         self._detail_target: int | None = None
+        # Whether the log pane was at its end when it was last rendered - see
+        # `_pinned_to_end`. True to begin with, so a run opens following.
+        self._following = True
         # What has been captured, whoever captured it: the results database is
         # read on startup so a capture someone else ran is picked up, exactly as
         # the scan history reads scan files it did not produce. The database is
@@ -1467,12 +1470,12 @@ class NmapApp(App[int]):
             # type alone drops it through to the record renderer, which knows
             # nothing about runs and returns an empty pane.
             return (scan_views.report(target, self._report_mode, None,
-                                      self._log_frozen),
+                                      self._log_frozen, self._following),
                     f"Capture · {target.scope}")
         if isinstance(target, ScanRun):
             return (scan_views.report(target, self._report_mode,
                                       self._diffs.get(id(target)),
-                                      self._log_frozen),
+                                      self._log_frozen, self._following),
                     f"Scan · {target.preset}")
         if row is not None and row.heading:
             return (Text(f"{row.cells[0]}\n\n"
@@ -1497,6 +1500,9 @@ class NmapApp(App[int]):
             return
         row = self._current_row()
         target = row.target if row is not None else None
+        # Measured *before* the content changes, because the height it is
+        # measured against is about to change with it.
+        self._following = self._pinned_to_end()
         renderable, _title = self._detail_content(row)
         pane.update(renderable)
         if self._reader is not None:
@@ -1514,8 +1520,14 @@ class NmapApp(App[int]):
         # on every line it prints and manual scrolling becomes impossible.
         moved = id(target) != self._detail_target
         self._detail_target = id(target)
+        # Follow only while the reader is at the end of the log. Position *is*
+        # the mode: scrolling up to read something stops the tail from yanking
+        # the view away, and scrolling back to the end resumes it, so the two
+        # can never disagree about what the user wants. A mode that had to be
+        # toggled would be one more thing to get out of step with intent.
         following = (isinstance(target, Run) and target.running
-                     and self._report_mode == "raw" and not self._log_frozen)
+                     and self._report_mode == "raw" and not self._log_frozen
+                     and self._following)
         if isinstance(target, timeline.Scan):
             self._apply_detail_visibility()
             return
@@ -1531,6 +1543,19 @@ class NmapApp(App[int]):
         elif moved:
             pane_scroll.scroll_home(animate=False)
         self._apply_detail_visibility()
+
+    def _pinned_to_end(self) -> bool:
+        """Whether the detail pane is scrolled to the end of its content.
+
+        A line of tolerance: a pane whose content ends mid-row would otherwise
+        never quite reach its own maximum, and a log that stops following
+        because of a rounding error is indistinguishable from a bug.
+        """
+        try:
+            pane = self.query_one("#detail", VerticalScroll)
+        except NoMatches:
+            return True
+        return pane.scroll_offset.y >= pane.max_scroll_y - 1
 
     def _reader_payload(self, row: vdefs.Row | None) -> tuple[str, RenderableType, bool]:
         """What the reader needs to show one row: title, record, follow-tail."""
