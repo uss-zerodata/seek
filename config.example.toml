@@ -68,8 +68,8 @@ help = "question_mark"
 # `{ports}` expands to the open ports already in the model - the step
 # you would otherwise grep out of the previous scan's .gnmap.
 [nmap_presets]
-"00 · Lookup, DNS names (reverse lookup)" = "-vv -T4 -sL -R"
-"00 · Lookup, DNS names (forward lookup)" = "-vv -T4 -sL"
+"00 · Lookup, DNS names reverse" = "-vv -T4 -sL -R"
+"00 · Lookup, DNS names forward" = "-vv -T4 -sL"
 
 "01 · Discovery, null scan (ICMP/TCP/UDP filtered)" = "-vv -T4 -n -sn -sN"
 "01 · Discovery, common ports (ICMP/TCP/UDP) " = "-vv -T4 -n -sn -PE -PP -PS22,80,445 -PA80 -PU53,123,161,500,31347"

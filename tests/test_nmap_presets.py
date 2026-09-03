@@ -169,9 +169,38 @@ def test_elevation_is_non_interactive_and_wraps_the_command():
 
 
 def test_the_output_base_names_the_preset_and_the_time():
-    when = datetime(2026, 9, 1, 14, 22, 33, tzinfo=UTC)
-    base = presets.output_base(Path("/scans"), "Quick TCP (top 1000, versions)", when)
-    assert base == Path("/scans/seek-quick-tcp-top-1000-versions-20260901T142233Z")
+    when = datetime(2026, 9, 3, 9, 43, 37)
+    base = presets.output_base(Path("/scans"), "03 · Details, full TCP (-p-)", when)
+    assert base == Path("/scans/nmap_03-details-full-tcp_2026-09-03_09-43-37")
+
+
+def test_the_stamp_is_local_time():
+    """It matches `date +%Y-%m-%d_%H-%M-%S`, so these filenames sort beside the
+    ones a shell produced without anyone converting a timezone by eye."""
+    when = datetime(2026, 9, 3, 9, 43, 37, tzinfo=UTC)
+    base = presets.output_base(Path("/scans"), "quick", when)
+    expected = when.astimezone().strftime("%Y-%m-%d_%H-%M-%S")
+    assert base.name == f"nmap_quick_{expected}"
+
+
+def test_a_parenthetical_is_left_out_of_the_slug():
+    """A preset's brackets carry the flags and the caveats, which the name has
+    already said - they make a filename longer without making it clearer."""
+    assert presets.slug("03 · Details, full TCP (-p-)") == "03-details-full-tcp"
+    assert presets.slug("Quick TCP (top 1000, versions)") == "quick-tcp"
+    assert presets.slug("04 · Vuln, SMB shares (edit the credentials first)") == (
+        "04-vuln-smb-shares")
+
+
+def test_a_name_that_is_only_a_parenthetical_still_yields_a_stem():
+    assert presets.slug("(-p-)") == "scan"
+    assert presets.slug("") == "scan"
+
+
+def test_the_stem_carries_no_characters_a_shell_would_argue_with():
+    for name in ("03 · Details, full TCP (-p-)", "a/b\\c", "x  y", "«odd»"):
+        stem = presets.slug(name)
+        assert stem and all(c.isalnum() or c == "-" for c in stem), stem
 
 
 def test_an_unwritable_directory_is_reported_before_anything_runs(tmp_path):

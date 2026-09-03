@@ -21,7 +21,7 @@ import shlex
 import shutil
 import subprocess
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -180,14 +180,29 @@ def build_argv(program: str, args: list[str], targets: list[str], out_base: str,
 
 
 def slug(name: str) -> str:
+    """A filename-safe stem for a preset name.
+
+    Anything in brackets is dropped first: a preset is named for a reader, and
+    the parenthetical is where the flags and caveats live - "03 · Details, full
+    TCP (-p-)" is about full TCP, and `-p-` in the filename says nothing the
+    name has not already said while making it longer and harder to read.
+    """
+    name = re.sub(r"\([^)]*\)", " ", name)
     cleaned = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
     return cleaned or "scan"
 
 
 def output_base(directory: Path, preset_name: str, when: datetime | None = None) -> Path:
-    """`<dir>/seek-<preset>-<UTC>Z` - the base `-oA` extends with its suffixes."""
-    stamp = (when or datetime.now(UTC)).strftime("%Y%m%dT%H%M%SZ")
-    return Path(directory) / f"seek-{slug(preset_name)}-{stamp}"
+    """`<dir>/nmap_<preset>_<YYYY-MM-DD_HH-MM-SS>` - the base `-oA` extends.
+
+    The time is local, matching `date +%Y-%m-%d_%H-%M-%S`: these filenames are
+    read beside the shell history that produced their neighbours, and a UTC
+    stamp among local ones is a stamp that has to be converted before two scans
+    can be put in order by eye.
+    """
+    moment = when.astimezone() if when is not None else datetime.now()
+    stamp = moment.strftime("%Y-%m-%d_%H-%M-%S")
+    return Path(directory) / f"nmap_{slug(preset_name)}_{stamp}"
 
 
 def writable(directory: Path) -> str | None:
