@@ -164,23 +164,29 @@ def test_a_scan_whose_root_element_is_far_into_the_file_is_still_found(tmp_path)
 
 
 def test_the_search_reports_its_progress(tmp_path):
-    """A long walk must be able to say it is still going; see `Progress`."""
+    """A long walk must be able to say it is still going.
+
+    Two phases, one shape: the walk counts what it has found against a total
+    of zero, because it cannot know how many scans it will find until it has
+    found them; then the read counts files against the number the walk turned
+    up. Both name the unit, so one renderer can draw either.
+    """
     deep = tmp_path / "a" / "b"
     deep.mkdir(parents=True)
     shutil.copy(A, tmp_path / A.name)
     shutil.copy(B, deep / B.name)
 
     seen = []
-    load([tmp_path], lambda p: seen.append((p.found, p.pending, p.parsed, p.total)))
+    load([tmp_path], lambda done, total, unit: seen.append((done, total, unit)))
 
     assert seen, "the callback is called while the tree is walked"
-    walking = [s for s in seen if s[3] == 0]
-    reading = [s for s in seen if s[3]]
+    assert {unit for _, _, unit in seen} == {"files"}, "and says what it counts"
+    walking = [s for s in seen if s[1] == 0]
+    reading = [s for s in seen if s[1]]
     assert [s[0] for s in walking] == sorted(s[0] for s in walking), \
         "the count of scans found only grows"
-    assert walking[-1][0] == 2 and walking[-1][1] == 0, \
-        "it ends with everything found and nothing left to search"
-    assert [s[2] for s in reading] == [1, 2] and all(s[3] == 2 for s in reading), \
+    assert walking[-1][0] == 2, "it ends with everything found"
+    assert [s[:2] for s in reading] == [(1, 2), (2, 2)], \
         "then the files are read, out of a total that is known by then"
 
 

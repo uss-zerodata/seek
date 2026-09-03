@@ -10,34 +10,12 @@ for a run. Nothing is cached, indexed or written.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from seek.nmap.models import Host, ScanFile, ScanSet, Service
 from seek.nmap.parse import NmapParseError, parse_file
-
-
-@dataclass(slots=True)
-class Progress:
-    """How far the search has got.
-
-    A tree can hold thousands of directories, and a search that says nothing
-    for several seconds is indistinguishable from one that has hung. The
-    counters are passed to a caller's `report` rather than printed here:
-    `merge` has no terminal, and the same numbers drive a status line, a log
-    or nothing at all.
-    """
-
-    found: int = 0                                  # scans the walk has turned up
-    pending: int = 0                                # directories still to be walked
-    parsed: int = 0                                 # scans read
-    total: int = 0                                  # scans to read, once known
-
-
-# Called with the live `Progress` - the same object each time, so it must be
-# read, not kept.
-Report = Callable[[Progress], None]
+from seek.nmap.progress import FILES, Report
 
 # nmap writes `<!DOCTYPE nmaprun>` on the second line, and `<nmaprun ...>` after
 # a comment that repeats the whole command - targets included, so a scan of a
@@ -62,7 +40,7 @@ def _is_nmap_xml(path: Path) -> bool:
         return False
 
 
-def _scans_below(root: Path, state: Progress, report: Report | None) -> list[Path]:
+def _scans_below(root: Path, found: list[Path], report: Report | None) -> list[Path]:
     """Every nmap XML file under `root`, at any depth, in a stable order.
 
     An engagement directory is rarely flat - scans land in per-phase or
@@ -74,7 +52,6 @@ def _scans_below(root: Path, state: Progress, report: Report | None) -> list[Pat
     instant start slow. Anything unreadable is passed over - a directory that
     cannot be listed is not an error when the ones beside it can be.
     """
-    found: list[Path] = []
     stack = [root]
     while stack:
         current = stack.pop()
@@ -90,17 +67,19 @@ def _scans_below(root: Path, state: Progress, report: Report | None) -> list[Pat
                     stack.append(entry)
             elif entry.suffix.lower() == ".xml" and _is_nmap_xml(entry):
                 found.append(entry)
-                state.found += 1
         # Once per directory, not once per entry: the numbers move at a pace a
         # reader can follow, and a slow `report` cannot dominate the walk.
-        state.pending = len(stack)
+        #
+        # A total of zero, because a walk in progress does not know how many
+        # scans it will find - only how many it has. It is the one step here
+        # that genuinely cannot count itself, and the shared shape says so
+        # rather than drawing a bar against a number it invented.
         if report is not None:
-            report(state)
+            report(len(found), 0, FILES)
     return sorted(found)
 
 
-def collect_paths(paths: list[Path], report: Report | None = None,
-                  state: Progress | None = None) -> list[Path]:
+def discover(paths: list[Path], report: Report | None = None) -> list[Path]:
     """Expand directories to the nmap XML files anywhere below them.
 
     Naming five or more scans by hand every run is exactly the friction that
@@ -116,10 +95,12 @@ def collect_paths(paths: list[Path], report: Report | None = None,
     """
     out: list[Path] = []
     from_walk: dict[Path, bool] = {}
-    state = state if state is not None else Progress()
+    # Shared across the roots so the count the walk reports is the run's, not
+    # each directory's over again.
+    found: list[Path] = []
     for p in paths:
         walked = p.is_dir()
-        for path in _scans_below(p, state, report) if walked else [p]:
+        for path in _scans_below(p, found, report) if walked else [p]:
             try:
                 key = path.resolve()
             except OSError:                         # a broken link: judge by name
@@ -129,6 +110,29 @@ def collect_paths(paths: list[Path], report: Report | None = None,
             from_walk[key] = walked
             out.append(path)
     return out
+
+
+# The name this had before discovery and reading were separable. Kept because
+# it says something `discover` does not - that a directory is *expanded* into
+# the files it holds - and because it is what the tests ask for.
+collect_paths = discover
+
+
+@dataclass(slots=True)
+class Pending:
+    """Scan files found but not yet read: what a viewer can be opened on.
+
+    Discovery is cheap and reading is not - walking three thousand directories
+    is tens of milliseconds against seconds to parse a hundred and twenty
+    scans - so the command does the first and hands the second over. This is
+    the hand-over: a list of candidates and nothing else, which is enough to
+    answer "is there anything here worth opening" without parsing a byte.
+    """
+
+    paths: list[Path] = field(default_factory=list)
+
+    def __len__(self) -> int:
+        return len(self.paths)
 
 
 # Fields describing *what the service is*, as opposed to how the port responded.
@@ -194,8 +198,8 @@ def _merge_host(into: Host, other: Host) -> None:
             into.sources.append(src)
 
 
-def merge(files: list[ScanFile]) -> ScanSet:
-    """Reconcile parsed files into one set, in the order they were given.
+class Accumulator:
+    """Files folded in one at a time, with a snapshot available between any two.
 
     The set is built out of copies. Folding scans together means writing into
     the accumulated host, and doing that to the parsed record would rewrite
@@ -203,25 +207,74 @@ def merge(files: list[ScanFile]) -> ScanSet:
     everything every later scan found there, and nothing could still answer
     "what did *that* scan see". The Scans tab asks exactly that, and gets it
     from `ScanFile.hosts` rather than by parsing the file a second time.
+
+    Incremental because a hundred and twenty files take seconds to read and the
+    viewer opens before they are done, so the model has to be showable partway
+    through. That makes one more rule necessary than a single-shot merge had:
+    **a host that has been handed out is never written to again.** The next
+    file to mention it copies it first, and the copy is what gets the new
+    services. Otherwise a snapshot already on screen would grow a half-merged
+    host under the reader's cursor - the one thing the spec forbids outright.
+
+    The copy is only paid where a file overlaps what a snapshot has already
+    seen: `_private` is the set of hosts no snapshot holds yet, and those are
+    written to directly however many files touch them.
     """
-    hosts: dict[str, Host] = {}
-    for sf in files:
+
+    def __init__(self) -> None:
+        self._hosts: dict[str, Host] = {}
+        self._private: set[str] = set()
+        self._files: list[ScanFile] = []
+        self._disabled_ping = False
+
+    def __len__(self) -> int:
+        return len(self._hosts)
+
+    @property
+    def fresh(self) -> list[Host]:
+        """The hosts that have changed since the last snapshot.
+
+        What a caller has to re-derive after folding a file in - attaching
+        names and vulnerabilities, say. Doing that to the whole model on every
+        publication would cost more than reading the file that prompted it.
+        """
+        return [self._hosts[address] for address in self._private]
+
+    def add(self, sf: ScanFile) -> None:
+        """Fold one parsed file into the set."""
+        self._files.append(sf)
+        self._disabled_ping = self._disabled_ping or sf.disabled_ping
         for host in sf.hosts:
             if not host.address:
                 continue
-            existing = hosts.get(host.address)
-            if existing is None:
-                hosts[host.address] = host.copy()
+            into = self._hosts.get(host.address)
+            if into is None:
+                into = host.copy()
             else:
-                _merge_host(existing, host)
-    for host in hosts.values():
-        host.services.sort(key=lambda s: (s.protocol, s.port))
-    return ScanSet(
-        hosts=sorted(hosts.values(), key=lambda h: addr_key(h.address)),
-        sources=[sf.name for sf in files],
-        disabled_ping=any(sf.disabled_ping for sf in files),
-        files=list(files),
-    )
+                if host.address not in self._private:
+                    into = into.copy()              # published; leave it alone
+                _merge_host(into, host)
+            into.services.sort(key=lambda s: (s.protocol, s.port))
+            self._hosts[host.address] = into
+            self._private.add(host.address)
+
+    def snapshot(self) -> ScanSet:
+        """The set as it stands. Everything in it is now read-only to `add`."""
+        self._private.clear()
+        return ScanSet(
+            hosts=sorted(self._hosts.values(), key=lambda h: addr_key(h.address)),
+            sources=[sf.name for sf in self._files],
+            disabled_ping=self._disabled_ping,
+            files=list(self._files),
+        )
+
+
+def merge(files: list[ScanFile]) -> ScanSet:
+    """Reconcile parsed files into one set, in the order they were given."""
+    acc = Accumulator()
+    for sf in files:
+        acc.add(sf)
+    return acc.snapshot()
 
 
 def addr_key(addr: str) -> tuple:
@@ -236,25 +289,35 @@ def addr_key(addr: str) -> tuple:
     return (1, (), addr)
 
 
-def load(paths: list[Path], report: Report | None = None) -> ScanSet:
-    """Parse and consolidate. Unreadable files are reported, never fatal.
+def read(paths: list[Path], report: Report | None = None) -> ScanSet:
+    """Parse the files named, in the order given, and consolidate them.
 
-    `report` is called as the search walks and as the files are read, so a
-    caller with a terminal can say what is happening; see :class:`Progress`.
+    Discovery has already happened: `paths` are files, not directories. Split
+    out from :func:`load` because the two halves have very different costs -
+    walking three thousand directories is tens of milliseconds, reading a
+    hundred and twenty scans is seconds - and a caller that wants to open a
+    viewer before it pays the second one needs the first on its own.
     """
-    files: list[ScanFile] = []
+    acc = Accumulator()
     failures: list[tuple[str, str]] = []
-    state = Progress()
-    found = collect_paths(paths, report, state)
-    state.total = len(found)
-    for path in found:
+    total = len(paths)
+    for done, path in enumerate(paths, start=1):
         try:
-            files.append(parse_file(path))
+            acc.add(parse_file(path))
         except NmapParseError as exc:
             failures.append((path.name, str(exc)))
-        state.parsed += 1
         if report is not None:
-            report(state)
-    scans = merge(files)
+            report(done, total, FILES)
+    scans = acc.snapshot()
     scans.failures = failures
     return scans
+
+
+def load(paths: list[Path], report: Report | None = None) -> ScanSet:
+    """Discover and read. Unreadable files are reported, never fatal.
+
+    `report` is called as the search walks (files found, against a total of
+    zero, because the walk cannot know it yet) and again as each file is read
+    (files read, out of files found).
+    """
+    return read(discover(paths, report), report)

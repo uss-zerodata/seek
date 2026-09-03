@@ -14,6 +14,7 @@ import pytest
 from textual.widgets import DataTable, Static
 
 from seek.nmap.merge import load
+from seek.nmap.models import Host, ScanSet, Service
 from seek.nmap.views import prepare
 from seek.tui.nmap import app as app_mod
 from seek.tui.nmap import views as vdefs
@@ -96,8 +97,13 @@ async def test_the_indicator_counts_the_work_it_can_count(monkeypatch):
     monkeypatch.setattr(app_mod, "_BACKGROUND_ABOVE", 0)
     app = _app()
     async with app.run_test() as pilot:
-        app._busy = app_mod._Busy(what="the scan history", view=None, token=1,
-                                  done=3, total=12)
+        # Let the tab's own build finish first: with the threshold at zero even
+        # three hosts go to a worker, and its reports would otherwise land on
+        # top of the one being staged here.
+        await pilot.pause(0.3)
+        app._busy = app_mod._Busy(what="the scan history", view=None,
+                                  token=app._build_token + 1,
+                                  done=3, total=12, unit="scans")
         app._show_busy()
         await pilot.pause(0.05)
         pane = _pane(app)
@@ -107,13 +113,76 @@ async def test_the_indicator_counts_the_work_it_can_count(monkeypatch):
         app._busy = None
 
 
+async def test_an_overview_over_a_large_model_draws_a_bar_naming_hosts():
+    """Every tab, not only the Scans tab, once the model is worth a wait.
+
+    Nothing is monkeypatched: the set is genuinely over the threshold at which
+    the viewer takes a projection off the event loop, which is the condition
+    the requirement is written against. The reports collected here are the
+    ones the projection really produced, and they are then handed to the one
+    renderer that draws any report - so what is asserted is what is shown.
+    """
+    big = ScanSet(
+        hosts=[Host(address=f"10.1.{i // 254}.{i % 254}", reason="echo-reply",
+                    services=[Service(protocol="tcp", port=443, state="open",
+                                      name="https", product="nginx")])
+               for i in range(app_mod._BACKGROUND_ABOVE + 700)],
+        sources=["big.xml"])
+    app = NmapApp(big)
+    seen: list[tuple[int, int, str]] = []
+    async with app.run_test() as pilot:
+        received = app._on_build_progress
+
+        def watch(token, done, total, unit):
+            seen.append((done, total, unit))
+            received(token, done, total, unit)
+
+        app._on_build_progress = watch
+        app._activate("stats")
+        app._refresh_view()
+        await pilot.pause(0.6)
+
+        assert seen, "a projection this size goes to a worker, and it reports"
+        assert {unit for _, _, unit in seen} == {"hosts"}
+        assert seen[-1][1] == len(big.hosts), "counted against the model's hosts"
+
+        # A report from partway through, not the opening `0 of N`: the bar has
+        # to have both halves in it for "determinate" to mean anything.
+        done, total, unit = next(r for r in seen if 0 < r[0] < r[1])
+        app._busy = app_mod._Busy(what="statistics", view=None,
+                                  token=app._build_token + 1,
+                                  done=done, total=total, unit=unit)
+        app._show_busy()
+        await pilot.pause(0.05)
+        pane = _pane(app)
+        assert "█" in pane and "░" in pane, "a determinate bar, not a spinner"
+        assert f"{done} of {total} hosts" in pane, \
+            f"and it names what it counts: {pane!r}"
+        app._busy = None
+
+
+async def test_an_uncountable_step_shows_no_bar_at_all():
+    """A total of zero is "cannot count yet", which is not a bar at nothing."""
+    app = _app()
+    async with app.run_test() as pilot:
+        await pilot.pause(0.3)
+        app._busy = app_mod._Busy(what="the scans", view=None,
+                                  token=app._build_token + 1, done=7, total=0)
+        app._show_busy()
+        await pilot.pause(0.05)
+        pane = _pane(app)
+        assert "reading the scans" in pane and "Esc" in pane
+        assert "█" not in pane and "░" not in pane, "no bar against a total of zero"
+        app._busy = None
+
+
 async def test_a_refresh_reports_in_the_status_bar_not_over_the_rows():
     """Re-reading after a scan must not flash away rows that are still true."""
     app = _app()
     async with app.run_test() as pilot:
         rows_before = app.query_one(DataTable).row_count
         app._busy = app_mod._Busy(what="the scans again", view=None, token=1,
-                                  done=2, total=4, refresh=True)
+                                  done=2, total=4, unit="files", refresh=True)
         app._show_busy()
         await pilot.pause(0.05)
         assert app.query_one(DataTable).row_count == rows_before, \
@@ -156,6 +225,7 @@ async def test_a_running_scan_does_not_restart_the_history_build(monkeypatch):
     monkeypatch.setattr(app_mod, "_BACKGROUND_ABOVE", 0)
     app = _app()
     async with app.run_test() as pilot:
+        await pilot.pause(0.3)                      # the tab's own build settles
         view = app._scans_view()
         assert app._needs_building(view), "cold: the history has to be built"
 

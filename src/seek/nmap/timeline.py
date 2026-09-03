@@ -25,16 +25,13 @@ Pure: files in, ordered entries out. Three things it must get right:
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 from seek.nmap.diff import ScanDiff, diff_from, snapshot
 from seek.nmap.merge import _merge_host
 from seek.nmap.models import Host, ScanFile
-
-# Called with (scans folded in, scans in total) after each one.
-Report = Callable[[int, int], None]
+from seek.nmap.progress import SCANS, Report
 
 
 @dataclass(slots=True)
@@ -74,9 +71,10 @@ def _stem(path: Path) -> str:
 def build(files: list[ScanFile], report: Report | None = None) -> list[Scan]:
     """The scan history, oldest first, each diffed against the merged prior.
 
-    `report` is called with (scans done, scans in total) as each one is folded
-    in, so a caller can say how far it has got; the work is one pass over the
-    files and cannot be resumed, so it reports rather than yields.
+    `report` is called with the scans folded in, out of the scans there are,
+    as each one goes in - the shared shape, so the same renderer draws this as
+    draws a read or a projection. The work is one pass over the files and
+    cannot be resumed, so it reports rather than yields.
     """
     ordered = sorted(files, key=lambda f: (f.start is None, f.start or 0, f.name))
     out: list[Scan] = []
@@ -114,7 +112,7 @@ def build(files: list[ScanFile], report: Report | None = None) -> list[Scan]:
             args=sf.args,
         ))
         if report is not None:
-            report(done, len(ordered))
+            report(done, len(ordered), SCANS)
     return out
 
 

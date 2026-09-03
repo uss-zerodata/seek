@@ -18,6 +18,18 @@ from rich.cells import cell_len, get_character_cell_size
 ELLIPSIS = "…"
 
 
+def width_of(text: str) -> int:
+    """How many cells ``text`` occupies, on the same shortcut as the rest.
+
+    `rich.cells.cell_len` walks the string; the scan viewer budgets its columns
+    by measuring every cell of every row, which is two hundred thousand calls
+    for a projection that yields fifty thousand rows - a sixth of a second on
+    the event loop, and an address, a port number or a service name is ASCII
+    every time.
+    """
+    return len(text) if text.isascii() else cell_len(text)
+
+
 def fit_forward(s: str, start: int, budget: int) -> int:
     """The largest ``end`` with ``cell_len(s[start:end]) <= budget``."""
     if s.isascii():

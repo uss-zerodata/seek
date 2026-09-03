@@ -35,15 +35,15 @@ and with no argument at all the working directory is searched. Discovery keeps
 the `.xml` files that open as nmap output and passes over the rest, so a stray
 `pom.xml` is not reported as a skipped scan; a file you name yourself is always
 read, and told about if it cannot be. A search that takes more than a moment
-says how many scans it has found and how many directories are left, on one line
-that clears itself before the viewer opens — and prints nothing when the output
-is piped.
+says how many scans it has found, on one line that clears itself before the
+viewer opens — and prints nothing when the output is piped.
 
 Reads nmap XML output as *records* rather than lines. Several scans are
 consolidated into one model — a host seen in five files is one host, its services
 unioned, and each row records which scans it came from. Stateless: no import
-step, no database, nothing written. Parsing is ~11 ms per MB, so a five-scan
-engagement opens in well under a second.
+step, no database, nothing written. The viewer opens on the files rather than
+after them, so a five-scan engagement is on screen immediately and a hundred
+and twenty scans fill in as they are read.
 
 The overviews are tabs — **Hosts**, **Services**, **Statistics**, **By service**,
 **By product**, **By port**, **Names**, **Scans** — clickable, or `v`/`V` to
@@ -130,16 +130,40 @@ reconstructed from the XML); `p` freezes a running scan's log so you can read it
 launch directory with `-oA`, leaving the same three files an external one leaves,
 and rejoins the history as its file when it finishes.
 
-**Large engagements.** A hundred scan files over twenty thousand hosts is
-seconds of work per overview, so no overview is projected on the event loop: a
-tab that has to be built shows its own columns, a spinner and, where the work
-can count itself, a bar — `Esc` stops waiting and the tab builds again next time
-it is opened. Each overview is projected once per model and kept, so sorting,
-resizing, drilling in and filtering never rebuild it. Long lists are handed to
-the table a chunk per frame, so the first screenful is there immediately and the
-status line says how far the rest has got. Re-reading after a scan finishes runs
-the same way, except that the rows already on screen stay: they are one scan out
-of date, not wrong, and the status line carries the progress instead of the list.
+**Large engagements.** Measured on 120 scan files covering 24 200 hosts
+(106 MB of XML), which is where every figure below comes from; the numbers are
+reproducible with `benchmarks/gen_nmap_corpus.py` and `benchmarks/bench_nmap.py`.
+
+*The viewer opens before the scans are read.* `seek nmap` finds the candidate
+files — a walk of tens of milliseconds — and hands them over; the reading
+happens with the interface already up, and the model is published on a cadence
+of about a second rather than once per file, because re-projecting an overview
+costs more than reading a file. The host list is usable while the rest arrives,
+the cursor stays on the record it was on, and the status line says how many
+files have been read and how many hosts are known so far. A read short enough
+not to matter says nothing at all. If candidate files were found and none of
+them could be read, the list says so and names them, and the process exits
+non-zero.
+
+*Every long step reports the same way.* Reading files, folding them together,
+building the scan history and projecting an overview all report work done
+against work total and name what they are counting — files, scans, hosts — so
+each shows a bar with real figures rather than a bare spinner. A step that
+cannot count itself yet, such as the directory walk, shows that it is running
+instead of a bar at zero. `Esc` stops waiting on any of them; nothing already
+read is lost and the tab builds again next time it is opened.
+
+*Nothing long runs on the event loop.* Reading and projecting each run in a
+thread with the cycle collector held out of the way and the built model frozen
+once it is published — which is what removes the pauses, rather than merely
+deferring them: worst-case input latency during a build fell from 1962 ms to
+2.4 ms, and the pipeline as a whole from 36.8 s to 15.7 s. Each overview is
+projected once per model and kept, so sorting, resizing, drilling in and
+filtering never rebuild it, and long lists are handed to the table a chunk per
+frame with the status line saying how far the rest has got. Re-reading after a
+scan finishes runs the same way, except that the rows already on screen stay:
+they are one scan out of date, not wrong, and the status line carries the
+progress instead of the list.
 
 Presets live in the config file, and defining any replaces the shipped set:
 

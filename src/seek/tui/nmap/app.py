@@ -11,8 +11,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
-from collections.abc import Callable
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from rich.console import RenderableType
@@ -31,15 +31,18 @@ from seek.engine.score import match_spans
 from seek.gowitness import capture as gw_capture
 from seek.gowitness import detect as gw_detect
 from seek.gowitness import results as gw_results
+from seek.nmap import bulk, filtering, timeline
 from seek.nmap import export as exporter
-from seek.nmap import filtering, timeline
 from seek.nmap import presets as presets_mod
 from seek.nmap import views as proj
 from seek.nmap.diff import ScanDiff, diff_from, snapshot
+from seek.nmap.merge import Accumulator, Pending
 from seek.nmap.models import Host, ScanSet, Service
+from seek.nmap.parse import NmapParseError, parse_file
+from seek.nmap.progress import FILES, Report
 from seek.nmap.runner import Runner, ScanRun, State, elevation_help
 from seek.runner import Run
-from seek.tui.cells import cell_len, clip_cells
+from seek.tui.cells import cell_len, clip_cells, width_of
 from seek.tui.menu import ChoiceScreen, MultiChoiceScreen, PromptScreen
 from seek.tui.nmap import detail as detail_pane
 from seek.tui.nmap import scans as scan_views
@@ -82,16 +85,48 @@ _MARK_STYLE = "bold bright_magenta"
 _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 _BAR_WIDTH = 24
 # Rows handed to the table per frame. Larger than any screen, so the list a
-# reader can actually see is always there in the first pass.
-_FILL_CHUNK = 500
+# reader can actually see is always there in the first pass - and no larger
+# than that, because the chunk is the pause: a fifty-thousand-row projection
+# handed over five hundred at a time put a quarter of a second between
+# keystrokes, which is the bound this is meant to stay inside.
+_FILL_CHUNK = 200
 # Below this many hosts every projection here is a few milliseconds, so it is
 # done inline; above it the wait is long enough to be worth a thread and a
 # progress bar.
 _BACKGROUND_ABOVE = 500
+# The least time between two publications of a growing model, on the same
+# principle the search engine applies to its result snapshots. Re-projecting an
+# overview costs more than reading a file - 0.4 s for the host list against
+# 12 ms a file - so publishing per file would spend the time it is trying to
+# save. Publishing is also skipped outright when nothing new was read.
+_PUBLISH_EVERY = 1.0
+# A read shorter than this says nothing at all. A handful of scans is read in
+# tens of milliseconds, and a message that appears and vanishes inside two
+# frames says less than the rows it delayed - the same reason the command's own
+# search line is seeded with its start time.
+_READ_QUIET = 0.25
 
 
 class _Abandoned(Exception):
     """Raised inside a background build when its result is no longer wanted."""
+
+
+def _bar(busy: _Busy) -> Text:
+    """One report, drawn the one way - whichever step produced it.
+
+    A step that can count itself gets a bar and the two figures with the unit
+    it named; a step that cannot gets nothing but the spinner already above
+    it, because a bar pinned at zero says less than no bar at all.
+    """
+    if not busy.total:
+        return Text()
+    done, total = min(busy.done, busy.total), busy.total
+    filled = round(_BAR_WIDTH * done / total)
+    out = Text()
+    out.append("█" * filled, style="bold")
+    out.append("░" * (_BAR_WIDTH - filled), style="dim")
+    out.append(f"  {done} of {total} {busy.unit}".rstrip(), style="dim")
+    return out
 
 
 @dataclass(slots=True)
@@ -103,10 +138,41 @@ class _Busy:
     token: int
     done: int = 0
     total: int = 0
+    # What `done` and `total` count - "files", "scans", "hosts". The producer
+    # names it, so one renderer draws every step without a table mapping steps
+    # to nouns; an empty unit is a step that is running but cannot count.
+    unit: str = ""
     # A refresh has rows on screen already, and replacing them with a spinner
     # would flash away data that is still true; it reports in the status bar
     # instead. A first build has nothing to show and takes the content area.
     refresh: bool = False
+
+
+@dataclass(slots=True)
+class _Reading:
+    """A read in progress: how far through the candidate files it is.
+
+    Separate from `_Busy` because the two are separate things and can be true
+    at once. Reading affects every tab, so it reports in the status line and
+    in an empty list's message; projecting belongs to one tab and keeps the
+    content area. Told apart by where they appear, which is why neither needs
+    to know about the other.
+    """
+
+    done: int = 0
+    total: int = 0
+    unit: str = FILES
+    failures: list[tuple[str, str]] = field(default_factory=list)
+    began: float = field(default_factory=time.monotonic)
+
+    @property
+    def finished(self) -> bool:
+        return self.done >= self.total
+
+    @property
+    def showing(self) -> bool:
+        """Is this read worth telling the user about yet?"""
+        return not self.finished and time.monotonic() - self.began > _READ_QUIET
 
 
 @dataclass(slots=True)
@@ -297,11 +363,41 @@ class NmapApp(App[int]):
           for n in range(1, 10)],
     ]
 
-    def __init__(self, scans: ScanSet, config: Config | None = None,
+    def __init__(self, scans: ScanSet | Pending, config: Config | None = None,
                  sources: list[Path] | None = None,
                  scan_dir: Path | None = None) -> None:
+        """Open on a finished model, or on the files that will become one.
+
+        A `ScanSet` is the path this has always taken and is unchanged: the
+        model is complete at mount and nothing streams. A `Pending` is the
+        command's hand-over - candidate files, not yet read - and puts the
+        viewer on screen first, filling as they are read. Two entry points
+        rather than one because "the model is complete" is a real distinction
+        the interface has to make, not an implementation detail: it is the
+        difference between "no hosts" and "no hosts yet".
+        """
         super().__init__()
-        self.scans = scans
+        pending = scans if isinstance(scans, Pending) else None
+        self.scans = ScanSet() if pending is not None else scans
+        # Whatever was handed in is a published model like any other: freezing
+        # it here is what keeps the first collection after mount from walking
+        # the whole engagement.
+        bulk.freeze()
+        # The candidates to read once the screen is up, and how far that has
+        # got. `None` throughout for a finished model, which is what every
+        # "is anything still coming" question below asks.
+        self._to_read: list[Path] = list(pending.paths) if pending else []
+        # Set here rather than when the worker starts, so the very first frame
+        # already says a read is under way: an empty list drawn before the
+        # thread got its turn would be a premature negative for one frame,
+        # which is exactly the thing the requirement forbids.
+        self._reading: _Reading | None = (
+            _Reading(done=0, total=len(self._to_read)) if self._to_read else None)
+        self._read_token = 0
+        # A snapshot that arrived while a projection was running. The newest
+        # one supersedes the one waiting rather than queueing behind it: they
+        # are alternatives, not a sequence, and only the last is still true.
+        self._next_scans: ScanSet | None = None
         self.config = config or Config()
         # Where a scan writes, and what to re-read when one finishes. Both are
         # the launch directory unless the config says otherwise.
@@ -343,7 +439,6 @@ class NmapApp(App[int]):
         self._busy: _Busy | None = None
         self._build_token = 0
         self._spin = 0
-        self._report: Callable[[int, int], None] | None = None
         self._after_build: tuple[bool, _Mark | None] | None = None
         self._abandoned = ""            # what the last cancelled build was doing
         self._report_mode = "condensed"
@@ -379,6 +474,10 @@ class NmapApp(App[int]):
         # and its insertion order (which becomes the export order).
         self._marked: dict[tuple, exporter.Record] = {}
         self._unfiltered = 0
+        # Non-zero when candidate files were found and not one of them could be
+        # read: an engagement that could not be opened is not a successful run,
+        # and the shell has to be able to tell.
+        self._exit_code = 0
 
     # --- layout ------------------------------------------------------------
 
@@ -403,13 +502,7 @@ class NmapApp(App[int]):
         # The table is what you browse, so it keeps focus; `/` opens the filter.
         # That frees every bare key for an action and lets the row cursor show.
         self.query_one(DataTable).focus()
-        warn = self.query_one("#warn", Static)
-        warn.display = self.scans.overstated
-        if self.scans.overstated:
-            asserted, real = len(self.scans.asserted_up), len(self.scans.reachable)
-            self.query_one("#warn", Static).update(Text(
-                f"⚠  scan asserted {asserted} hosts up (-Pn) but only {real} show any "
-                f"evidence — listing by evidence", style="bold bright_yellow"))
+        self._refresh_warning()
         if self.scans.failures:
             names = ", ".join(n for n, _ in self.scans.failures)
             self.notify(f"skipped unreadable: {names}", severity="warning")
@@ -422,7 +515,12 @@ class NmapApp(App[int]):
         self.query_one(Tabs).active = self._active_tab
         self._refresh_view()
         self.call_after_refresh(self._first_layout)
-        if not self.scans.hosts and self.nmap.available:
+        if self._to_read:
+            # The screen is up; now pay for the scans. Deferred to after the
+            # first refresh so the interface is genuinely on and answering
+            # before a thread starts competing with it for the interpreter.
+            self.call_after_refresh(self._start_reading)
+        elif not self.scans.hosts and self.nmap.available:
             # Nothing to read and something can be run: the scope editor is the
             # useful thing to show, not an empty host list.
             self.call_after_refresh(self.action_new_scan)
@@ -451,10 +549,12 @@ class NmapApp(App[int]):
         trimmed to fit rather than allowed to overflow.
         """
         headers = [f"{i} {c}  " for i, c in enumerate(self.view.columns, start=1)]
-        natural = [cell_len(h) for h in headers]
+        natural = [width_of(h) for h in headers]
         for row in rows:
             for i, cell in enumerate(row.cells[:len(natural)]):
-                natural[i] = max(natural[i], cell_len(str(cell)))
+                width = width_of(cell)
+                if width > natural[i]:
+                    natural[i] = width
         table = self.query_one(DataTable)
         available = (table.scrollable_content_region.width
                      or table.size.width or 100) - 2 - _MARK_W
@@ -592,32 +692,34 @@ class NmapApp(App[int]):
     @work(thread=True, exclusive=True, group="rows")
     def _build_rows(self, view: vdefs.View, scans: ScanSet, token: int) -> None:
         """Build one view's rows off the event loop, reporting as it goes."""
-        def report(done: int, total: int) -> None:
+        def report(done: int, total: int, unit: str) -> None:
             busy = self._busy
             if busy is None or busy.token != token:
                 # Esc, or another view asked for its rows: stop at the first
                 # boundary the work offers rather than finishing unwanted work.
                 raise _Abandoned
-            self.call_from_thread(self._on_build_progress, token, done, total)
+            self.call_from_thread(self._on_build_progress, token, done, total, unit)
 
-        self._report = report
         try:
-            view.rows(scans)
+            # One of the two owners of a long phase: the collector is out of
+            # the way for its length, and the interpreter comes back to the
+            # event loop between keystrokes rather than at 5 ms boundaries.
+            with bulk.bulk(), bulk.responsive():
+                view.rows(scans, report)
         except _Abandoned:
             return
         except Exception as exc:                      # noqa: BLE001 - report, never crash
             self.call_from_thread(self._on_build_failed, token, exc)
             return
-        finally:
-            self._report = None
         # The rows are cached on the view itself; the main thread only needs
         # to hear that they are there.
         self.call_from_thread(self._on_build_ready, token)
 
-    def _on_build_progress(self, token: int, done: int, total: int) -> None:
+    def _on_build_progress(self, token: int, done: int, total: int,
+                           unit: str) -> None:
         if self._busy is None or self._busy.token != token:
             return
-        self._busy.done, self._busy.total = done, total
+        self._busy.done, self._busy.total, self._busy.unit = done, total, unit
         self._show_busy()
 
     def _on_build_ready(self, token: int) -> None:
@@ -626,6 +728,11 @@ class NmapApp(App[int]):
         self._busy = None
         preserve, restore = self._after_build or (False, None)
         self._after_build = None
+        if self._next_scans is not None:
+            # A read published while this was running. Taking it now rather
+            # than showing rows built from the model it superseded.
+            self._offer(self._next_scans, force=True)
+            return
         # The rows are cached on the view now, so this second pass is the
         # ordinary synchronous one.
         self._refresh_view(preserve=preserve, restore=restore)
@@ -678,14 +785,8 @@ class NmapApp(App[int]):
         message = Text(justify="center")
         frame = _SPINNER[self._spin % len(_SPINNER)]
         message.append(f"{frame} reading {busy.what}\n", style="bold")
-        if busy.total:
-            done, total = busy.done, busy.total
-            filled = round(_BAR_WIDTH * done / total)
-            message.append("█" * filled, style="bold")
-            message.append("░" * (_BAR_WIDTH - filled), style="dim")
-            message.append(f"  {done} of {total} scans\n", style="dim")
-        else:
-            message.append("\n")
+        message.append_text(_bar(busy))
+        message.append("\n")
         message.append("Esc stops waiting", style="dim")
         pane.update(message)
 
@@ -776,7 +877,27 @@ class NmapApp(App[int]):
         if not empty:
             return
         query = self.query_one("#filter", Input).value.strip()
-        if self._abandoned:
+        reading = self._reading
+        if reading is not None and reading.showing and not query:
+            # Never a premature negative: an empty list during a read says the
+            # read is still going, not that the engagement is empty.
+            headline = "Still reading the scans"
+            hint = (f"{reading.done} of {reading.total} {reading.unit} read · "
+                    f"{len(self.scans.hosts)} host(s) so far")
+        elif reading is not None and not reading.finished and not query:
+            # Inside the quiet window: nothing yet is not news, and saying the
+            # scan recorded no hosts before a file has been opened would be.
+            headline = ""
+            hint = ""
+        elif (reading is not None and reading.failures
+                and not self.scans.hosts and not query):
+            # Candidates were found and none of them could be read. Saying
+            # "this scan recorded no hosts" here would be a lie about the
+            # engagement rather than a report about the files.
+            names = ", ".join(n for n, _ in reading.failures)
+            headline = "Nothing could be read"
+            hint = f"{len(reading.failures)} file(s) failed: {names}"
+        elif self._abandoned:
             headline = f"Stopped reading {self._abandoned}"
             hint = "nothing was lost · leave this tab and come back to read it again"
         elif query:
@@ -801,6 +922,9 @@ class NmapApp(App[int]):
         else:
             headline = "This scan recorded no hosts"
             hint = "the files named on the command line are the whole truth · ? for help"
+        if not headline:
+            pane.set_class(False, "-shown")
+            return
         message = Text(justify="center")
         message.append(headline + "\n", style="bold")
         message.append(hint, style="dim")
@@ -860,12 +984,14 @@ class NmapApp(App[int]):
         note = Text(f"{_SPINNER[self._spin % len(_SPINNER)]} reading {busy.what}",
                     style="bold")
         if busy.total:
-            note.append(f" {busy.done}/{busy.total}", style="dim")
+            note.append(f" {busy.done}/{busy.total} {busy.unit}".rstrip(), style="dim")
         note.append("  ·  Esc stops waiting", style="dim")
         return note
 
     def _refresh_status(self) -> None:
-        left = self._busy_note() or Text(
+        # A read and a projection can both be running; the read is the one that
+        # belongs to the whole window, so it leads.
+        left = self._read_note() or self._busy_note() or Text(
             f"{len(self.scans.hosts)} host(s) across "
             f"{len(self.scans.sources)} scan(s)", style="dim")
         shown = sum(1 for r in self._rows if not r.heading)
@@ -1048,18 +1174,19 @@ class NmapApp(App[int]):
             return vdefs.grouping_view(tab_id.removeprefix("group-"))
         return vdefs.hosts_view(self._only_reachable)
 
-    def _scan_history(self) -> list[timeline.Scan]:
+    def _scan_history(self, report: Report | None = None) -> list[timeline.Scan]:
         """The file history, rebuilt only when the model actually changes."""
         if self._history_for is not self.scans:
-            # `_report` is set only while a background build is running, and
-            # this is the one piece of work long enough to be worth counting.
-            self._history = timeline.build(self.scans.files, self._report)
+            # A report only when a background build handed one down: this is
+            # the expensive half of the tab, and the only part of it worth
+            # counting.
+            self._history = timeline.build(self.scans.files, report)
             self._history_for = self.scans
         return self._history
 
     def _scans_view(self) -> vdefs.View:
-        def build(_scans) -> list[vdefs.Row]:
-            history = self._scan_history()
+        def build(_scans, report: Report | None = None) -> list[vdefs.Row]:
+            history = self._scan_history(report)
             done = {str(s.path) for s in history if s.path}
             # A finished run is already in the history as its file; only runs
             # with no file yet (running, failed, cancelled) get their own row.
@@ -1076,7 +1203,7 @@ class NmapApp(App[int]):
             # A live run's elapsed time and its log move without the model
             # changing, so these rows are rebuilt every refresh. The expensive
             # half - the file history - is cached in `_scan_history`.
-            cacheable=False,
+            cacheable=False, reports=True,
         )
 
     def _activate(self, tab_id: str) -> None:
@@ -1595,6 +1722,11 @@ class NmapApp(App[int]):
         covered = any(p.is_dir() and run.xml_path.is_relative_to(p) for p in self.sources)
         if not covered:
             self.sources.append(run.xml_path)
+        # Anything still streaming in is about to be re-read from scratch, so
+        # stop it rather than letting two readers publish over each other.
+        self._read_token += 1
+        self._reading = None
+        self._next_scans = None
         self._build_token += 1
         self._busy = _Busy(what="the scans again", view=None,
                            token=self._build_token, refresh=True)
@@ -1611,15 +1743,16 @@ class NmapApp(App[int]):
         # one being replaced, and nothing writes to it while this runs.
         before = snapshot(self.scans.hosts)
 
-        def report(progress) -> None:
+        def report(done: int, total: int, unit: str) -> None:
             busy = self._busy
             if busy is None or busy.token != token:
                 raise _Abandoned
-            self.call_from_thread(self._on_build_progress, token,
-                                  progress.parsed, progress.total)
+            self.call_from_thread(self._on_build_progress, token, done, total, unit)
 
         try:
-            scans = prepare(load(paths, report))
+            # The other owner of a long phase; see `_build_rows`.
+            with bulk.bulk(), bulk.responsive():
+                scans = prepare(load(paths, report))
         except _Abandoned:
             return
         except Exception as exc:                      # noqa: BLE001 - report, never crash
@@ -1632,7 +1765,7 @@ class NmapApp(App[int]):
         if self._busy is None or self._busy.token != token:
             return
         self._busy = None
-        self.scans = scans
+        self._publish(scans)
         self._diffs[id(run)] = diff_from(before, self.scans.hosts)
         self._resolve_marks()
         self.notify(f"{run.preset}: {self._diffs[id(run)].summary()}")
@@ -1649,6 +1782,163 @@ class NmapApp(App[int]):
         if not covered and self.sources and self.sources[-1] == run.xml_path:
             self.sources.pop()
         self._refresh_status()
+
+    # --- reading the engagement into the open viewer -----------------------
+
+    def _start_reading(self) -> None:
+        """Read the candidates handed to the constructor, off the event loop."""
+        if not self._to_read:
+            return
+        self._read_token += 1
+        self._reading = _Reading(done=0, total=len(self._to_read))
+        self._refresh_status()
+        self._read_scans(list(self._to_read), self._read_token)
+
+    @work(thread=True, exclusive=True, group="read")
+    def _read_scans(self, paths: list[Path], token: int) -> None:
+        """Parse file by file, folding each into a set that keeps growing.
+
+        The set is never handed out while it is being written to: `Accumulator`
+        copies a host before a later file touches it again, so what the
+        interface is holding is always a consolidation of whole files. What is
+        published is therefore a new `ScanSet` every time - which is also what
+        makes the projections' cache invalidate exactly right, since it keys on
+        the model's identity and nothing else has to know a read happened.
+        """
+        acc = Accumulator()
+        failures: list[tuple[str, str]] = []
+        total = len(paths)
+        last = 0.0
+        unread = False                              # something new since publishing
+        # One of the two owners of a long phase; see `_build_rows`.
+        with bulk.bulk(), bulk.responsive():
+            for done, path in enumerate(paths, start=1):
+                if self._read_token != token:       # a re-read superseded this
+                    return
+                try:
+                    acc.add(parse_file(path))
+                    unread = True
+                except NmapParseError as exc:
+                    failures.append((path.name, str(exc)))
+                except Exception as exc:            # noqa: BLE001 - never crash
+                    failures.append((path.name, str(exc)))
+                now = time.monotonic()
+                snapshot = None
+                if unread and now - last >= _PUBLISH_EVERY and done < total:
+                    last, unread = now, False
+                    snapshot = self._consolidate(acc, failures)
+                self.call_from_thread(self._on_read_progress, token, done, total,
+                                      snapshot)
+            final = self._consolidate(acc, failures)
+        self.call_from_thread(self._on_read_done, token, final)
+
+    @staticmethod
+    def _consolidate(acc: Accumulator, failures: list[tuple[str, str]]) -> ScanSet:
+        """One immutable snapshot of the set as it stands.
+
+        `prepare` runs over the hosts this snapshot is the first to show, not
+        over the whole model: attaching names and vulnerabilities is idempotent
+        but not free, and doing it to everything on every publication would
+        cost more than reading the file that prompted it.
+        """
+        fresh = acc.fresh
+        scans = acc.snapshot()
+        scans.failures = list(failures)
+        proj.prepare(scans, fresh)
+        return scans
+
+    def _on_read_progress(self, token: int, done: int, total: int,
+                          scans: ScanSet | None) -> None:
+        if self._read_token != token or self._reading is None:
+            return
+        self._reading.done, self._reading.total = done, total
+        if scans is not None:
+            self._offer(scans)
+        else:
+            self._refresh_status()
+
+    def _on_read_done(self, token: int, scans: ScanSet) -> None:
+        if self._read_token != token:
+            return
+        self._reading = _Reading(done=len(self._to_read), total=len(self._to_read),
+                                 failures=list(scans.failures))
+        read = len(self._to_read) - len(scans.failures)
+        if scans.failures:
+            names = ", ".join(n for n, _ in scans.failures)
+            self.notify(f"skipped unreadable: {names}", severity="warning")
+        # Candidates existed and not one of them could be read. That is not an
+        # engagement with no hosts in it, and the process must not report it as
+        # a clean run; the empty list says which files failed.
+        if self._to_read and not read:
+            self._exit_code = 1
+        self._offer(scans, force=True)
+        if not scans.hosts and not scans.failures and self.nmap.available:
+            # Files that read cleanly and named nobody: the useful thing to
+            # offer is a scan, exactly as it is for an empty directory.
+            self.call_after_refresh(self.action_new_scan)
+
+    def _offer(self, scans: ScanSet, force: bool = False) -> None:
+        """Take a snapshot now, or hold it until the projection running ends.
+
+        Coalescing rather than queueing: a projection started against an older
+        model is already the work this snapshot would repeat, and by the time
+        it finishes there may be a newer snapshot still. Only the last one is
+        true, so only the last one is kept.
+        """
+        if self._busy is not None and not force:
+            self._next_scans = scans
+            return
+        self._next_scans = None
+        self._apply(scans)
+
+    def _apply(self, scans: ScanSet) -> None:
+        """Put a grown model on screen without moving the cursor under the user."""
+        # By record identity, not by row index: the rows are rebuilt from the
+        # new model, so the row the cursor was on is a different object at a
+        # different position - which is exactly what this machinery is for.
+        mark = self._mark_current()
+        self._publish(scans)
+        self._refresh_warning()
+        self._refresh_view(restore=mark)
+        self._refresh_detail()
+        self._refresh_status()
+
+    def _refresh_warning(self) -> None:
+        """The `-Pn` overstatement banner, which a growing model can turn on."""
+        try:
+            warn = self.query_one("#warn", Static)
+        except NoMatches:
+            return
+        warn.display = self.scans.overstated
+        if self.scans.overstated:
+            asserted, real = len(self.scans.asserted_up), len(self.scans.reachable)
+            warn.update(Text(
+                f"⚠  scan asserted {asserted} hosts up (-Pn) but only {real} show any "
+                f"evidence — listing by evidence", style="bold bright_yellow"))
+
+    def _read_note(self) -> Text | None:
+        """How far the read has got, for the status line. `None` once it has."""
+        reading = self._reading
+        if reading is None or not reading.showing:
+            return None
+        note = Text(f"{_SPINNER[self._spin % len(_SPINNER)]} reading scans "
+                    f"{reading.done}/{reading.total} {reading.unit}", style="bold")
+        note.append(f"  ·  {len(self.scans.hosts)} host(s) so far", style="dim")
+        return note
+
+    def _publish(self, scans: ScanSet) -> None:
+        """Put a model on screen. The one place `self.scans` is ever replaced.
+
+        The freeze/unfreeze pair lives here rather than at each call site
+        because it is a pair: a model that stays in the permanent generation
+        after it has been superseded is pinned there for the life of the run,
+        and the only moment at which "the model being replaced is going away"
+        is known is this one. Without cycles, the superseded model's objects
+        are freed by reference counting as soon as the last view drops them.
+        """
+        bulk.unfreeze()
+        self.scans = scans
+        bulk.freeze()
 
     def _resolve_marks(self) -> None:
         """Marks point at records of the old model; re-find them in the new one."""
@@ -1699,7 +1989,7 @@ class NmapApp(App[int]):
         """
         running = self.runner.busy() or self.captures.busy()
         if running is None:
-            self.exit(0)
+            self.exit(self._exit_code)
             return
         answer = await self.push_screen_wait(ChoiceScreen(
             f"{running.label} has been running for "
@@ -1707,7 +1997,7 @@ class NmapApp(App[int]):
             f"run that does not finish writes no file.",
             [("stay", "Keep it running"), ("quit", "End it and quit")]))
         if answer == "quit":
-            self.exit(0)
+            self.exit(self._exit_code)
 
     def on_unmount(self) -> None:
         """Never leave a scan running behind a closed viewer.
@@ -1721,6 +2011,11 @@ class NmapApp(App[int]):
         if self.captures.busy() is not None:
             self.captures.cancel()
         self._stop_report_server()
+        # And never leave the model pinned behind one either: the permanent
+        # generation is process-wide, so a viewer that closes has to hand it
+        # back - which matters to a test suite opening a hundred of them, not
+        # to the command, which exits here.
+        bulk.unfreeze()
 
     def action_reverse(self) -> None:
         self._sort_desc = not self._sort_desc
@@ -1933,6 +2228,13 @@ class NmapApp(App[int]):
         if self._busy is not None:
             self._spin += 1
             self._show_busy()
+        if self._reading is not None and not self._reading.finished:
+            # The spinner turns, and the quiet window ends here rather than on
+            # the next file - a read that stalls on one large scan still has to
+            # start saying so.
+            self._spin += 1
+            self._refresh_status()
+            self._refresh_empty(self._rows)
         self._apply_detail_visibility()
         self._check_width()
 
@@ -2181,8 +2483,9 @@ def _key_at(row: vdefs.Row, col: int) -> tuple:
     return (1, (), str(value).lower())
 
 
-def run_viewer(scans: ScanSet, config: Config | None = None,
+def run_viewer(scans: ScanSet | Pending, config: Config | None = None,
                sources: list[Path] | None = None,
                scan_dir: Path | None = None) -> int:
+    """Open the viewer on a finished model, or on files still to be read."""
     result = NmapApp(scans, config, sources=sources, scan_dir=scan_dir).run()
     return result if isinstance(result, int) else 0

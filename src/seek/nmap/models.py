@@ -185,7 +185,7 @@ class ScanFile:
         return " -Pn" in f" {self.args}" or " -P0" in f" {self.args}"
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, repr=False)
 class ScanSet:
     """The consolidated model for one run. Nothing here is persisted."""
 
@@ -196,6 +196,20 @@ class ScanSet:
     # The individual parsed files behind this set, kept so the Scans tab can
     # present each scan on its own and diff them as a history over time.
     files: list[ScanFile] = field(default_factory=list)
+
+    def __repr__(self) -> str:
+        """A summary, never the contents.
+
+        The generated repr walks every host, every service and every script
+        result. That is not a debugging aid at this size, it is a hazard:
+        Textual builds a description for a worker by `repr`-ing its arguments,
+        so handing a model to a thread worker cost seconds on the event loop -
+        measured at 2.8 s for 24 200 hosts, which is the whole responsiveness
+        budget spent on a string nobody reads. Anything that wants the
+        contents has the fields.
+        """
+        return (f"ScanSet({len(self.hosts)} host(s), {len(self.sources)} source(s), "
+                f"{len(self.failures)} failure(s))")
 
     @property
     def asserted_up(self) -> list[Host]:

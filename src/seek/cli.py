@@ -11,7 +11,7 @@ import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import Annotated
 
 import typer
 
@@ -21,9 +21,6 @@ from seek.paths import config_file
 from seek.scope import ScopeError, build_scope
 from seek.session import SessionConfig
 from seek.shell import SUPPORTED_SHELLS, render_init
-
-if TYPE_CHECKING:                                   # imported lazily at run time
-    from seek.nmap.merge import Progress
 
 app = typer.Typer(
     add_completion=False,
@@ -57,17 +54,17 @@ def _search_progress():
     last = [time.monotonic()]
     drawn = [False]
 
-    def report(progress: Progress) -> None:
+    def report(done: int, total: int, unit: str) -> None:
         now = time.monotonic()
         if now - last[0] < 0.1:                     # ~10 redraws a second
             return
         last[0] = now
-        if progress.total:
-            line = f"seek: reading scans {progress.parsed}/{progress.total}"
+        if total:
+            line = f"seek: reading scans {done}/{total} {unit}"
         else:
-            left = progress.pending
-            line = (f"seek: searching for scans - {progress.found} found, "
-                    f"{left} director{'y' if left == 1 else 'ies'} to go")
+            # A total of zero is the walk saying it cannot count itself yet;
+            # all it can honestly report is what it has turned up so far.
+            line = f"seek: searching for scans - {done} found"
         sys.stderr.write("\r" + line[:width].ljust(width))
         sys.stderr.flush()
         drawn[0] = True
@@ -112,8 +109,7 @@ def nmap(
     Stateless: the files found are read straight into memory for this run, with
     no import step and nothing written.
     """
-    from seek.nmap.merge import load
-    from seek.nmap.views import prepare
+    from seek.nmap.merge import Pending, discover
 
     # The working directory is the engagement directory often enough that
     # naming it adds nothing, and it is the directory a scan started here would
@@ -128,17 +124,22 @@ def nmap(
         # as "my edits are being ignored".
         typer.echo(f"seek: {exc}", err=True)
         raise typer.Exit(code=2) from None
+
+    # Discovery only. Reading a hundred and twenty scans is seconds of work and
+    # it now happens with the viewer already open, so what the command has to
+    # decide - is there anything here worth opening - is decided from what can
+    # be established cheaply: whether a candidate file was found, and whether a
+    # scan could be started. Whether those candidates actually parse is not
+    # knowable without reading them, and the viewer says so if none of them do.
     with _search_progress() as report:
-        scans = prepare(load(paths, report))
-    for name, message in scans.failures:
-        typer.echo(f"seek: skipped {name}: {message}", err=True)
+        candidates = discover(paths, report)
 
     # A directory with nothing in it yet is the case for *starting* a scan, so
     # it is only an error when no scan can be started.
     from seek.nmap.presets import probe
 
     nmap = probe(config.nmap_path)
-    if not scans.hosts and not scans.sources and not nmap.available:
+    if not candidates and not nmap.available:
         where = ", ".join(str(p) for p in paths)
         typer.echo(f"seek: no readable nmap output in {where}", err=True)
         typer.echo(f"seek: and no scan can be started here ({nmap.reason})", err=True)
@@ -154,7 +155,8 @@ def nmap(
     scan_dir = first if first.is_dir() else Path.cwd()
     # The paths given are the sources: a directory keeps covering whatever a
     # scan writes into it, so a finished run needs no special case.
-    raise typer.Exit(code=run_viewer(scans, config, sources=[Path(p) for p in paths],
+    raise typer.Exit(code=run_viewer(Pending(candidates), config,
+                                     sources=[Path(p) for p in paths],
                                      scan_dir=scan_dir))
 
 

@@ -468,10 +468,39 @@ async def test_an_empty_directory_without_nmap_still_reports_nothing_to_read(
     monkeypatch.setenv("PATH", str(tmp_path / "empty-path"))
     empty = tmp_path / "engagement"
     empty.mkdir()
+    opened = []
+    monkeypatch.setattr("seek.tui.nmap.app.run_viewer",
+                        lambda *a, **k: opened.append(a) or 0)
     result = CliRunner().invoke(cli, ["nmap", str(empty)])
     assert result.exit_code == 1
     assert "no readable nmap output" in result.output
     assert "no scan can be started" in result.output
+    assert not opened, "and it says so without opening the viewer"
+
+
+async def test_unreadable_candidates_are_the_viewers_problem(tmp_path, monkeypatch):
+    """The command decides from discovery alone, so it cannot pre-empt this.
+
+    A file that looks like a scan and turns out not to parse used to be found
+    out before the viewer started. Reading now happens with the viewer open,
+    so the command hands the candidate over and the viewer reports it - which
+    is the one externally visible change this makes.
+    """
+    from typer.testing import CliRunner
+
+    from seek.cli import app as cli
+
+    broken = tmp_path / "broken.xml"
+    broken.write_text('<?xml version="1.0"?>\n<!DOCTYPE nmaprun>\n<nmaprun><host')
+    monkeypatch.setenv("PATH", str(tmp_path / "empty-path"))
+    monkeypatch.setattr("seek.cli._stdout_is_usable", lambda: True)
+    handed = {}
+    monkeypatch.setattr(
+        "seek.tui.nmap.app.run_viewer",
+        lambda scans, *a, **k: handed.update(paths=list(scans.paths)) or 1)
+    result = CliRunner().invoke(cli, ["nmap", str(tmp_path)])
+    assert handed["paths"] == [broken], "handed over unread"
+    assert result.exit_code == 1, "and the viewer's verdict is the exit status"
 
 
 async def test_no_argument_reads_the_working_directory(tmp_path, monkeypatch):
@@ -488,13 +517,17 @@ async def test_no_argument_reads_the_working_directory(tmp_path, monkeypatch):
     seen = {}
 
     def fake_viewer(scans, config, sources, scan_dir):
-        seen.update(hosts=len(scans.hosts), sources=list(sources), scan_dir=scan_dir)
+        # The command hands over candidates, not a model: reading them is the
+        # viewer's job now, and what is asserted here is that discovery found
+        # them and passed them on.
+        seen.update(found=[p.name for p in scans.paths], sources=list(sources),
+                    scan_dir=scan_dir)
         return 0
 
     monkeypatch.setattr("seek.tui.nmap.app.run_viewer", fake_viewer)
     result = CliRunner().invoke(cli, ["nmap"])
     assert result.exit_code == 0
-    assert seen["hosts"], "the scan in the subdirectory was found"
+    assert seen["found"] == ["basic.xml"], "the scan in the subdirectory was found"
     assert seen["sources"] == [Path.cwd()] and seen["scan_dir"] == Path.cwd(), \
         "the working directory is the source, so a scan started here is covered"
 

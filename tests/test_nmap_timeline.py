@@ -76,8 +76,10 @@ def test_the_history_is_built_without_reading_the_files_again(tmp_path):
 
 def test_the_history_reports_its_progress():
     seen = []
-    timeline.build(_files("discovery", "basic"), lambda done, total: seen.append((done, total)))
-    assert seen == [(1, 2), (2, 2)], "one report per scan folded in, with the total"
+    timeline.build(_files("discovery", "basic"),
+                   lambda done, total, unit: seen.append((done, total, unit)))
+    assert seen == [(1, 2, "scans"), (2, 2, "scans")], \
+        "one report per scan folded in, with the total and what is being counted"
 
 
 def test_raw_prefers_the_sibling_nmap_then_falls_back(tmp_path):

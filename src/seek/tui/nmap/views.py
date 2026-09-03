@@ -15,6 +15,7 @@ from seek.nmap import views as proj
 from seek.nmap.export import Record
 from seek.nmap.merge import addr_key as _addr
 from seek.nmap.models import Host, ScanSet, Service
+from seek.nmap.progress import HOSTS, Report, counted
 
 ABSENT = "—"
 
@@ -59,29 +60,44 @@ class Grouping:
     key: str                                   # "service" | "product" | "port"
     label: str
     members: list[tuple[Host, Service]] = field(default_factory=list)
+    # Both derived lists are a full pass over the members, and the record pane
+    # asks for them again on every movement of the cursor. A bucket can hold
+    # three hundred thousand services, so "recompute on each access" is a
+    # second of the event loop per keypress. The bucket is built from a model
+    # that cannot change under it - a new model builds new buckets - so the
+    # answer is kept.
+    _hosts: list[Host] | None = field(default=None, repr=False, compare=False)
+    _ports: list[str] | None = field(default=None, repr=False, compare=False)
 
     @property
     def hosts(self) -> list[Host]:
         """The distinct hosts in this bucket, in address order."""
-        seen: dict[str, Host] = {}
-        for host, _svc in self.members:
-            seen.setdefault(host.address, host)
-        return sorted(seen.values(), key=lambda h: _addr(h.address))
+        if self._hosts is None:
+            seen: dict[str, Host] = {}
+            for host, _svc in self.members:
+                seen.setdefault(host.address, host)
+            self._hosts = sorted(seen.values(), key=lambda h: _addr(h.address))
+        return self._hosts
 
     @property
     def ports(self) -> list[str]:
-        return sorted({f"{s.port}/{s.protocol}" for _, s in self.members},
-                      key=lambda p: int(p.split("/")[0]))
+        if self._ports is None:
+            self._ports = sorted(
+                {f"{s.port}/{s.protocol}" for _, s in self.members},
+                key=lambda p: int(p.split("/")[0]))
+        return self._ports
 
 
 @dataclass(slots=True)
 class View:
     title: str
     columns: tuple[str, ...]
-    build: Callable[[ScanSet], list[Row]]
+    build: Callable[..., list[Row]]
     kind: str = "generic"
     subtitle: str = ""
-    hosts: list[Host] = field(default_factory=list)
+    # `repr=False` for the same reason `ScanSet.__repr__` is hand-written: a
+    # view is passed to a thread worker, and Textual reprs what it is passed.
+    hosts: list[Host] = field(default_factory=list, repr=False)
     # The order the view opens in: (column index, descending). A list should
     # arrive in the order that answers what it is for - "how often" for a
     # breakdown - rather than always ascending by its first column.
@@ -101,6 +117,12 @@ class View:
     # A view whose rows depend on something else - the Scans tab reads the
     # runners' live state - sets `cacheable=False` and is recomputed each time.
     cacheable: bool = True
+    # Whether `build` takes the progress report as its second argument. A flag
+    # rather than introspection, and false by default, so a view built for one
+    # purpose - a test's fixed list, a drill-down over a handful of rows -
+    # keeps the one-argument builder it has always had. Only the overviews,
+    # which walk the whole model, are worth counting.
+    reports: bool = False
     _rows_of: ScanSet | None = field(default=None, repr=False, compare=False)
     _rows: list[Row] = field(default_factory=list, repr=False, compare=False)
 
@@ -108,13 +130,23 @@ class View:
         """Are this view's rows already built for exactly this model?"""
         return self.cacheable and self._rows_of is scans
 
-    def rows(self, scans: ScanSet) -> list[Row]:
+    def rows(self, scans: ScanSet, report: Report | None = None) -> list[Row]:
+        """This view's rows, built if they are not already there for `scans`.
+
+        `report` is only ever passed by the worker that owns a background
+        build; every other caller asks for rows that are either cached or
+        cheap, and a report from those would be a bar that flickered on and
+        off between keystrokes.
+        """
         if not self.cacheable:
-            return self.build(scans)
+            return self._built(scans, report)
         if self._rows_of is not scans:
-            self._rows = self.build(scans)
+            self._rows = self._built(scans, report)
             self._rows_of = scans
         return self._rows
+
+    def _built(self, scans: ScanSet, report: Report | None) -> list[Row]:
+        return self.build(scans, report) if self.reports else self.build(scans)
 
 
 def _fmt(value: object) -> str:
@@ -158,13 +190,14 @@ def _host_row(h: Host) -> Row:
 
 
 def hosts_view(only_reachable: bool = False) -> View:
-    def build(scans: ScanSet) -> list[Row]:
-        return [_host_row(h)
-                for h in (scans.reachable if only_reachable else scans.hosts)]
+    def build(scans: ScanSet, report: Report | None = None) -> list[Row]:
+        hosts = scans.reachable if only_reachable else scans.hosts
+        return [_host_row(h) for h in counted(hosts, report, HOSTS)]
 
     return View(
         title="Hosts" + (" (reachable)" if only_reachable else ""),
         columns=HOST_COLUMNS, build=build, kind="hosts", tab="hosts",
+        reports=True,
     )
 
 
@@ -182,9 +215,9 @@ def host_list(title: str, hosts: list[Host], subtitle: str = "") -> View:
 
 
 def services_view() -> View:
-    def build(scans: ScanSet) -> list[Row]:
+    def build(scans: ScanSet, report: Report | None = None) -> list[Row]:
         out = []
-        for g in proj.service_groups(scans.hosts):
+        for g in proj.service_groups(scans.hosts, report):
             out.append(Row(
                 cells=(str(g.port), g.protocol, _fmt(g.name), _fmt(g.product),
                        _fmt(g.version), _fmt(g.extrainfo),
@@ -203,7 +236,7 @@ def services_view() -> View:
         title="Services",
         columns=("Port", "Proto", "Service", "Product", "Version", "Info",
                  "Hosts", "Vulns"),
-        build=build, kind="services", tab="services",
+        build=build, kind="services", tab="services", reports=True,
     )
 
 
@@ -266,9 +299,9 @@ def service_detail(group: proj.ServiceGroup) -> View:
 
 
 def grouping_view(key: str) -> View:
-    def build(scans: ScanSet) -> list[Row]:
+    def build(scans: ScanSet, report: Report | None = None) -> list[Row]:
         out = []
-        for label, members in proj.group_by(scans.hosts, key):
+        for label, members in proj.group_by(scans.hosts, key, report):
             group = Grouping(key=key, label=label, members=list(members))
             addresses = tuple(h.address for h in group.hosts)
             ports = group.ports
@@ -289,7 +322,7 @@ def grouping_view(key: str) -> View:
     return View(
         title=f"Grouped by {key}",
         columns=(key.capitalize(), "Occurrences", "Hosts", "Ports"),
-        build=build, kind="grouping", tab=f"group-{key}",
+        build=build, kind="grouping", tab=f"group-{key}", reports=True,
     )
 
 
@@ -354,13 +387,13 @@ def names_view() -> View:
     a list rather than only inside one host's record.
     """
 
-    def build(scans: ScanSet) -> list[Row]:
+    def build(scans: ScanSet, report: Report | None = None) -> list[Row]:
         # `Host` and `Service` are unhashable (slots dataclasses with `eq`), so
         # everything here is keyed by address and port rather than by object.
         hosts_for: dict[str, dict[str, Host]] = {}
         sources_for: dict[str, set[str]] = {}
         members_for: dict[str, dict[tuple, tuple[Host, Service]]] = {}
-        for host in scans.hosts:
+        for host in counted(scans.hosts, report, HOSTS):
             for name, kinds in name_mod.kinds_of(host).items():
                 hosts_for.setdefault(name, {})[host.address] = host
                 sources_for.setdefault(name, set()).update(kinds)
@@ -390,7 +423,7 @@ def names_view() -> View:
         return out
 
     return View(title="Names", columns=("Name", "Source", "Hosts", "Ports"),
-                build=build, kind="names", tab="names")
+                build=build, kind="names", tab="names", reports=True)
 
 
 def statistics_view() -> View:
@@ -401,8 +434,13 @@ def statistics_view() -> View:
     ports were a comma list truncated to ten inside one detail cell.
     """
 
-    def build(scans: ScanSet) -> list[Row]:
-        st = proj.statistics(scans.hosts)
+    def build(scans: ScanSet, report: Report | None = None) -> list[Row]:
+        # The report follows the dominant pass and stops there. The indexing
+        # pass below walks the hosts again, but reporting over it would either
+        # restart the count - which is not monotonic - or need a total that
+        # counts each host twice, which is not hosts. A bar that reaches its
+        # end just before the rows appear is the honest version of that.
+        st = proj.statistics(scans.hosts, report)
         out: list[Row] = [_heading("Coverage", 0)]
 
         def coverage(label: str, count: int, note: str, opens: View,
@@ -477,7 +515,7 @@ def statistics_view() -> View:
         return out
 
     return View(title="Statistics", columns=("Statistic", "Count", "Detail"),
-                build=build, kind="stats", tab="stats",
+                build=build, kind="stats", tab="stats", reports=True,
                 # The question a breakdown answers is "how often", so the tab
                 # opens on the count, biggest first.
                 default_sort=(1, True))

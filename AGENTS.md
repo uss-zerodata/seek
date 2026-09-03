@@ -32,6 +32,11 @@ uv run ruff check --fix     # lint + autofix
 uv lock --check             # verify the lockfile is current
 
 uv run python benchmarks/bench_search.py [PATH]   # search throughput benchmark
+
+uv run python benchmarks/gen_nmap_corpus.py /tmp/engagement   # 120 files, 24 200 hosts
+uv run python benchmarks/bench_nmap.py /tmp/engagement        # pipeline split
+uv run python benchmarks/bench_nmap.py /tmp/engagement --latency   # event-loop pauses
+uv run python benchmarks/drive_nmap.py /tmp/engagement        # walk the viewer at scale
 ```
 
 `benchmarks/` is **not** collected by `pytest` (`testpaths = ["tests"]`) — it is
@@ -416,6 +421,53 @@ stdout, `cd`) cannot run while Textual owns the screen. They set
   model changes; the Scans `View.build` recomputes only the live-run rows each
   refresh. A finished in-app run is deduped against its own output file so it is
   listed once, as the file.
+- **The collector is the pause, not the work.** At engagement scale the model is
+  millions of tracked container objects and every generational collection walks
+  all of them - measured at 1.9 s of frozen interface in the middle of a
+  projection. `nmap/bulk.py` holds the policy: `bulk()` suspends collection for
+  one phase **and freezes what survived on the way out**, because suspending
+  alone only moves the pause to the first allocation after the phase (354 ms
+  against 4 ms, measured). `responsive()` shortens the thread switch interval so
+  the event loop gets its turn between keystrokes. The policy is applied at the
+  two phase *owners* - the reading worker and the projection worker - and
+  nowhere else: `load`, `merge`, `timeline.build` and the projections are pure,
+  are imported directly by tests and by the export path, and a library call that
+  turns the host program's collector off is a surprise that outlives it. The
+  freeze/unfreeze pair lives in `NmapApp._publish`, the one place `self.scans`
+  is ever replaced, because it is a *pair*.
+- **One report shape for every long step.** `nmap/progress.py` defines it: work
+  done, work total, and the unit counted. `merge.load` reports files (with a
+  total of zero during the walk, which means "cannot count itself yet"),
+  `timeline.build` reports scans, every overview reports hosts. One renderer in
+  the viewer draws any of them, so a step that learns to count needs no new
+  drawing code and no mapping table. `counted()` wraps a loop and guarantees the
+  two properties the renderer relies on: monotonic, and a last report at
+  `done == total`. A `View` opts in with `reports=True`; the default is the
+  one-argument builder every drill-down and every test fixture still uses.
+- **The viewer opens on files, not on a model.** `NmapApp` takes a `ScanSet`
+  *or* a `merge.Pending`. The finished-model path is untouched - that is what
+  every existing test exercises - and the `Pending` path reads in a worker,
+  folding file by file into a `merge.Accumulator` and publishing an immutable
+  snapshot on a throttled cadence. The accumulator copies a host before a later
+  file writes to it again (`_private` is the set nothing has seen yet), which is
+  what makes "never half-merged" true rather than hoped for. Publications
+  *coalesce*: a snapshot arriving while a projection runs supersedes the one
+  waiting instead of queueing. Consequence recorded in the specs: candidates
+  that all fail to parse can no longer be found out before the viewer opens, so
+  the viewer says so and the process exits non-zero.
+- **Textual `repr`s a worker's arguments.** `_build_rows(view, scans, token)`
+  meant a dataclass repr of every host, service and script result on the event
+  loop - 2.8 s at 24 200 hosts, for a string nobody reads. `ScanSet.__repr__` is
+  hand-written and `View.hosts` is `repr=False`. Anything handed to a thread
+  worker has to be cheap to `repr`.
+- **A record pane is a dozen rows; a bucket can hold twenty-four thousand.**
+  `detail.py` lists a bucket's members up to `_MEMBER_LIMIT` and its aggregated
+  scripts up to `_SCRIPT_LIMIT`, then says how many more there are - `Enter`
+  already opens the whole bucket as a table, which is chunked into the terminal.
+  Before that, `grouping_detail` rescanned every member per host (their product,
+  billions of operations) and a service group carried every `ssl-cert` on every
+  host: fifteen thousand lines that Textual renders in full merely to *measure*
+  the pane. Nothing a record says is elided; a list of members is not a finding.
 - **No test ever runs nmap.** `Config.nmap_path` exists so tests can point at a
   stub script; a stub must answer `--version`, because the app probes with it.
 - **Marks are keyed by record identity, never by row.** Every view is rebuilt

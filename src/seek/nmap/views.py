@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 
 from seek.nmap import names, vulns
 from seek.nmap.models import Host, ScanSet, Service
+from seek.nmap.progress import HOSTS, Report, counted
 
 
 @dataclass(slots=True)
@@ -59,14 +60,14 @@ def host_search_text(host: Host) -> str:
     return " ".join(p for p in parts if p)
 
 
-def service_groups(hosts: list[Host]) -> list[ServiceGroup]:
+def service_groups(hosts: list[Host], report: Report | None = None) -> list[ServiceGroup]:
     """Group open services across hosts.
 
     Keyed including the version, so two hosts running different releases of the
     same product are separate rows - the version spread is usually the point.
     """
     groups: dict[tuple, ServiceGroup] = {}
-    for host in hosts:
+    for host in counted(hosts, report, HOSTS):
         for svc in host.open_services:
             key = (svc.protocol, svc.port, svc.name, svc.product, svc.version)
             group = groups.get(key)
@@ -119,14 +120,14 @@ class Statistics:
         return self.asserted_up > self.reachable
 
 
-def statistics(hosts: list[Host]) -> Statistics:
+def statistics(hosts: list[Host], report: Report | None = None) -> Statistics:
     """Counts over the hosts given, so an active filter is respected."""
     counts: Counter[str] = Counter()
     ports_for: dict[str, set[str]] = defaultdict(set)
     all_ports: set[tuple[int, str]] = set()
     hosts_on: dict[tuple[int, str], set[str]] = defaultdict(set)
     services_on: dict[tuple[int, str], set[str]] = defaultdict(set)
-    for host in hosts:
+    for host in counted(hosts, report, HOSTS):
         for svc in host.open_services:
             label = svc.name or "unknown"
             counts[label] += 1
@@ -158,14 +159,15 @@ def statistics(hosts: list[Host]) -> Statistics:
     )
 
 
-def group_by(hosts: list[Host], key: str) -> list[tuple[str, list[tuple[Host, Service]]]]:
+def group_by(hosts: list[Host], key: str,
+             report: Report | None = None) -> list[tuple[str, list[tuple[Host, Service]]]]:
     """Group open services by ``service``, ``product`` or ``port``.
 
     Services with no detected product are omitted from the product grouping
     rather than collected under an empty name.
     """
     buckets: dict[str, list[tuple[Host, Service]]] = defaultdict(list)
-    for host in hosts:
+    for host in counted(hosts, report, HOSTS):
         for svc in host.open_services:
             if key == "product":
                 label = svc.product
@@ -179,9 +181,14 @@ def group_by(hosts: list[Host], key: str) -> list[tuple[str, list[tuple[Host, Se
     return sorted(buckets.items(), key=lambda kv: (-len(kv[1]), kv[0]))
 
 
-def prepare(scans: ScanSet) -> ScanSet:
-    """Attach vulnerabilities and certificate names. Called once after loading."""
-    for host in scans.hosts:
+def prepare(scans: ScanSet, hosts: list[Host] | None = None) -> ScanSet:
+    """Attach vulnerabilities and certificate names. Called once after loading.
+
+    `hosts` narrows the work to the hosts a read has just added or changed:
+    attaching is idempotent, but doing it to twenty-four thousand hosts on
+    every publication would cost more than reading the file that prompted it.
+    """
+    for host in scans.hosts if hosts is None else hosts:
         vulns.attach(host)
         names.attach(host)
     return scans

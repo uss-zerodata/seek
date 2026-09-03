@@ -5,9 +5,17 @@ script output, vulnerability titles and references, the reason a host was called
 up, which scans saw it - is laid out here: a heading, aligned label/value pairs,
 and bulleted lists for anything there can be several of.
 
-Nothing is elided. The pane is a scrolling region (`←`/`→` and `J`/`K` move it),
-so length is not a reason to cut a record short - and a truncated report is worse
-than a long one when what was cut is the sentence describing a finding.
+Nothing a record *says* is elided. The pane is a scrolling region (`←`/`→` and
+`J`/`K` move it), so length is not a reason to cut a record short - and a
+truncated report is worse than a long one when what was cut is the sentence
+describing a finding.
+
+The one exception is a bucket's membership list, which is not a finding but a
+list, and which at engagement scale is twenty-four thousand lines long. Those
+stop at `_MEMBER_LIMIT` and say how many more there are: building the rest
+costs a second of the event loop for one movement of the cursor, and `Enter`
+already opens the whole bucket as a table, which is chunked into the terminal
+rather than built in one pass.
 """
 
 from __future__ import annotations
@@ -193,6 +201,30 @@ def _capture_rows(urls: list[str], shots: Captures | None) -> list[Text]:
     return rows
 
 
+# How many members a bucket's record lists before it stops and says how many
+# more there are. The pane is a dozen rows tall and the reader is a pager, so
+# beyond this the lines are not read - but they are built, and at engagement
+# scale that is tens of thousands of `Text` objects on the event loop for one
+# cursor movement. `Enter` opens the bucket as a table, which is the interface's
+# own answer to "show me all of them" and is chunked into the terminal.
+_MEMBER_LIMIT = 100
+# And how many of a bucket's *scripts* it shows in full. Lower, because a
+# script is several lines rather than one: the services overview's `https` row
+# over four thousand hosts carried four thousand `ssl-cert` results, fifteen
+# thousand lines that Textual has to render in full merely to measure the
+# pane's height - three hundred milliseconds, three times, for one movement of
+# the cursor. One host's own record still shows every script it has.
+_SCRIPT_LIMIT = 20
+
+
+def _more(shown: int, total: int) -> list[Text]:
+    """The line that says a listing stopped, and how to see the rest."""
+    if total <= shown:
+        return []
+    return [Text(f"    … and {total - shown} more · Enter opens all of them",
+                 style="dim")]
+
+
 def _member_captures(members: list, shots: Captures | None) -> list[Text]:
     """The capture block for a bucket of (host, service) pairs.
 
@@ -202,7 +234,10 @@ def _member_captures(members: list, shots: Captures | None) -> list[Text]:
     is least use. Same URL join as a host or a service record; only the set of
     URLs is wider.
     """
-    if shots is None or not members:
+    if shots is None or not shots or not members:
+        # `not shots` matters at scale: with nothing captured the block is
+        # empty either way, but building a URL for every one of three hundred
+        # thousand services to find that out is a second of the event loop.
         return []
     urls: list[str] = []
     for host, svc in members:
@@ -423,9 +458,10 @@ def group_detail(group: ServiceGroup,
     ]
     parts.append(Text(""))
     parts.append(_section("Running on", group.host_count))
-    for host, svc in group.members:
+    for host, svc in group.members[:_MEMBER_LIMIT]:
         extra = f"  {svc.version}" if svc.version else ""
         parts.append(_bullet(f"{host.address}{extra}"))
+    parts.extend(_more(_MEMBER_LIMIT, len(group.members)))
 
     captures = _member_captures(group.members, shots)
     if captures:
@@ -447,7 +483,8 @@ def group_detail(group: ServiceGroup,
     if scripts:
         parts.append(Text(""))
         parts.append(_section("Scripts", len(scripts)))
-        parts.extend(_script_block(scripts))
+        parts.extend(_script_block(scripts[:_SCRIPT_LIMIT]))
+        parts.extend(_more(_SCRIPT_LIMIT, len(scripts)))
     return Group(*parts)
 
 
@@ -463,12 +500,18 @@ def grouping_detail(group: Grouping,
         Text(""),
         _section("Hosts", len(hosts)),
     ]
-    for host in hosts:
-        ports = ", ".join(
-            f"{s.port}/{s.protocol}" for h, s in group.members if h is host
-        )
+    # Indexed in one pass rather than rescanning every member per host: a
+    # bucket can hold twenty-four thousand hosts and three hundred thousand
+    # services, and "for each host, scan every member" is their product -
+    # seconds of the event loop for one movement of the cursor.
+    ports_of: dict[int, list[str]] = {}
+    for host, svc in group.members:
+        ports_of.setdefault(id(host), []).append(f"{svc.port}/{svc.protocol}")
+    for host in hosts[:_MEMBER_LIMIT]:
+        ports = ", ".join(ports_of.get(id(host), ()))
         name = f" ({host.hostname})" if host.hostname else ""
         parts.append(_bullet(f"{host.address}{name}   {ports}"))
+    parts.extend(_more(_MEMBER_LIMIT, len(hosts)))
     captures = _member_captures(group.members, shots)
     if captures:
         parts.append(Text(""))
