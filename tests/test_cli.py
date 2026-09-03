@@ -1,8 +1,23 @@
+import re
+
 from typer.testing import CliRunner
 
 from seek.cli import app
 
 runner = CliRunner()
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def plain(text: str) -> str:
+    """Help output with rich's styling removed, so flags can be looked for.
+
+    Rich styles each dash of `--file` as its own span, so the flag a reader
+    sees is not a substring of the coloured text. Whether it colours at all
+    depends on where the tests run - rich counts GitHub Actions as a terminal -
+    which is how this passed locally and failed in CI.
+    """
+    return _ANSI.sub("", text)
 
 
 def test_init_zsh():
@@ -72,7 +87,7 @@ def test_help_shows_the_search_options_not_just_the_command_list(monkeypatch):
     assert captured["argv"] == ["search", "--help"], "routed to the default command"
 
     # and the search help itself carries the options and points at the rest
-    out = runner.invoke(app, ["search", "--help"]).output
+    out = plain(runner.invoke(app, ["search", "--help"]).output)
     for flag in ("--file", "--content", "--config-path", "--init-config"):
         assert flag in out
     assert "seek nmap" in out and "seek init" in out, "other commands are discoverable"
