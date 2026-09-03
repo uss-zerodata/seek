@@ -6,9 +6,12 @@
 
 from __future__ import annotations
 
+import shutil
 import sys
+import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 
@@ -19,6 +22,9 @@ from seek.scope import ScopeError, build_scope
 from seek.session import SessionConfig
 from seek.shell import SUPPORTED_SHELLS, render_init
 
+if TYPE_CHECKING:                                   # imported lazily at run time
+    from seek.nmap.merge import Progress
+
 app = typer.Typer(
     add_completion=False,
     context_settings={"help_option_names": ["-h", "--help"]},
@@ -26,6 +32,52 @@ app = typer.Typer(
 )
 
 _KNOWN_SUBCOMMANDS = {"search", "init", "nmap"}
+
+
+@contextmanager
+def _search_progress():
+    """A one-line report of the scan search, rewritten in place on a terminal.
+
+    An engagement directory can hold thousands of directories, and a search
+    that says nothing for several seconds reads as a hang. Nothing is printed
+    when stderr is not a terminal - a redirect or a pipe would collect a
+    thousand half-lines - so scripts and CI see the output they saw before.
+
+    Written with `\r` and spaces rather than escape codes, so it behaves the
+    same wherever the tests run.
+    """
+    if not sys.stderr.isatty():
+        yield None
+        return
+
+    width = max(20, min(shutil.get_terminal_size((80, 24)).columns - 1, 100))
+    # Seeded with the start time, so a search that finishes inside the interval
+    # prints nothing at all: a line that appears and vanishes says less than
+    # the scans that follow it.
+    last = [time.monotonic()]
+    drawn = [False]
+
+    def report(progress: Progress) -> None:
+        now = time.monotonic()
+        if now - last[0] < 0.1:                     # ~10 redraws a second
+            return
+        last[0] = now
+        if progress.total:
+            line = f"seek: reading scans {progress.parsed}/{progress.total}"
+        else:
+            left = progress.pending
+            line = (f"seek: searching for scans - {progress.found} found, "
+                    f"{left} director{'y' if left == 1 else 'ies'} to go")
+        sys.stderr.write("\r" + line[:width].ljust(width))
+        sys.stderr.flush()
+        drawn[0] = True
+
+    try:
+        yield report
+    finally:
+        if drawn[0]:
+            sys.stderr.write("\r" + " " * width + "\r")
+            sys.stderr.flush()
 
 
 @app.command()
@@ -45,26 +97,28 @@ def init(
 def nmap(
     paths: Annotated[
         list[Path] | None,
-        typer.Argument(help="nmap XML files, or directories containing them."),
+        typer.Argument(
+            help="nmap XML files, or directories to search (default: the "
+                 "working directory).",
+        ),
     ] = None,
 ) -> None:
     """Browse one or more nmap XML scans, consolidated.
 
-    Stateless: the files given are read straight into memory for this run, with
+    A directory is searched all the way down, so an engagement directory can be
+    named instead of its files; with nothing named at all the working directory
+    is searched, which is where a scan was run from.
+
+    Stateless: the files found are read straight into memory for this run, with
     no import step and nothing written.
     """
     from seek.nmap.merge import load
     from seek.nmap.views import prepare
 
-    if not paths:
-        typer.echo(
-            "seek nmap: give one or more nmap XML files, or a directory of them.\n"
-            "  seek nmap scan.xml\n"
-            "  seek nmap scans/\n"
-            "  seek nmap discovery.xml services.xml",
-            err=True,
-        )
-        raise typer.Exit(code=2)
+    # The working directory is the engagement directory often enough that
+    # naming it adds nothing, and it is the directory a scan started here would
+    # write into anyway.
+    paths = list(paths) if paths else [Path.cwd()]
 
     try:
         config = load_config()
@@ -74,7 +128,8 @@ def nmap(
         # as "my edits are being ignored".
         typer.echo(f"seek: {exc}", err=True)
         raise typer.Exit(code=2) from None
-    scans = prepare(load(list(paths)))
+    with _search_progress() as report:
+        scans = prepare(load(paths, report))
     for name, message in scans.failures:
         typer.echo(f"seek: skipped {name}: {message}", err=True)
 
@@ -84,7 +139,8 @@ def nmap(
 
     nmap = probe(config.nmap_path)
     if not scans.hosts and not scans.sources and not nmap.available:
-        typer.echo("seek: no readable nmap output in the given paths", err=True)
+        where = ", ".join(str(p) for p in paths)
+        typer.echo(f"seek: no readable nmap output in {where}", err=True)
         typer.echo(f"seek: and no scan can be started here ({nmap.reason})", err=True)
         raise typer.Exit(code=1)
 
@@ -94,7 +150,7 @@ def nmap(
 
     from seek.tui.nmap.app import run_viewer
 
-    first = Path(paths[0])
+    first = paths[0]
     scan_dir = first if first.is_dir() else Path.cwd()
     # The paths given are the sources: a directory keeps covering whatever a
     # scan writes into it, so a finished run needs no special case.
@@ -104,7 +160,7 @@ def nmap(
 
 _OTHER_COMMANDS = (
     "Other commands (run `seek <command> --help`):\n"
-    "  seek nmap <files|dir>   browse or run nmap scans\n"
+    "  seek nmap [files|dir]   browse or run nmap scans\n"
     "  seek init <bash|zsh>    print shell-integration code"
 )
 

@@ -10,25 +10,122 @@ for a run. Nothing is cached, indexed or written.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from seek.nmap.models import Host, ScanFile, ScanSet, Service
 from seek.nmap.parse import NmapParseError, parse_file
 
 
-def collect_paths(paths: list[Path]) -> list[Path]:
-    """Expand directories to the nmap XML files directly inside them.
+@dataclass(slots=True)
+class Progress:
+    """How far the search has got.
+
+    A tree can hold thousands of directories, and a search that says nothing
+    for several seconds is indistinguishable from one that has hung. The
+    counters are passed to a caller's `report` rather than printed here:
+    `merge` has no terminal, and the same numbers drive a status line, a log
+    or nothing at all.
+    """
+
+    found: int = 0                                  # scans the walk has turned up
+    pending: int = 0                                # directories still to be walked
+    parsed: int = 0                                 # scans read
+    total: int = 0                                  # scans to read, once known
+
+
+# Called with the live `Progress` - the same object each time, so it must be
+# read, not kept.
+Report = Callable[[Progress], None]
+
+# nmap writes `<?xml ...?>`, a doctype and a stylesheet line before the root
+# element, so the marker sits a few hundred bytes in at most.
+_NMAP_MARKER = b"<nmaprun"
+_SNIFF = 4096
+
+
+def _is_nmap_xml(path: Path) -> bool:
+    """Does this file open like an nmap scan?
+
+    A discovered file has to earn its place: walking a directory tree turns up
+    every `.xml` under it, and reporting each pom, plist or feed as a skipped
+    scan would bury the real failures. A file named on the command line is not
+    sniffed - it was asked for, so if it cannot be parsed the user is told why.
+    """
+    try:
+        with path.open("rb") as fh:
+            return _NMAP_MARKER in fh.read(_SNIFF)
+    except OSError:
+        return False
+
+
+def _scans_below(root: Path, state: Progress, report: Report | None) -> list[Path]:
+    """Every nmap XML file under `root`, at any depth, in a stable order.
+
+    An engagement directory is rarely flat - scans land in per-phase or
+    per-target subdirectories, and the app's own runs write into one - so the
+    walk goes all the way down rather than reading the top level only.
+
+    Directories whose name starts with a dot are skipped: `.git` and friends
+    hold no scans, and walking them is the one thing that makes an otherwise
+    instant start slow. Anything unreadable is passed over - a directory that
+    cannot be listed is not an error when the ones beside it can be.
+    """
+    found: list[Path] = []
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        try:
+            entries = sorted(current.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            # `is_dir()` follows symlinks; `is_symlink()` guards the loop a
+            # link back up the tree would otherwise make.
+            if entry.is_dir():
+                if not entry.is_symlink() and not entry.name.startswith("."):
+                    stack.append(entry)
+            elif entry.suffix.lower() == ".xml" and _is_nmap_xml(entry):
+                found.append(entry)
+                state.found += 1
+        # Once per directory, not once per entry: the numbers move at a pace a
+        # reader can follow, and a slow `report` cannot dominate the walk.
+        state.pending = len(stack)
+        if report is not None:
+            report(state)
+    return sorted(found)
+
+
+def collect_paths(paths: list[Path], report: Report | None = None,
+                  state: Progress | None = None) -> list[Path]:
+    """Expand directories to the nmap XML files anywhere below them.
 
     Naming five or more scans by hand every run is exactly the friction that
     pushes people towards an import step, so a directory is accepted in place of
-    a list. Order is deterministic: given order, directories sorted by name.
+    a list. Order is deterministic: given order, each directory's tree sorted by
+    path.
+
+    A file that a directory turns up is dropped if it is already in the list -
+    `seek nmap . scans/a.xml` reads `a.xml` once rather than doubling its
+    hosts' provenance. A file named twice *by hand* is read twice: an explicit
+    list is taken literally, because trimming it would be second-guessing the
+    only instruction the user gave.
     """
     out: list[Path] = []
+    from_walk: dict[Path, bool] = {}
+    state = state if state is not None else Progress()
     for p in paths:
-        if p.is_dir():
-            out.extend(sorted(c for c in p.iterdir() if c.is_file() and c.suffix.lower() == ".xml"))
-        else:
-            out.append(p)
+        walked = p.is_dir()
+        for path in _scans_below(p, state, report) if walked else [p]:
+            try:
+                key = path.resolve()
+            except OSError:                         # a broken link: judge by name
+                key = path.absolute()
+            if key in from_walk and (walked or from_walk[key]):
+                continue
+            from_walk[key] = walked
+            out.append(path)
     return out
 
 
@@ -124,15 +221,25 @@ def addr_key(addr: str) -> tuple:
     return (1, (), addr)
 
 
-def load(paths: list[Path]) -> ScanSet:
-    """Parse and consolidate. Unreadable files are reported, never fatal."""
+def load(paths: list[Path], report: Report | None = None) -> ScanSet:
+    """Parse and consolidate. Unreadable files are reported, never fatal.
+
+    `report` is called as the search walks and as the files are read, so a
+    caller with a terminal can say what is happening; see :class:`Progress`.
+    """
     files: list[ScanFile] = []
     failures: list[tuple[str, str]] = []
-    for path in collect_paths(paths):
+    state = Progress()
+    found = collect_paths(paths, report, state)
+    state.total = len(found)
+    for path in found:
         try:
             files.append(parse_file(path))
         except NmapParseError as exc:
             failures.append((path.name, str(exc)))
+        state.parsed += 1
+        if report is not None:
+            report(state)
     scans = merge(files)
     scans.failures = failures
     return scans

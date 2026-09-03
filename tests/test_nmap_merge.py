@@ -95,6 +95,72 @@ def test_a_directory_expands_to_the_scans_inside_it(tmp_path):
     assert len(load([tmp_path]).hosts) == 3
 
 
+def test_a_directory_is_searched_all_the_way_down(tmp_path):
+    """An engagement directory has phases in subdirectories, not a flat list."""
+    deep = tmp_path / "10.0.0.0-24" / "02-services"
+    deep.mkdir(parents=True)
+    shutil.copy(A, tmp_path / A.name)
+    shutil.copy(B, deep / B.name)
+    assert [p.name for p in collect_paths([tmp_path])] == ["merge-b.xml", "merge-a.xml"]
+    assert len(load([tmp_path]).hosts) == 3
+
+
+def test_the_walk_skips_dot_directories_and_files_that_are_not_scans(tmp_path):
+    """Discovery must not turn every `.xml` on the disk into a skipped-file line."""
+    shutil.copy(A, tmp_path / A.name)
+    shutil.copy(FIX / "not-nmap.xml", tmp_path / "pom.xml")
+    hidden = tmp_path / ".cache"
+    hidden.mkdir()
+    shutil.copy(B, hidden / B.name)
+    assert [p.name for p in collect_paths([tmp_path])] == ["merge-a.xml"]
+    assert load([tmp_path]).failures == []
+
+
+def test_a_named_file_is_still_read_and_reported_rather_than_sniffed_away():
+    """Sniffing is for what the walk turns up; a named file was asked for."""
+    scans = load([FIX / "not-nmap.xml"])
+    assert scans.failures and "not an nmap scan" in scans.failures[0][1]
+
+
+def test_a_walk_does_not_re_add_a_file_that_was_named(tmp_path):
+    """`seek nmap . scans/a.xml` must not double a host's provenance."""
+    shutil.copy(A, tmp_path / A.name)
+    assert collect_paths([tmp_path, tmp_path / A.name]) == [tmp_path / A.name]
+    assert collect_paths([tmp_path / A.name, tmp_path]) == [tmp_path / A.name]
+    assert _host(load([tmp_path, tmp_path / A.name]), "192.0.2.41").sources == \
+        ["merge-a.xml"]
+
+
+def test_the_search_reports_its_progress(tmp_path):
+    """A long walk must be able to say it is still going; see `Progress`."""
+    deep = tmp_path / "a" / "b"
+    deep.mkdir(parents=True)
+    shutil.copy(A, tmp_path / A.name)
+    shutil.copy(B, deep / B.name)
+
+    seen = []
+    load([tmp_path], lambda p: seen.append((p.found, p.pending, p.parsed, p.total)))
+
+    assert seen, "the callback is called while the tree is walked"
+    walking = [s for s in seen if s[3] == 0]
+    reading = [s for s in seen if s[3]]
+    assert [s[0] for s in walking] == sorted(s[0] for s in walking), \
+        "the count of scans found only grows"
+    assert walking[-1][0] == 2 and walking[-1][1] == 0, \
+        "it ends with everything found and nothing left to search"
+    assert [s[2] for s in reading] == [1, 2] and all(s[3] == 2 for s in reading), \
+        "then the files are read, out of a total that is known by then"
+
+
+def test_progress_is_optional_and_costs_the_caller_nothing():
+    assert len(load([A, B]).hosts) == 3
+
+
+def test_a_file_named_twice_by_hand_is_still_read_twice():
+    """An explicit list is taken literally - the timeline reads a re-run this way."""
+    assert collect_paths([A, A]) == [A, A]
+
+
 def test_a_single_file_still_routes_through_the_merge_path():
     scans = load([A])
     assert scans.sources == ["merge-a.xml"]

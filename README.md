@@ -23,10 +23,21 @@ uvx --from git+https://github.com/<you>/search seek
 ## Reading nmap scans
 
 ```bash
+seek nmap                                # every scan under the working directory
 seek nmap scan.xml                       # one scan
 seek nmap discovery.xml services.xml     # consolidated
-seek nmap scans/                         # every scan in a directory
+seek nmap scans/                         # every scan under a directory
 ```
+
+A directory is searched all the way down, so an engagement directory whose scans
+sit in per-phase or per-target subdirectories can be named instead of its files,
+and with no argument at all the working directory is searched. Discovery keeps
+the `.xml` files that open as nmap output and passes over the rest, so a stray
+`pom.xml` is not reported as a skipped scan; a file you name yourself is always
+read, and told about if it cannot be. A search that takes more than a moment
+says how many scans it has found and how many directories are left, on one line
+that clears itself before the viewer opens — and prints nothing when the output
+is piped.
 
 Reads nmap XML output as *records* rather than lines. Several scans are
 consolidated into one model — a host seen in five files is one host, its services

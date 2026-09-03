@@ -1311,9 +1311,9 @@ class NmapApp(App[int]):
         from seek.nmap.views import prepare
 
         before = self.scans.hosts
-        # A directory source already covers the new file - naming it as well
-        # would parse it twice and double its provenance.
-        covered = any(p.is_dir() and run.xml_path.parent == p for p in self.sources)
+        # A directory source already covers the new file - it is searched all
+        # the way down, so naming the file as well would only lengthen the list.
+        covered = any(p.is_dir() and run.xml_path.is_relative_to(p) for p in self.sources)
         if not covered:
             self.sources.append(run.xml_path)
         try:

@@ -7,6 +7,7 @@ configuration.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -471,6 +472,45 @@ async def test_an_empty_directory_without_nmap_still_reports_nothing_to_read(
     assert result.exit_code == 1
     assert "no readable nmap output" in result.output
     assert "no scan can be started" in result.output
+
+
+async def test_no_argument_reads_the_working_directory(tmp_path, monkeypatch):
+    """`cd engagement && seek nmap` is the whole invocation - naming `.` adds nothing."""
+    from typer.testing import CliRunner
+
+    from seek.cli import app as cli
+
+    deep = tmp_path / "01-discovery"
+    deep.mkdir()
+    shutil.copy(FIX / "basic.xml", deep / "basic.xml")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("seek.cli._stdout_is_usable", lambda: True)
+    seen = {}
+
+    def fake_viewer(scans, config, sources, scan_dir):
+        seen.update(hosts=len(scans.hosts), sources=list(sources), scan_dir=scan_dir)
+        return 0
+
+    monkeypatch.setattr("seek.tui.nmap.app.run_viewer", fake_viewer)
+    result = CliRunner().invoke(cli, ["nmap"])
+    assert result.exit_code == 0
+    assert seen["hosts"], "the scan in the subdirectory was found"
+    assert seen["sources"] == [Path.cwd()] and seen["scan_dir"] == Path.cwd(), \
+        "the working directory is the source, so a scan started here is covered"
+
+
+async def test_the_search_says_nothing_when_stderr_is_not_a_terminal(tmp_path, monkeypatch):
+    """The progress line is drawn with `\\r`; piped, it would be a thousand half-lines."""
+    from typer.testing import CliRunner
+
+    from seek.cli import app as cli
+
+    shutil.copy(FIX / "basic.xml", tmp_path / "basic.xml")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("seek.cli._stdout_is_usable", lambda: False)
+    result = CliRunner().invoke(cli, ["nmap"])
+    assert "searching for scans" not in result.output
+    assert "\r" not in result.output
 
 
 async def test_a_directory_with_scans_opens_on_them_as_before(tmp_path, monkeypatch):
