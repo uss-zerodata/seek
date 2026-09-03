@@ -1007,7 +1007,8 @@ async def test_the_hint_bar_and_help_mention_both_keys(tmp_path):
     async with app.run_test(size=(140, 30)) as pilot:
         await pilot.pause(0.3)
         shown = _render(app.query_one("#hint-bar"))
-        assert "detail" in shown or "pane" in shown
+        assert "read record" in shown or "detail" in shown or "pane" in shown, \
+            "the keys that move through the record have to be on the bar"
         from rich.console import Console
 
         from seek.tui.nmap.help import help_body

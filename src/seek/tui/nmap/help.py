@@ -22,7 +22,11 @@ from textual.widgets import Static
 _GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     ("Move around", [
         ("↑ ↓ · j k", "select a row; the detail below follows it"),
-        ("← →", "scroll the detail of the selected row"),
+        ("J K", "move the detail pane's cursor a line at a time"),
+        ("← →", "jump it to the next or previous line that opens something"),
+        ("o", "open what the cursor is on: the scan's own text for this"),
+        ("", "host or port, scoped to it; Esc goes back to the record"),
+        ("", "inside it ← → step between the scans that saw the same thing"),
         ("PgUp PgDn", "page the list"),
         ("Home End · g G", "jump to the first / last row"),
         ("↵", "open the selected row — keep pressing to keep digging"),
@@ -69,6 +73,7 @@ _GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     ("Scan", [
         ("n", "new scan: scope, preset, command, then a review before it runs"),
         ("o", "cycle a scan's report: overview, what it added, raw output"),
+        ("", "(on a host or service record, o opens the raw log instead)"),
         ("p", "freeze the log to read it — the scan keeps running"),
         ("c", "cancel the running scan"),
         ("", "the Scans tab is a history: every scan file present, oldest first,"),

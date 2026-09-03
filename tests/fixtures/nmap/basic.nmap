@@ -1,0 +1,20 @@
+# Nmap 7.94 scan initiated Sun Aug 24 04:26:40 2025 as: nmap -sV -oX basic.xml 192.0.2.0/29
+Nmap scan report for alpha.example (192.0.2.1)
+Host is up, received syn-ack (0.00088s latency).
+Scanned at 2025-08-24 04:26:41 UTC for 6s
+Not shown: 997 filtered tcp ports (no-response)
+PORT    STATE  SERVICE VERSION
+22/tcp  open   ssh     OpenSSH 9.2p1
+80/tcp  open   http    nginx 1.22.1
+443/tcp closed https
+
+Nmap scan report for 192.0.2.2
+Host is up, received syn-ack (0.0011s latency).
+Scanned at 2025-08-24 04:26:41 UTC for 6s
+Not shown: 998 closed tcp ports (conn-refused)
+PORT   STATE    SERVICE VERSION
+22/tcp filtered ssh
+80/tcp open     http    nginx 1.22.1
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+# Nmap done at Sun Aug 24 04:26:47 2025 -- 8 IP addresses (2 hosts up) scanned in 7.21 seconds

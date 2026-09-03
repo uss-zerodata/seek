@@ -23,6 +23,7 @@ from seek.nmap.runner import ScanRun
 from seek.nmap.views import prepare
 from seek.runner import State
 from seek.tui.menu import ChoiceScreen
+from seek.tui.nmap import detail as detail_pane
 from seek.tui.nmap.app import NmapApp
 
 pytestmark = pytest.mark.asyncio
@@ -415,9 +416,9 @@ async def test_a_capture_row_has_a_report_not_an_empty_pane(tmp_path):
         row = next(r for r in app._rows if r.target is shot)
         for mode in ("condensed", "diff", "raw"):
             app._report_mode = mode
-            renderable, title = app._detail_content(row)
+            lines, title = app._detail_content(row)
             console = Console(width=90, record=True, file=open("/dev/null", "w"))
-            console.print(renderable)
+            console.print(detail_pane.as_group(lines))
             body = console.export_text().strip()
             assert body, f"the {mode} report was empty"
             assert "Capture" in title, f"the title called it something else: {title}"

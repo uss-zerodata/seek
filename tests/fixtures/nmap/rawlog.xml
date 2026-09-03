@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<!-- Nmap 7.94 scan initiated Sun Aug 24 05:10:00 2025 as: nmap -sV -&#45;script default -oX rawlog.xml 10.10.10.0/24 -->
+<nmaprun scanner="nmap" args="nmap -sV --script default -oX rawlog.xml 10.10.10.0/24" start="1756012200" version="7.94" xmloutputversion="1.05">
+<host starttime="1756012200" endtime="1756012212">
+<status state="up" reason="syn-ack" reason_ttl="63"/>
+<address addr="10.10.10.1" addrtype="ipv4"/>
+<hostnames/>
+<ports>
+<port protocol="tcp" portid="80"><state state="open" reason="syn-ack" reason_ttl="63"/>
+<service name="http" product="nginx" version="1.24.0" method="probed" conf="10"/>
+<script id="http-server-header" output="nginx/1.24.0"/>
+</port>
+</ports>
+</host>
+<host starttime="1756012200" endtime="1756012212">
+<status state="up" reason="syn-ack" reason_ttl="63"/>
+<address addr="10.10.10.10" addrtype="ipv4"/>
+<hostnames><hostname name="gw.example" type="PTR"/></hostnames>
+<ports>
+<port protocol="tcp" portid="22"><state state="open" reason="syn-ack" reason_ttl="63"/>
+<service name="ssh" product="OpenSSH" version="9.2p1" method="probed" conf="10"/>
+<script id="ssh-hostkey" output="the daemon also answers on 80/tcp and 8080/tcp&#10;2048 aa:bb:cc:dd:ee:ff:00:11 (RSA)"/>
+</port>
+<port protocol="tcp" portid="80"><state state="open" reason="syn-ack" reason_ttl="63"/>
+<service name="http" product="Apache httpd" version="2.4.57" method="probed" conf="10"/>
+<script id="http-title" output="Gateway"/>
+</port>
+</ports>
+</host>
+<runstats><finished time="1756012212" elapsed="12.03"/><hosts up="2" down="254" total="256"/></runstats>
+</nmaprun>

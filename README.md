@@ -152,6 +152,29 @@ not to matter says nothing at all. If candidate files were found and none of
 them could be read, the list says so and names them, and the process exits
 non-zero.
 
+*The record shows what nmap wrote.* A host's record and a service's record
+list the scans that recorded them, one per line, saying what each one found.
+`o` opens the one under the pane's cursor and the pane switches to that scan's
+own text, scoped to that host or that port — not the whole file, which runs to
+tens of thousands of lines. That is where the things nmap reports only in its
+text are readable: `Not shown: 984 filtered tcp ports (no-response)`, the
+`REASON` a port was called open, the timing of the scan. Inside it, `←`/`→` step between
+the scans that saw the same host or port, so what three of them each recorded
+can be read in one place; the heading says which of how many you are on. `Esc`
+goes back to the record, at the entry it was opened from however far you
+stepped, and `d` opens whichever of the two the pane is showing full-screen
+with search and paging. A scan handed over as XML
+alone left no `.nmap` file; its entry shows a report rebuilt from what was
+parsed and says so, rather than the feature quietly disappearing.
+
+*The detail pane is navigated by a cursor.* `J`/`K` move it a line at a time and
+the record scrolls to keep it in view; `←`/`→` jump it to the next and previous
+line that opens something, since a record is mostly lines that do not. Where
+there is nowhere to move — a scan's report, which is one block rather than a
+list of lines, or the end of a long record — both pairs scroll instead, so
+nothing is unreadable. The hint bar offers `o` only when the line under the
+cursor is one that opens something.
+
 *Every long step reports the same way.* Reading files, folding them together,
 building the scan history and projecting an overview all report work done
 against work total and name what they are counting — files, scans, hosts — so

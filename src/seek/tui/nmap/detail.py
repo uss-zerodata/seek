@@ -20,12 +20,14 @@ rather than built in one pass.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from rich.console import Group, RenderableType
 from rich.text import Text
 
 from seek.gowitness.results import Capture, Captures
 from seek.nmap import names as name_mod
-from seek.nmap import vulns
+from seek.nmap import rawlog, vulns
 from seek.nmap.export import service_url, url_for
 from seek.nmap.models import Host, Service, Vulnerability
 from seek.nmap.views import ServiceGroup
@@ -33,6 +35,61 @@ from seek.tui.nmap.views import Grouping
 
 ABSENT = "—"
 _LABEL_W = 11
+
+
+@dataclass(slots=True)
+class Line:
+    """One line of a record, and what opening it does - if anything.
+
+    A record is a sequence of these rather than a single renderable because the
+    pane is navigated by a cursor: "which line am I on" has to have an answer
+    before a line can be chosen. A *line* here is one thing a renderer emitted,
+    not one row of the terminal - a long script line that wraps to three rows is
+    one stop, which is what it is to someone reading the record and which keeps
+    the cursor from moving when the window is resized.
+    """
+
+    text: RenderableType
+    opens: rawlog.Request | None = None
+
+
+def lines_of(parts: list[RenderableType | Line]) -> list[Line]:
+    """Wrap a renderer's parts, leaving any `Line` it built itself alone."""
+    return [p if isinstance(p, Line) else Line(p) for p in parts]
+
+
+def as_group(lines: list[Line]) -> RenderableType:
+    """The whole record as one renderable, for anything that does not navigate it.
+
+    The reader takes this. It is the *same* lines the pane shows, joined - which
+    is what keeps the two from becoming two descriptions of a record.
+    """
+    return Group(*(line.text for line in lines))
+
+
+def scan_entries(host: Host, scanned: rawlog.Scanned,
+                 service: Service | None = None) -> list[Line]:
+    """The scans that recorded this subject, one openable line each.
+
+    Provenance used to be a comma-separated run of file names on the end of
+    another line, which said which scans saw the subject and nothing else. As
+    entries they can say what each scan established, and each is a way into
+    what that scan actually wrote.
+    """
+    found = scanned.entries(host, service)
+    if not found:
+        return []
+    out: list[Line] = [Line(Text("")), Line(_section("Scans", len(found)))]
+    width = max(len(e.label) for e in found)
+    for entry in found:
+        line = Text(" " * 4)
+        line.append("• ", style=_KEY)
+        line.append(f"{entry.label:<{width}}")
+        line.append(f"   {entry.summary()}", style=_KEY)
+        if not entry.written:
+            line.append("   (no output file)", style="dim italic")
+        out.append(Line(line, opens=rawlog.Request(entry, host, service)))
+    return out
 _KEY = "dim"
 _HEAD = "bold cyan"
 _SECTION = "bold"
@@ -326,8 +383,8 @@ def _state_text(host: Host) -> tuple[str, str]:
     return str(host.state or ABSENT), "bold green"
 
 
-def host_detail(host: Host, shots: Captures | None = None,
-                full: bool = False) -> RenderableType:
+def host_detail(host: Host, shots: Captures | None = None, full: bool = False,
+                scanned: rawlog.Scanned | None = None) -> list[Line]:
     state, style = _state_text(host)
     os_text = host.os or ABSENT
     if host.os and host.osclass:
@@ -344,9 +401,12 @@ def host_detail(host: Host, shots: Captures | None = None,
         _pair("os", os_text),
         state_line,
         _pair("ports", f"{len(host.open_services)} open, "
-                       f"{len(host.services) - len(host.open_services)} other"
-                       f"   ·   scans: {', '.join(host.sources) or ABSENT}"),
+                       f"{len(host.services) - len(host.open_services)} other"),
     ]
+    if scanned is not None:
+        parts.extend(scan_entries(host, scanned))
+    else:
+        parts.append(_pair("scans", ", ".join(host.sources) or ABSENT))
     known = name_mod.host_names(host)
     if known:
         parts.append(Text(""))
@@ -377,11 +437,12 @@ def host_detail(host: Host, shots: Captures | None = None,
         parts.append(Text(""))
         parts.append(_section("Host scripts", len(host.scripts)))
         parts.extend(_script_block(host.scripts))
-    return Group(*parts)
+    return lines_of(parts)
 
 
 def service_detail(svc: Service, host: Host | None = None,
-                   shots: Captures | None = None, full: bool = False) -> RenderableType:
+                   shots: Captures | None = None, full: bool = False,
+                   scanned: rawlog.Scanned | None = None) -> list[Line]:
     state_line = Text()
     state_line.append(f"  {'state':<{_LABEL_W}}", style=_KEY)
     state_line.append(str(svc.state or ABSENT), style="bold green" if svc.is_open else _KEY)
@@ -394,9 +455,12 @@ def service_detail(svc: Service, host: Host | None = None,
         state_line,
         _pair("product", product),
         _pair("detected", f"{svc.method or ABSENT}"
-                          + (f" (confidence {svc.conf})" if svc.conf else "")
-                          + f"   ·   scans: {', '.join(svc.sources) or ABSENT}"),
+                          + (f" (confidence {svc.conf})" if svc.conf else "")),
     ]
+    if scanned is not None and host is not None:
+        parts.extend(scan_entries(host, scanned, svc))
+    else:
+        parts.append(_pair("scans", ", ".join(svc.sources) or ABSENT))
     extras = [f"{k} {v}" for k, v in
               (("info", svc.extrainfo), ("tunnel", svc.tunnel), ("ostype", svc.ostype)) if v]
     if extras:
@@ -430,7 +494,7 @@ def service_detail(svc: Service, host: Host | None = None,
         parts.append(Text(""))
         parts.append(_section("Scripts", len(svc.scripts)))
         parts.extend(_script_block(svc.scripts))
-    return Group(*parts)
+    return lines_of(parts)
 
 
 def _service_urls(svc: Service, host: Host | None) -> list[str]:
@@ -449,7 +513,7 @@ def _service_urls(svc: Service, host: Host | None) -> list[str]:
 
 
 def group_detail(group: ServiceGroup,
-                 shots: Captures | None = None) -> RenderableType:
+                 shots: Captures | None = None) -> list[Line]:
     parts: list[RenderableType] = [
         _heading(group.label),
         _pair("version", group.version),
@@ -485,11 +549,11 @@ def group_detail(group: ServiceGroup,
         parts.append(_section("Scripts", len(scripts)))
         parts.extend(_script_block(scripts[:_SCRIPT_LIMIT]))
         parts.extend(_more(_SCRIPT_LIMIT, len(scripts)))
-    return Group(*parts)
+    return lines_of(parts)
 
 
 def grouping_detail(group: Grouping,
-                    shots: Captures | None = None) -> RenderableType:
+                    shots: Captures | None = None) -> list[Line]:
     """The report for one `by service` / `by product` / `by port` bucket."""
     hosts = group.hosts
     parts: list[RenderableType] = [
@@ -516,24 +580,82 @@ def grouping_detail(group: Grouping,
     if captures:
         parts.append(Text(""))
         parts.extend(captures)
-    return Group(*parts)
+    return lines_of(parts)
+
+
+def raw_record(request: rawlog.Request, excerpt: rawlog.Excerpt,
+               at: tuple[int, int] | None = None) -> list[Line]:
+    """One scan's own text about a subject, headed by what it is.
+
+    The heading is not decoration. nmap's text does not say which scan it came
+    from, and a reconstruction does not say that it is one - and text presented
+    as nmap's own when it was rebuilt from the parse would defeat the only
+    reason any of this exists.
+    """
+    head = Text()
+    head.append(request.entry.label, style=_HEAD)
+    head.append(f"   {request.subject}", style=_SECTION)
+    if excerpt.reconstructed:
+        head.append("   reconstructed from the XML", style="bold yellow")
+    elif request.entry.path is not None:
+        head.append(f"   {request.entry.path.name}", style=_KEY)
+    parts: list[RenderableType] = [head]
+    # Which of the subject's scans this is. Without it there is nothing to say
+    # that the other four exist, and the arrows that reach them are a key
+    # nobody would think to press.
+    if at is not None and at[1] > 1:
+        where = Text("  ")
+        where.append(f"scan {at[0]} of {at[1]}", style=_SECTION)
+        where.append("   ← → for the others", style=_KEY)
+        parts.append(where)
+    parts.append(Text(""))
+    if excerpt.problem:
+        parts.append(Text(f"  {excerpt.problem}", style="bold yellow"))
+    # `no_wrap=False`: nmap pads its columns, and a narrow pane should fold a
+    # long line rather than hide the end of it.
+    parts += [Text(line) for line in excerpt.lines]
+    parts += [Text(""), Text("  Esc goes back to the record", style=_KEY)]
+    return lines_of(parts)
+
+
+def raw_pending(request: rawlog.Request) -> list[Line]:
+    """The same heading, while a large output file is still being read."""
+    head = Text()
+    head.append(request.entry.label, style=_HEAD)
+    head.append(f"   {request.subject}", style=_SECTION)
+    return lines_of([
+        head,
+        Text(""),
+        Text(f"  reading {request.entry.path.name if request.entry.path else ''}…",
+             style=_KEY),
+        Text(""),
+        Text("  Esc goes back to the record", style=_KEY),
+    ])
 
 
 def render(target: object, host: Host | None = None,
-           shots: Captures | None = None, full: bool = False) -> RenderableType:
-    """The record for one row.
+           shots: Captures | None = None, full: bool = False,
+           scanned: rawlog.Scanned | None = None) -> list[Line]:
+    """The record for one row, as the lines it is made of.
 
     `full` is the reader's depth: the same record, with everything a capture
     collected laid out rather than summarised. One function, two depths - the
     reader shows everything the pane shows and may show more, and neither
     composes its own version of a record.
+
+    `scanned` indexes the scans behind the model. Given it, a host's and a
+    service's record can list the scans that recorded it and offer each one's
+    own text; without it - a caller that has a record but not the set it came
+    from - the record names its scans as it always did. The bucket records take
+    none: they describe a service across many hosts, which has no single block
+    of output to show.
     """
     if isinstance(target, ServiceGroup):
         return group_detail(target, shots)
     if isinstance(target, Grouping):
         return grouping_detail(target, shots)
     if isinstance(target, Service):
-        return service_detail(target, host, shots, full)
+        return service_detail(target, host, shots, full, scanned)
     if isinstance(target, Host):
-        return host_detail(target, shots, full)
-    return Text("")
+        return host_detail(target, shots, full, scanned)
+    return [Line(Text(""))]

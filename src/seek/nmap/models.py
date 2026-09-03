@@ -166,7 +166,7 @@ class Host:
         )
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, repr=False)
 class ScanFile:
     """One parsed file, before merging."""
 
@@ -174,6 +174,16 @@ class ScanFile:
     args: str = ""
     hosts: list[Host] = field(default_factory=list)
     start: int | None = None        # <nmaprun start="..."> as a unix epoch
+
+    def __repr__(self) -> str:
+        """A summary, for the same reason `ScanSet` has one.
+
+        The generated repr walks every host of the file. Anything holding a
+        `ScanFile` - a raw-log entry on a line of a record, and so anything
+        that entry is handed to - would pay for that the moment something
+        printed it, and Textual prints a worker's arguments.
+        """
+        return f"ScanFile({self.path.name}, {len(self.hosts)} host(s))"
 
     @property
     def name(self) -> str:

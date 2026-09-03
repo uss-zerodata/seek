@@ -1,0 +1,10 @@
+# Nmap 7.94 scan initiated Sun Aug 24 04:36:40 2025 as: nmap -sn -n -oX discovery.xml 203.0.113.0/29
+Nmap scan report for 203.0.113.1
+Host is up, received syn-ack (0.0012s latency).
+Nmap scan report for 203.0.113.2
+Host is up, received syn-ack (0.0018s latency).
+Nmap scan report for 203.0.113.3
+Host is up, received conn-refused (0.0009s latency).
+Nmap scan report for 203.0.113.4
+Host is up, received syn-ack (0.0021s latency).
+# Nmap done at Sun Aug 24 04:36:41 2025 -- 8 IP addresses (4 hosts up) scanned in 0.42 seconds

@@ -508,6 +508,54 @@ stdout, `cd`) cannot run while Textual owns the screen. They set
   billions of operations) and a service group carried every `ssl-cert` on every
   host: fifteen thousand lines that Textual renders in full merely to *measure*
   the pane. Nothing a record says is elided; a list of members is not a finding.
+- **A record is a list of lines, and a line may carry an action.**
+  `detail.render()` returns `list[Line]`, not a `Group`; `as_group` joins them
+  for the reader. That is what lets the pane have a cursor - "which line am I
+  on" has to have an answer before a line can be chosen - while keeping one
+  builder for both views, which is the invariant that stops the pane and the
+  reader becoming two descriptions of a record. A *line* is one thing a
+  renderer emitted, not one row of the terminal: a wrapped line is one cursor
+  stop, so the cursor does not move when the window is resized.
+- **`J`/`K` move the pane's cursor; `←`/`→` jump between openable lines.** The
+  arrows used to be a second pair bound to what `J`/`K` already did. A record
+  is forty lines with three entries in it, so a cursor that only stepped would
+  cost thirty presses to reach one - the arrows go between the lines that can
+  be opened, and stop at the ends rather than wrapping. `o` opens the line
+  under the cursor, and keeps its report-mode meaning on the Scans tab, where
+  no line is openable: the two are disjoint by construction, not by precedence.
+  The arrows mean the same thing in both of the pane's states - *between
+  entries*. In a record that is the lines that open one; in the raw output it
+  is the scans themselves, so what several of them said about one host can be
+  compared without leaving and coming back for each.
+  **And when the movement a key means is impossible, it scrolls.** Both pairs.
+  A scan's report and a capture's log are a single renderable as far as the
+  pane is concerned, so the cursor has one stop and moving it does nothing -
+  without the fall-back those records cannot be read past the fold at all,
+  which is what these keys did before the cursor existed. The same rule covers
+  a record with no entries to jump between, and the end of a long one whose
+  last line wraps below the fold. Both were found by testing, in that order.
+- **`nmap/rawlog.py` answers "which lines", never "what do they mean".** It
+  cuts one host or one port out of a scan's `.nmap` text by boundary search -
+  a report line opens a host, a port line opens a port, `|`/`|_` continue it.
+  The XML stays the single source of the model; text that disagreed with it
+  would be a bug to look at, not a second opinion to merge. Three traps it
+  exists to survive, all in the fixtures: a report line carries either
+  `<addr>` or `<name> (<addr>)`; `10.10.10.1` must not open `10.10.10.10`'s
+  block; and a port number occurs inside other ports' script output, so a port
+  line is recognised by its shape at the start of a line.
+- **Nothing expensive happens while the record pane redraws.** It redraws on
+  every movement of the *list* cursor, so the entries come from
+  `rawlog.Scanned` - built once per model and kept beside it, like the scan
+  history - and the `.nmap` file is opened only when an entry is opened, cached
+  by path. Deriving the entries per draw was 5 ms against 0.13 ms to draw the
+  record; a `stat` per file per draw was in there too. Above
+  `_RAW_INLINE_MAX` the read goes to a worker: measured at ~6 ms per MB, so a
+  14 MB engagement is inline and a 70 MB one is not.
+- **Real scan output is never committed.** `test_scans/` is gitignored, so the
+  `.nmap` fixtures beside `tests/fixtures/nmap/*.xml` are written by hand to
+  reproduce the shapes nmap writes, and the real directory is what the cutting
+  is checked against by hand. `xml-only.xml` deliberately has no sibling - it
+  is what the reconstruction path is tested against, so do not add one.
 - **No test ever runs nmap.** `Config.nmap_path` exists so tests can point at a
   stub script; a stub must answer `--version`, because the app probes with it.
 - **Marks are keyed by record identity, never by row.** Every view is rebuilt
