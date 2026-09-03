@@ -84,6 +84,18 @@ def test_probe_keeps_a_program_that_answers_with_nonsense(tmp_path, monkeypatch)
     ("-sn -PO", True),
     ("-sn -PS22,80,445 -PA80", False),
     ("-Pn -sV", False),
+    # `--script` says nothing on its own: most NSE scripts are ordinary
+    # connections. Only the ones that build their own packets need root.
+    ("-sV --script ssl-cert,http-title", False),
+    ("-p{ports} --script auth", False),
+    ("-p139,445 --script smb-vuln* --script-args smbuser=u,smbpass=p", False),
+    ("--script broadcast-dhcp-discover", True),
+    ("--script broadcast", True),
+    ("--script ssh-hostkey,ipv6-ra-flood", True),
+    # the `=` spelling is the same flag, and must classify the same way
+    ("--script=vuln -sV", False),
+    ("-p80 --script=broadcast-ping", True),
+    ("--traceroute=x", True),
 ])
 def test_privilege_is_derived_from_the_flags(args, expected):
     assert presets.needs_root(presets.parse_args(args)) is expected
@@ -94,12 +106,26 @@ def test_the_flags_that_made_it_privileged_can_be_named():
     assert presets.privileged_labels(args) == "-sS, -O"
     pings = presets.parse_args("-sn -PE -PP -PS22 -PU53")
     assert presets.privileged_labels(pings) == "-PE, -PP, -PU53"
+    scripted = presets.parse_args("-sV --script http-title,broadcast-ping")
+    assert presets.privileged_labels(scripted) == "--script broadcast-ping"
 
 
 def test_every_shipped_preset_parses():
     for name, args in presets.DEFAULT_PRESETS.items():
         parsed = presets.parse_args(args.replace(presets.PORTS_PLACEHOLDER, "22,80"))
         assert parsed, name
+
+
+def test_no_shipped_preset_asks_for_root_just_because_it_runs_scripts():
+    """`sudo -n` never prompts, so a needless elevation is a failed scan.
+
+    The NSE presets that ship here - crt.sh lookups, vhost brute force, auth -
+    are ordinary connections, and on a machine without passwordless sudo they
+    must still run.
+    """
+    for name, args in presets.DEFAULT_PRESETS.items():
+        parsed = presets.parse_args(args.replace(presets.PORTS_PLACEHOLDER, "22,80"))
+        assert "--script" not in presets.privileged_labels(parsed), name
 
 
 # --- the command ------------------------------------------------------------

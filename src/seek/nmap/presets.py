@@ -85,11 +85,38 @@ _ROOT_LETTERS = set("SAWMNFXUYZO")
 # absent: unprivileged, nmap sends those with connect(), so requiring sudo for
 # them would ask for elevation that is not needed. `-Pn` is not a probe at all.
 _ROOT_PINGS = set("EPMOU")
-_ROOT_FLAGS = {"-O", "-A", "--traceroute", "--privileged", "--script"}
+_ROOT_FLAGS = {"-O", "-A", "--traceroute", "--privileged"}
+
+# The NSE scripts that build their own packets. `--script` on its own says
+# nothing about privilege: an http, smb or ssl script is an ordinary
+# connection, so elevating for the flag itself would put `sudo -n` in front of
+# half the presets that ship here - `auth`, `brute`, `hostmap-crtsh`,
+# `http-vhosts` - and fail them outright wherever passwordless sudo is not set
+# up. The `broadcast` and `ipv6` families are taken whole; the rest are named.
+_ROOT_SCRIPT_FAMILIES = ("broadcast-", "ipv6-", "targets-ipv6-")
+_ROOT_SCRIPTS = {"broadcast", "firewalk", "ipidseq", "sniffer-detect",
+                 "path-mtu", "qscan", "ip-forwarding"}
+# A `--script` value is a list of names, categories, `+`-forced entries, globs
+# and the occasional `and`/`or` expression. Split on everything that separates
+# them and look at the parts; a glob matches on the text before the `*`.
+_SCRIPT_SPLIT = re.compile(r"[,\s()]+")
+
+
+def _root_script(spec: str) -> str | None:
+    """The first script in a `--script` value that needs raw sockets, if any."""
+    for entry in _SCRIPT_SPLIT.split(spec):
+        name = entry.strip().lstrip("+").lower()
+        if not name:
+            continue
+        if name in _ROOT_SCRIPTS or name.rstrip("*").startswith(_ROOT_SCRIPT_FAMILIES):
+            return entry.strip()
+    return None
 
 
 def _is_privileged(token: str) -> bool:
-    if token in _ROOT_FLAGS:
+    # `--flag=value` and `--flag value` are the same flag to nmap, so the name
+    # is taken before the `=` - as `parse_args` does for the output flags.
+    if token.partition("=")[0] in _ROOT_FLAGS:
         return True
     # -sS, -sU, -sSU ... but not -sV (a version probe is unprivileged) and not
     # -sn (host discovery only - lower case, and the letters are checked as
@@ -100,14 +127,29 @@ def _is_privileged(token: str) -> bool:
     return len(token) > 2 and token[:2] == "-P" and token[2] in _ROOT_PINGS
 
 
+def _privileged_tokens(args: list[str]) -> list[str]:
+    """What in this argument list asks for raw sockets, in order, once each."""
+    found: dict[str, None] = {}
+    for index, token in enumerate(args):
+        flag, sep, value = token.partition("=")
+        if flag == "--script":                      # `--script`, not `--script-args`
+            spec = value if sep else (args[index + 1] if index + 1 < len(args) else "")
+            script = _root_script(spec)
+            if script is not None:
+                found[f"--script {script}"] = None
+        elif _is_privileged(token):
+            found[token] = None
+    return list(found)
+
+
 def needs_root(args: list[str]) -> bool:
     """Does this argument list require raw sockets?"""
-    return any(_is_privileged(token) for token in args)
+    return bool(_privileged_tokens(args))
 
 
 def privileged_labels(args: list[str]) -> str:
     """The flags that made `needs_root` true, for saying *why* in the UI."""
-    return ", ".join(dict.fromkeys(t for t in args if _is_privileged(t)))
+    return ", ".join(_privileged_tokens(args))
 
 
 # --- the command ------------------------------------------------------------
