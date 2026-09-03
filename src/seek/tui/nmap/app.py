@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,7 +35,7 @@ from seek.nmap import export as exporter
 from seek.nmap import filtering, timeline
 from seek.nmap import presets as presets_mod
 from seek.nmap import views as proj
-from seek.nmap.diff import ScanDiff, diff
+from seek.nmap.diff import ScanDiff, diff_from, snapshot
 from seek.nmap.models import Host, ScanSet, Service
 from seek.nmap.runner import Runner, ScanRun, State, elevation_help
 from seek.runner import Run
@@ -74,6 +75,38 @@ _GROUP_TABS = ("group-service", "group-product", "group-port")
 # The marker column: one glyph and a space, in the search session's mark colour.
 _MARK_W = 2
 _MARK_STYLE = "bold bright_magenta"
+
+
+# The loading state: a braille spinner turning on the app's own 0.2s tick, and
+# a bar wherever the work can count itself.
+_SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+_BAR_WIDTH = 24
+# Rows handed to the table per frame. Larger than any screen, so the list a
+# reader can actually see is always there in the first pass.
+_FILL_CHUNK = 500
+# Below this many hosts every projection here is a few milliseconds, so it is
+# done inline; above it the wait is long enough to be worth a thread and a
+# progress bar.
+_BACKGROUND_ABOVE = 500
+
+
+class _Abandoned(Exception):
+    """Raised inside a background build when its result is no longer wanted."""
+
+
+@dataclass(slots=True)
+class _Busy:
+    """A build running off the event loop, and how far it has got."""
+
+    what: str
+    view: object
+    token: int
+    done: int = 0
+    total: int = 0
+    # A refresh has rows on screen already, and replacing them with a spinner
+    # would flash away data that is still true; it reports in the status bar
+    # instead. A first build has nothing to show and takes the content area.
+    refresh: bool = False
 
 
 @dataclass(slots=True)
@@ -306,6 +339,13 @@ class NmapApp(App[int]):
         # since a finished scan is absorbed by replacing it.
         self._history: list[timeline.Scan] = []
         self._history_for: object = None
+        # A build running off the event loop, and what it has got through.
+        self._busy: _Busy | None = None
+        self._build_token = 0
+        self._spin = 0
+        self._report: Callable[[int, int], None] | None = None
+        self._after_build: tuple[bool, _Mark | None] | None = None
+        self._abandoned = ""            # what the last cancelled build was doing
         self._report_mode = "condensed"
         self._log_frozen = False
         self.stack: list[vdefs.View] = [vdefs.hosts_view()]
@@ -314,6 +354,12 @@ class NmapApp(App[int]):
         self._marks: list[_Mark] = []
         self._pending_mark: _Mark | None = None
         self._rows: list[vdefs.Row] = []
+        # Filling the table is chunked once a list is long enough that doing it
+        # in one pass would drop frames; these track where that has got to.
+        self._filled = 0
+        self._fill_plan: tuple[bool, _Mark | None, int] = (False, None, 0)
+        self._fill_gen = 0
+        self._filling = False
         self._sort_col = 0
         self._sort_desc = False
         self._group_keys = ("service", "product", "port")
@@ -434,14 +480,33 @@ class NmapApp(App[int]):
         # service and grouping overviews, twice over every host in the set.
         # Widths come from the *unfiltered* rows on purpose: columns that
         # re-budgeted as the filter narrowed would shift under the cursor.
-        all_rows = self.view.rows(self.scans)
+        all_rows = self._rows_now(self.view)
+        if all_rows is None:                        # being built off the event loop
+            self._after_build = (preserve, restore)
+            return
         table = self.query_one(DataTable)
         # Read before the clear: `DataTable.clear` resets the cursor to (0, 0),
         # so `preserve` used to read back a zero it had just written and a
         # resize dropped the selection to the top of the list.
         keep = table.cursor_row or 0
+        self._lay_columns(all_rows)
+        self._fill(self._narrow(all_rows), preserve=preserve, restore=restore, keep=keep)
+
+    def _lay_columns(self, rows: list[vdefs.Row]) -> None:
+        """Re-lay the header for the current view, budgeting from `rows`.
+
+        Called with the rows when there are rows, and with none when they are
+        still being built - the header of the view being opened is part of
+        saying which view that is.
+        """
+        table = self.query_one(DataTable)
+        # Every row still queued was built for the columns being replaced, and
+        # a row with the wrong number of cells is an error, not a cosmetic
+        # mismatch - so re-laying the header abandons them.
+        self._fill_gen += 1
+        self._filling = False
         table.clear(columns=True)
-        self._widths = self._column_widths(all_rows)
+        self._widths = self._column_widths(rows)
         # The marker is a column of its own, outside `View.columns`, so the
         # numbered sort columns keep their indices and their `1`-`9` keys.
         table.add_column(" ", key="mark", width=_MARK_W)
@@ -453,15 +518,17 @@ class NmapApp(App[int]):
             table.add_column(label, key=str(i - 1), width=self._widths[i - 1])
         self._refresh_title()
         self.query_one("#subtitle", Static).update(self.view.subtitle)
-        self._fill(self._narrow(all_rows), preserve=preserve, restore=restore, keep=keep)
 
     def _reload_rows(self, preserve: bool = False) -> None:
         # A mark left by `Esc` clearing the filter is spent on the next rebuild,
         # whichever path gets there - the debounce timer or the flush.
         restore, self._pending_mark = self._pending_mark, None
+        rows = self._rows_now(self.view)
+        if rows is None:
+            self._after_build = (preserve, restore)
+            return
         keep = self.query_one(DataTable).cursor_row or 0
-        self._fill(self._narrow(self.view.rows(self.scans)),
-                   preserve=preserve, restore=restore, keep=keep)
+        self._fill(self._narrow(rows), preserve=preserve, restore=restore, keep=keep)
 
     def _narrow(self, rows: list[vdefs.Row]) -> list[vdefs.Row]:
         """Apply the filter box and the current sort to ``rows``."""
@@ -481,17 +548,193 @@ class NmapApp(App[int]):
         rows.sort(key=lambda r: (r.section_rank, 0 if r.heading else 1))
         return rows
 
+    # --- work that is too slow for the event loop --------------------------
+
+    def _rows_now(self, view: vdefs.View) -> list[vdefs.Row] | None:
+        """This view's rows, or `None` while they are being built in a thread.
+
+        Projecting a large model is seconds of work - long enough that doing it
+        between keypresses freezes the app - but it is also pure, so it is
+        cached on the view and only ever paid once per model. Small sets are
+        built inline: a spinner that appears and vanishes says less than the
+        rows it delayed.
+        """
+        if len(self.scans.hosts) < _BACKGROUND_ABOVE or not self._needs_building(view):
+            return view.rows(self.scans)
+        if self._busy is not None and self._busy.view is view:
+            return None                             # already being built
+        self._build_token += 1
+        self._busy = _Busy(what=self._building_label(view), view=view,
+                           token=self._build_token)
+        self._abandoned = ""
+        # The header of the view being opened, before its rows exist: the
+        # columns are what say which view the wait belongs to.
+        self._lay_columns([])
+        self._show_busy()
+        self._build_rows(view, self.scans, self._build_token)
+        return None
+
+    def _needs_building(self, view: vdefs.View) -> bool:
+        """Would asking this view for its rows do the expensive work again?
+
+        The Scans tab is rebuilt on every line a running scan prints, because
+        its rows carry that run's elapsed time - but the expensive half, the
+        file history, is cached separately and is what makes the first build of
+        that tab slow. So the question is about the history, not the rows.
+        """
+        if view.kind == "scans":
+            return self._history_for is not self.scans
+        return not view.cached_for(self.scans)
+
+    def _building_label(self, view: vdefs.View) -> str:
+        return "the scan history" if view.kind == "scans" else f"{view.title.lower()}"
+
+    @work(thread=True, exclusive=True, group="rows")
+    def _build_rows(self, view: vdefs.View, scans: ScanSet, token: int) -> None:
+        """Build one view's rows off the event loop, reporting as it goes."""
+        def report(done: int, total: int) -> None:
+            busy = self._busy
+            if busy is None or busy.token != token:
+                # Esc, or another view asked for its rows: stop at the first
+                # boundary the work offers rather than finishing unwanted work.
+                raise _Abandoned
+            self.call_from_thread(self._on_build_progress, token, done, total)
+
+        self._report = report
+        try:
+            view.rows(scans)
+        except _Abandoned:
+            return
+        except Exception as exc:                      # noqa: BLE001 - report, never crash
+            self.call_from_thread(self._on_build_failed, token, exc)
+            return
+        finally:
+            self._report = None
+        # The rows are cached on the view itself; the main thread only needs
+        # to hear that they are there.
+        self.call_from_thread(self._on_build_ready, token)
+
+    def _on_build_progress(self, token: int, done: int, total: int) -> None:
+        if self._busy is None or self._busy.token != token:
+            return
+        self._busy.done, self._busy.total = done, total
+        self._show_busy()
+
+    def _on_build_ready(self, token: int) -> None:
+        if self._busy is None or self._busy.token != token:
+            return                                    # cancelled, or superseded
+        self._busy = None
+        preserve, restore = self._after_build or (False, None)
+        self._after_build = None
+        # The rows are cached on the view now, so this second pass is the
+        # ordinary synchronous one.
+        self._refresh_view(preserve=preserve, restore=restore)
+
+    def _on_build_failed(self, token: int, exc: Exception) -> None:
+        if self._busy is None or self._busy.token != token:
+            return
+        self._busy = None
+        self._abandoned = f"{self.view.title} could not be built: {exc}"
+        self.notify(self._abandoned, severity="error", timeout=12)
+        self._fill([])
+
+    def _cancel_build(self) -> None:
+        """Give up on the build in progress; Esc, and the 2-second rule."""
+        busy, self._busy = self._busy, None
+        self._after_build = None
+        if busy is None:
+            return
+        if busy.refresh:
+            # The rows on screen were never replaced, so there is nothing to
+            # restore - they are simply one scan out of date, and saying so is
+            # the whole of the recovery.
+            self.notify("stopped re-reading · the list is one scan out of date",
+                        severity="warning")
+            self._refresh_status()
+            return
+        self._abandoned = busy.what
+        self._fill([])
+
+    def _show_busy(self) -> None:
+        """The loading state, in the tab's own content area.
+
+        A determinate bar wherever the work can count itself, a spinner where
+        it cannot, and the way out on the same line - nothing else moves while
+        this is on screen.
+        """
+        busy = self._busy
+        if busy is None:
+            return
+        if busy.refresh:
+            self._refresh_status()
+            return
+        try:
+            pane = self.query_one("#empty", Static)
+            table = self.query_one(DataTable)
+        except NoMatches:
+            return
+        pane.set_class(True, "-shown")
+        table.set_class(True, "-empty")
+        message = Text(justify="center")
+        frame = _SPINNER[self._spin % len(_SPINNER)]
+        message.append(f"{frame} reading {busy.what}\n", style="bold")
+        if busy.total:
+            done, total = busy.done, busy.total
+            filled = round(_BAR_WIDTH * done / total)
+            message.append("█" * filled, style="bold")
+            message.append("░" * (_BAR_WIDTH - filled), style="dim")
+            message.append(f"  {done} of {total} scans\n", style="dim")
+        else:
+            message.append("\n")
+        message.append("Esc stops waiting", style="dim")
+        pane.update(message)
+
     def _fill(self, rows: list[vdefs.Row], preserve: bool = False,
               restore: _Mark | None = None, keep: int = 0) -> None:
-        query = self._spec.query
+        """Put `rows` in the table - the first screenful now, the rest after.
+
+        Handing twenty thousand rows to the table at once is a second or two in
+        which nothing renders and no key is read. The list a reader can see is
+        the first fifty of them, so those go in immediately and the remainder
+        follow a chunk per frame; the table is scrollable and complete either
+        way, and the status line says while it is still filling.
+
+        A set that fits in one chunk - which is every ordinary engagement, and
+        every fixture - is filled in one pass, exactly as it always was.
+        """
         self._rows = rows
-        table = self.query_one(DataTable)
-        table.clear()
-        for row in rows:
+        self._fill_plan = (preserve, restore, keep)
+        self._filled = 0
+        # Anything still queued belongs to the list that was just replaced.
+        self._fill_gen += 1
+        self._filling = len(rows) > _FILL_CHUNK
+        self.query_one(DataTable).clear()
+        self._fill_more(self._fill_gen)
+
+    def _fill_more(self, generation: int) -> None:
+        """One chunk of rows, then either the next frame or the finishing work."""
+        if generation != self._fill_gen:
+            return                                  # a newer list is being filled
+        try:
+            table = self.query_one(DataTable)
+        except NoMatches:
+            return
+        rows = self._rows
+        query = self._spec.query
+        end = min(len(rows), self._filled + _FILL_CHUNK)
+        for row in rows[self._filled:end]:
             table.add_row(
                 Text(self._mark_glyph(row), style=_MARK_STYLE),
                 *(self._cell(c, query, self._width_at(n), row.style)
                   for n, c in enumerate(row.cells)))
+        if self._filled == 0 and end:
+            # The first chunk is on screen: whatever the loading state put up
+            # comes down now rather than when the last chunk lands.
+            self.query_one("#empty", Static).set_class(False, "-shown")
+            table.set_class(False, "-empty")
+        self._filled = end
+        preserve, restore, keep = self._fill_plan
+        index = 0
         if rows:
             # Re-laying the columns (a resize) must not move the selection, and
             # neither must coming back out of a drill-down; only a genuine
@@ -500,7 +743,18 @@ class NmapApp(App[int]):
                 index = restore.locate(rows)
             else:
                 index = keep if preserve else 0
-            table.move_cursor(row=max(0, min(len(rows) - 1, index)))
+            index = max(0, min(len(rows) - 1, index))
+            if index < end:
+                table.move_cursor(row=index)
+        if end < len(rows):
+            # A timer rather than `call_after_refresh`: the next chunk has to
+            # start whether or not the screen happened to need repainting, and
+            # a millisecond is long enough for input and rendering to get their
+            # turn in between.
+            self.set_timer(0.001, lambda: self._fill_more(generation))
+            self._refresh_status()
+            return
+        self._filling = False
         self._refresh_empty(rows)
         self._refresh_status()
         self._refresh_detail()
@@ -522,7 +776,10 @@ class NmapApp(App[int]):
         if not empty:
             return
         query = self.query_one("#filter", Input).value.strip()
-        if query:
+        if self._abandoned:
+            headline = f"Stopped reading {self._abandoned}"
+            hint = "nothing was lost · leave this tab and come back to read it again"
+        elif query:
             headline = f'Nothing matches "{query}"'
             hint = f"Esc clears the filter · {self._unfiltered} row(s) without it"
         elif self._active_tab == "names":
@@ -595,11 +852,27 @@ class NmapApp(App[int]):
             line.append(view.title, style="bold" if last else "dim")
         bar.update(line)
 
+    def _busy_note(self) -> Text | None:
+        """The refresh indicator: what is being re-read, and how far in."""
+        busy = self._busy
+        if busy is None or not busy.refresh:
+            return None
+        note = Text(f"{_SPINNER[self._spin % len(_SPINNER)]} reading {busy.what}",
+                    style="bold")
+        if busy.total:
+            note.append(f" {busy.done}/{busy.total}", style="dim")
+        note.append("  ·  Esc stops waiting", style="dim")
+        return note
+
     def _refresh_status(self) -> None:
-        left = Text(f"{len(self.scans.hosts)} host(s) across "
-                    f"{len(self.scans.sources)} scan(s)", style="dim")
+        left = self._busy_note() or Text(
+            f"{len(self.scans.hosts)} host(s) across "
+            f"{len(self.scans.sources)} scan(s)", style="dim")
         shown = sum(1 for r in self._rows if not r.heading)
         right = Text(f"{shown} row{'s' if shown != 1 else ''}", style="bold")
+        if self._filling:
+            right.append(f"  ·  listing {self._filled} of {len(self._rows)}",
+                         style="dim")
         if self._marked:
             right.append(f"  ·  {len(self._marked)} marked", style=_MARK_STYLE)
         total_runs = len(self.runner.runs) + len(self.captures.runs)
@@ -778,7 +1051,9 @@ class NmapApp(App[int]):
     def _scan_history(self) -> list[timeline.Scan]:
         """The file history, rebuilt only when the model actually changes."""
         if self._history_for is not self.scans:
-            self._history = timeline.build(self.scans.files)
+            # `_report` is set only while a background build is running, and
+            # this is the one piece of work long enough to be worth counting.
+            self._history = timeline.build(self.scans.files, self._report)
             self._history_for = self.scans
         return self._history
 
@@ -798,12 +1073,17 @@ class NmapApp(App[int]):
         return vdefs.View(
             title="Scans", columns=scan_views.SCANS_COLUMNS, build=build,
             kind="scans", tab="scans", default_sort=scan_views.SCANS_DEFAULT_SORT,
+            # A live run's elapsed time and its log move without the model
+            # changing, so these rows are rebuilt every refresh. The expensive
+            # half - the file history - is cached in `_scan_history`.
+            cacheable=False,
         )
 
     def _activate(self, tab_id: str) -> None:
         """Switch overview. A tab replaces the stack: drill-downs belong to the
         overview they were opened from, not to a different one."""
         self._active_tab = tab_id
+        self._abandoned = ""
         self.stack = [self._view_for_tab(tab_id)]
         self._marks.clear()
         tabs = self.query_one(Tabs)
@@ -1302,31 +1582,73 @@ class NmapApp(App[int]):
         self._refresh_status()
 
     def _absorb(self, run: ScanRun) -> None:
-        """Re-read every source plus the new file.
+        """Re-read every source plus the new file, off the event loop.
 
         Not an incremental merge: one loading path means a scan started here and
-        one run outside are folded in by exactly the same rules.
+        one run outside are folded in by exactly the same rules. Re-reading a
+        large engagement is seconds of work, so it happens in a thread and the
+        list stays where it is until the new model is ready - the rows on
+        screen are still true, they are simply one scan out of date.
         """
-        from seek.nmap.merge import load
-        from seek.nmap.views import prepare
-
-        before = self.scans.hosts
         # A directory source already covers the new file - it is searched all
         # the way down, so naming the file as well would only lengthen the list.
         covered = any(p.is_dir() and run.xml_path.is_relative_to(p) for p in self.sources)
         if not covered:
             self.sources.append(run.xml_path)
+        self._build_token += 1
+        self._busy = _Busy(what="the scans again", view=None,
+                           token=self._build_token, refresh=True)
+        self._show_busy()
+        self._reread(run, list(self.sources), covered, self._build_token)
+
+    @work(thread=True, exclusive=True, group="absorb")
+    def _reread(self, run: ScanRun, paths: list[Path], covered: bool,
+                token: int) -> None:
+        from seek.nmap.merge import load
+        from seek.nmap.views import prepare
+
+        # Taken here rather than on the event loop: the model it reads is the
+        # one being replaced, and nothing writes to it while this runs.
+        before = snapshot(self.scans.hosts)
+
+        def report(progress) -> None:
+            busy = self._busy
+            if busy is None or busy.token != token:
+                raise _Abandoned
+            self.call_from_thread(self._on_build_progress, token,
+                                  progress.parsed, progress.total)
+
         try:
-            self.scans = prepare(load(list(self.sources)))
-        except Exception as exc:                      # noqa: BLE001 - report, never crash
-            self.notify(f"{run.xml_path.name} could not be read: {exc}",
-                        severity="error")
-            if not covered:
-                self.sources.pop()
+            scans = prepare(load(paths, report))
+        except _Abandoned:
             return
-        self._diffs[id(run)] = diff(before, self.scans.hosts)
+        except Exception as exc:                      # noqa: BLE001 - report, never crash
+            self.call_from_thread(self._on_reread_failed, token, run, covered, exc)
+            return
+        self.call_from_thread(self._on_reread, token, run, scans, before)
+
+    def _on_reread(self, token: int, run: ScanRun, scans: ScanSet,
+                   before: dict) -> None:
+        if self._busy is None or self._busy.token != token:
+            return
+        self._busy = None
+        self.scans = scans
+        self._diffs[id(run)] = diff_from(before, self.scans.hosts)
         self._resolve_marks()
         self.notify(f"{run.preset}: {self._diffs[id(run)].summary()}")
+        self._refresh_view(preserve=True)
+        self._refresh_detail()
+        self._refresh_status()
+
+    def _on_reread_failed(self, token: int, run: ScanRun, covered: bool,
+                          exc: Exception) -> None:
+        if self._busy is not None and self._busy.token == token:
+            self._busy = None
+        self.notify(f"{run.xml_path.name} could not be read: {exc}",
+                    severity="error")
+        if not covered and self.sources and self.sources[-1] == run.xml_path:
+            self.sources.pop()
+        self._refresh_status()
 
     def _resolve_marks(self) -> None:
         """Marks point at records of the old model; re-find them in the new one."""
@@ -1405,6 +1727,11 @@ class NmapApp(App[int]):
         self._refresh_view()
 
     def action_back(self) -> None:
+        if self._busy is not None:
+            # A build over a second or two has to be abandonable, and Esc is
+            # already the key that means "out of this".
+            self._cancel_build()
+            return
         box = self.query_one("#filter", Input)
         if self.focused is box:
             self._flush_filter()
@@ -1603,6 +1930,9 @@ class NmapApp(App[int]):
 
     def _on_tick(self) -> None:
         """Both things that depend on the terminal's size, on one timer."""
+        if self._busy is not None:
+            self._spin += 1
+            self._show_busy()
         self._apply_detail_visibility()
         self._check_width()
 

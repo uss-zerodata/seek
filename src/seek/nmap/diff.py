@@ -10,6 +10,7 @@ is what is new, not a full inventory - that is what the overviews are for.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from seek.nmap.models import Host, Service
@@ -71,6 +72,45 @@ def _identify(svc: Service) -> str:
     return " ".join(p for p in (svc.name, svc.product, svc.version) if p)
 
 
+# All a diff ever asks of the earlier state: which addresses were known, and
+# how each open port was identified. Address -> {(protocol, port): identity}.
+Snapshot = dict[str, dict[tuple[str, int], str]]
+
+
+def snapshot(hosts: Iterable[Host]) -> Snapshot:
+    """The comparable part of a model, as plain strings.
+
+    A caller that has to hold the earlier state while the model moves on under
+    it - the scan history does, once per scan - keeps this instead of a copy of
+    the hosts. It is what `diff` reads anyway, and it cannot be invalidated by
+    a later merge writing into the records it was taken from.
+    """
+    return {h.address: {(s.protocol, s.port): _identify(s) for s in h.open_services}
+            for h in hosts}
+
+
+def diff_from(before: Snapshot, after: Iterable[Host]) -> ScanDiff:
+    """`diff`, against a snapshot that was taken earlier."""
+    result = ScanDiff()
+    for host in after:
+        seen = before.get(host.address)
+        if seen is None:
+            result.new_hosts.append(host)
+            continue
+        for svc in host.open_services:
+            was = seen.get((svc.protocol, svc.port))
+            identity = _identify(svc)
+            if was is None:
+                result.new_ports.append(PortChange(
+                    address=host.address, port=svc.port, protocol=svc.protocol,
+                    detail=identity))
+            elif was != identity and identity:
+                result.changed.append(ServiceChange(
+                    address=host.address, port=svc.port, protocol=svc.protocol,
+                    before=was or "unidentified", after=identity))
+    return result
+
+
 def diff(before: list[Host], after: list[Host]) -> ScanDiff:
     """What `after` has that `before` did not.
 
@@ -78,23 +118,4 @@ def diff(before: list[Host], after: list[Host]) -> ScanDiff:
     not one a scan *found*, and mixing the two into one list makes neither
     readable. The overviews still show the current state either way.
     """
-    known = {h.address: h for h in before}
-    result = ScanDiff()
-    for host in after:
-        previous = known.get(host.address)
-        if previous is None:
-            result.new_hosts.append(host)
-            continue
-        seen = {(s.protocol, s.port): s for s in previous.open_services}
-        for svc in host.open_services:
-            key = (svc.protocol, svc.port)
-            was = seen.get(key)
-            if was is None:
-                result.new_ports.append(PortChange(
-                    address=host.address, port=svc.port, protocol=svc.protocol,
-                    detail=_identify(svc)))
-            elif _identify(was) != _identify(svc) and _identify(svc):
-                result.changed.append(ServiceChange(
-                    address=host.address, port=svc.port, protocol=svc.protocol,
-                    before=_identify(was) or "unidentified", after=_identify(svc)))
-    return result
+    return diff_from(snapshot(before), after)

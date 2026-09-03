@@ -78,6 +78,24 @@ class Service:
     def key(self) -> tuple[str, int]:
         return (self.protocol, self.port)
 
+    def copy(self) -> Service:
+        """A private copy: every list is new, the records inside are shared.
+
+        The lists are what get written to - `merge` extends them, and
+        `views.prepare` attaches names and vulnerabilities to them - so each
+        copy needs its own. A `ScriptResult` or `Vulnerability` is written once
+        where it is parsed and only read after that, so copying those too would
+        buy nothing and cost the deep copy this replaces.
+        """
+        return Service(
+            protocol=self.protocol, port=self.port, state=self.state,
+            reason=self.reason, name=self.name, product=self.product,
+            version=self.version, extrainfo=self.extrainfo, ostype=self.ostype,
+            tunnel=self.tunnel, method=self.method, conf=self.conf,
+            scripts=list(self.scripts), vulnerabilities=list(self.vulnerabilities),
+            names=list(self.names), sources=list(self.sources),
+        )
+
     @property
     def is_open(self) -> bool:
         return self.state == "open"
@@ -136,6 +154,16 @@ class Host:
     def reachable(self) -> bool:
         """Evidence-based, never the asserted state."""
         return self.state != "down" and self.has_evidence
+
+    def copy(self) -> Host:
+        """A private copy, on the same terms as `Service.copy`."""
+        return Host(
+            address=self.address, addrtype=self.addrtype,
+            hostnames=list(self.hostnames), state=self.state, reason=self.reason,
+            os=self.os, osclass=self.osclass,
+            services=[s.copy() for s in self.services],
+            scripts=list(self.scripts), sources=list(self.sources),
+        )
 
 
 @dataclass(slots=True)

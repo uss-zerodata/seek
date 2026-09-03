@@ -130,6 +130,17 @@ reconstructed from the XML); `p` freezes a running scan's log so you can read it
 launch directory with `-oA`, leaving the same three files an external one leaves,
 and rejoins the history as its file when it finishes.
 
+**Large engagements.** A hundred scan files over twenty thousand hosts is
+seconds of work per overview, so no overview is projected on the event loop: a
+tab that has to be built shows its own columns, a spinner and, where the work
+can count itself, a bar — `Esc` stops waiting and the tab builds again next time
+it is opened. Each overview is projected once per model and kept, so sorting,
+resizing, drilling in and filtering never rebuild it. Long lists are handed to
+the table a chunk per frame, so the first screenful is there immediately and the
+status line says how far the rest has got. Re-reading after a scan finishes runs
+the same way, except that the rows already on screen stay: they are one scan out
+of date, not wrong, and the status line carries the progress instead of the list.
+
 Presets live in the config file, and defining any replaces the shipped set:
 
 ```toml

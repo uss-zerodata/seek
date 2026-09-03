@@ -8,27 +8,33 @@ appeared, a port that opened, a service that was finally identified.
 That is exactly the diff the Scans tab already draws for a run started in the
 app; this extends it to every scan file present, whether the app ran it or not.
 
-Pure: files in, ordered entries out. Two things it must not do, and does not:
+Pure: files in, ordered entries out. Three things it must get right:
 
-- **It re-parses each file** rather than trusting the retained per-file hosts.
-  `merge` folds later scans *into* the earliest object that carries an address,
-  so those retained lists are no longer "what that one scan saw". A pristine
-  re-parse is the only honest basis for a per-scan diff. Parsing is ~11 ms/MB
-  and this runs only when the Scans tab is opened.
+- **The per-scan hosts are the parsed ones**, which is honest because `merge`
+  builds the consolidated model out of copies - a scan's own record is never
+  written into by a later one. This used to re-parse every file to be sure of
+  that, which meant reading the whole engagement from disk a second time.
+- **It compares against a snapshot, not a copy of the model.** Only the hosts
+  a scan mentions can differ after it is folded in, so each scan is diffed
+  against what was known about *those* hosts. Snapshotting the entire
+  accumulated model per scan was quadratic - 50 s on a dozen large files, all
+  of it in `deepcopy`.
 - **It orders by the recorded start time**, not file order or filename, so an
   externally-run scan slots into the history where it actually happened.
 """
 
 from __future__ import annotations
 
-import copy
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from seek.nmap.diff import ScanDiff, diff
+from seek.nmap.diff import ScanDiff, diff_from, snapshot
 from seek.nmap.merge import _merge_host
 from seek.nmap.models import Host, ScanFile
-from seek.nmap.parse import NmapParseError, parse_file
+
+# Called with (scans folded in, scans in total) after each one.
+Report = Callable[[int, int], None]
 
 
 @dataclass(slots=True)
@@ -65,46 +71,50 @@ def _stem(path: Path) -> str:
     return name
 
 
-def build(files: list[ScanFile]) -> list[Scan]:
+def build(files: list[ScanFile], report: Report | None = None) -> list[Scan]:
     """The scan history, oldest first, each diffed against the merged prior.
 
-    `files` supplies the paths, start times and command lines; the hosts are
-    re-parsed here so the diff reflects what each scan alone recorded.
+    `report` is called with (scans done, scans in total) as each one is folded
+    in, so a caller can say how far it has got; the work is one pass over the
+    files and cannot be resumed, so it reports rather than yields.
     """
     ordered = sorted(files, key=lambda f: (f.start is None, f.start or 0, f.name))
-    reparsed: list[tuple[ScanFile, list[Host]]] = []
-    for sf in ordered:
-        try:
-            reparsed.append((sf, parse_file(sf.path).hosts))
-        except NmapParseError:
-            continue                # unreadable now: leave it out rather than crash
-
-    # An accumulator of *our own* Host objects, so merging one scan never
-    # mutates another's pristine list. `before` is a deep snapshot taken ahead
-    # of the merge - `merge` mutates in place, so a live reference would read
-    # back as `after` and every diff would come up empty.
     out: list[Scan] = []
+    # Our own copies, so folding one scan in never writes into another's
+    # records. The accumulator is the merged state as of this point in the
+    # history - which is what each new scan has to be compared against.
     acc: dict[str, Host] = {}
-    for sf, hosts in reparsed:
-        before = [copy.deepcopy(h) for h in acc.values()]
-        for host in hosts:
+    seen: dict[str, int] = {}                       # address -> when it first appeared
+    for done, sf in enumerate(ordered, start=1):
+        scanned = list(dict.fromkeys(h.address for h in sf.hosts if h.address))
+        baseline = not acc
+        # Taken before the merge, and only for the hosts this scan mentions:
+        # every other host is in both states unchanged and cannot contribute.
+        before = snapshot(acc[address] for address in scanned if address in acc)
+        for host in sf.hosts:
             if not host.address:
                 continue
             existing = acc.get(host.address)
             if existing is None:
-                acc[host.address] = copy.deepcopy(host)
+                seen[host.address] = len(acc)
+                acc[host.address] = host.copy()
             else:
-                _merge_host(existing, copy.deepcopy(host))
-        after = list(acc.values())
+                _merge_host(existing, host)
+        # Read back in the order the model holds them - first seen, first
+        # listed - so what a scan added reads down the page the way the host
+        # list does, rather than in whatever order one file happened to use.
+        scanned.sort(key=seen.__getitem__)
         out.append(Scan(
             label=_stem(sf.path),
             path=sf.path,
             start=sf.start,
-            hosts=hosts,
-            added=diff(before, after),
-            baseline=not before,
+            hosts=sf.hosts,
+            added=diff_from(before, [acc[address] for address in scanned]),
+            baseline=baseline,
             args=sf.args,
         ))
+        if report is not None:
+            report(done, len(ordered))
     return out
 
 

@@ -55,6 +55,31 @@ def test_the_per_scan_hosts_are_pristine_not_the_merged_state():
             f"{scan.label} shows what it saw ({own_open}), not the merged total"
 
 
+def test_the_history_is_built_without_reading_the_files_again(tmp_path):
+    """The parse `load` already did is the only one - it used to happen twice.
+
+    Proven by taking the files away: what `build` needs is in the model.
+    """
+    import shutil
+
+    for name in ("discovery", "basic"):
+        shutil.copy(FIX / f"{name}.xml", tmp_path / f"{name}.xml")
+    files = load([tmp_path]).files
+    for f in tmp_path.iterdir():
+        f.unlink()
+
+    hist = timeline.build(files)
+    assert sorted(s.label for s in hist) == ["basic", "discovery"]
+    assert hist[0].baseline and hist[0].host_count, "and the scans still carry hosts"
+    assert not hist[1].added.empty, "and the second is still diffed against the first"
+
+
+def test_the_history_reports_its_progress():
+    seen = []
+    timeline.build(_files("discovery", "basic"), lambda done, total: seen.append((done, total)))
+    assert seen == [(1, 2), (2, 2)], "one report per scan folded in, with the total"
+
+
 def test_raw_prefers_the_sibling_nmap_then_falls_back(tmp_path):
     xml = (FIX / "basic.xml").read_text()
     x = tmp_path / "scan.xml"

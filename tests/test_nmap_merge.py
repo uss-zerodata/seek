@@ -67,6 +67,22 @@ def test_non_nmap_file_is_reported_and_skipped():
     assert scans.failures and "not an nmap scan" in scans.failures[0][1]
 
 
+def test_merging_leaves_each_file_saying_what_that_scan_saw():
+    """The set is built from copies: the Scans tab reads these back per file."""
+    scans = load([A, B])
+    a, b = scans.files
+    shared = "192.0.2.40"
+    in_a = next(h for h in a.hosts if h.address == shared)
+    in_b = next(h for h in b.hosts if h.address == shared)
+    merged = _host(scans, shared)
+    assert {s.port for s in merged.services} > {s.port for s in in_a.services}, \
+        "the merged host carries both scans"
+    assert {s.port for s in in_a.services} != {s.port for s in in_b.services}, \
+        "and neither file was rewritten to match the other"
+    assert not any(s is m for s in in_a.services for m in merged.services), \
+        "no record is shared between a file and the merged model"
+
+
 # --- provenance -------------------------------------------------------------
 
 
@@ -129,6 +145,22 @@ def test_a_walk_does_not_re_add_a_file_that_was_named(tmp_path):
     assert collect_paths([tmp_path / A.name, tmp_path]) == [tmp_path / A.name]
     assert _host(load([tmp_path, tmp_path / A.name]), "192.0.2.41").sources == \
         ["merge-a.xml"]
+
+
+def test_a_scan_whose_root_element_is_far_into_the_file_is_still_found(tmp_path):
+    """`-oA` writes the whole command - every target - in a comment first.
+
+    A reverse-lookup scan of a /24 puts `<nmaprun>` some 7 kB in; a /16 puts it
+    much further. Recognition has to rest on the doctype, which is always on
+    the second line.
+    """
+    body = A.read_text()
+    head, root = body.split("<nmaprun", 1)
+    padded = tmp_path / "wide-scope.xml"
+    padded.write_text(f"{head}<!DOCTYPE nmaprun>\n"
+                      f"<!-- {'10.10.10.1 ' * 2000} -->\n<nmaprun{root}")
+    assert collect_paths([tmp_path]) == [padded]
+    assert load([tmp_path]).hosts, "and it parses, not merely gets listed"
 
 
 def test_the_search_reports_its_progress(tmp_path):

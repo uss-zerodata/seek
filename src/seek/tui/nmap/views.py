@@ -92,9 +92,29 @@ class View:
     # user is. A record of one host belongs to whatever it was opened from and
     # leaves this empty.
     tab: str = ""
+    # Rows are a pure projection of the model, and the model only changes when
+    # a scan finishes - but a sort, a resize, a tab switch and every keystroke
+    # in the filter box all ask for them again. Projecting six thousand hosts
+    # takes a second or more, so the answer is kept until the model it was
+    # built from is replaced.
+    #
+    # A view whose rows depend on something else - the Scans tab reads the
+    # runners' live state - sets `cacheable=False` and is recomputed each time.
+    cacheable: bool = True
+    _rows_of: ScanSet | None = field(default=None, repr=False, compare=False)
+    _rows: list[Row] = field(default_factory=list, repr=False, compare=False)
+
+    def cached_for(self, scans: ScanSet) -> bool:
+        """Are this view's rows already built for exactly this model?"""
+        return self.cacheable and self._rows_of is scans
 
     def rows(self, scans: ScanSet) -> list[Row]:
-        return self.build(scans)
+        if not self.cacheable:
+            return self.build(scans)
+        if self._rows_of is not scans:
+            self._rows = self.build(scans)
+            self._rows_of = scans
+        return self._rows
 
 
 def _fmt(value: object) -> str:
@@ -413,13 +433,24 @@ def statistics_view() -> View:
                      grouping_view("port"), scans.hosts),
         ]
 
+        # Both breakdowns below need the hosts behind every line, and looking
+        # those up per line meant walking the whole model once per line - a
+        # hundred services over six thousand hosts is fifteen million service
+        # reads, and about seven seconds. One pass, indexed both ways, is the
+        # same answer for the cost of the model itself.
+        by_service: dict[str, list[tuple[Host, Service]]] = {}
+        by_port: dict[str, list[tuple[Host, Service]]] = {}
+        for host in scans.hosts:
+            for svc in host.open_services:
+                by_service.setdefault(svc.name or "unknown", []).append((host, svc))
+                by_port.setdefault(f"{svc.port}/{svc.protocol}", []).append((host, svc))
+
         # A line's bucket is its `target`, so the pane below reports the hosts
         # behind the figure and `Enter` opens them - the same object doing both
         # jobs, as a grouping row does in the `by service` tab.
         out.append(_heading("Services", 1))
         for name, count, ports in st.services:
-            members = [(h, s) for h in scans.hosts for s in h.open_services
-                       if (s.name or "unknown") == name]
+            members = by_service.get(name, [])
             out.append(Row(
                 cells=(name, str(count), ", ".join(ports)),
                 text=f"{name} {' '.join(ports)}",
@@ -432,8 +463,7 @@ def statistics_view() -> View:
 
         out.append(_heading("Ports", 2))
         for label, count, names in st.ports:
-            members = [(h, s) for h in scans.hosts for s in h.open_services
-                       if f"{s.port}/{s.protocol}" == label]
+            members = by_port.get(label, [])
             out.append(Row(
                 cells=(label, str(count), ", ".join(names)),
                 text=f"{label} {' '.join(names)}",

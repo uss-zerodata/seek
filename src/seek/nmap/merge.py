@@ -39,10 +39,12 @@ class Progress:
 # read, not kept.
 Report = Callable[[Progress], None]
 
-# nmap writes `<?xml ...?>`, a doctype and a stylesheet line before the root
-# element, so the marker sits a few hundred bytes in at most.
-_NMAP_MARKER = b"<nmaprun"
-_SNIFF = 4096
+# nmap writes `<!DOCTYPE nmaprun>` on the second line, and `<nmaprun ...>` after
+# a comment that repeats the whole command - targets included, so a scan of a
+# /16 pushes the root element tens of kilobytes in. The doctype is what makes
+# the check reliable, and the bare word matches either.
+_NMAP_MARKER = b"nmaprun"
+_SNIFF = 8192
 
 
 def _is_nmap_xml(path: Path) -> bool:
@@ -176,8 +178,13 @@ def _merge_host(into: Host, other: Host) -> None:
     for svc in other.services:
         existing = by_key.get(svc.key)
         if existing is None:
-            into.services.append(svc)
-            by_key[svc.key] = svc
+            # A copy, never the record itself: `into` belongs to the merged
+            # model and is written to for the rest of the run, while `other`
+            # belongs to the file it was parsed from and must keep saying what
+            # that one scan saw.
+            taken = svc.copy()
+            into.services.append(taken)
+            by_key[svc.key] = taken
         else:
             _merge_service(existing, svc)
     seen = {(s.id, s.output) for s in into.scripts}
@@ -188,7 +195,15 @@ def _merge_host(into: Host, other: Host) -> None:
 
 
 def merge(files: list[ScanFile]) -> ScanSet:
-    """Reconcile parsed files into one set, in the order they were given."""
+    """Reconcile parsed files into one set, in the order they were given.
+
+    The set is built out of copies. Folding scans together means writing into
+    the accumulated host, and doing that to the parsed record would rewrite
+    history: the first file to mention an address would end up holding
+    everything every later scan found there, and nothing could still answer
+    "what did *that* scan see". The Scans tab asks exactly that, and gets it
+    from `ScanFile.hosts` rather than by parsing the file a second time.
+    """
     hosts: dict[str, Host] = {}
     for sf in files:
         for host in sf.hosts:
@@ -196,7 +211,7 @@ def merge(files: list[ScanFile]) -> ScanSet:
                 continue
             existing = hosts.get(host.address)
             if existing is None:
-                hosts[host.address] = host
+                hosts[host.address] = host.copy()
             else:
                 _merge_host(existing, host)
     for host in hosts.values():
