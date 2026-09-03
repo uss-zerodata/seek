@@ -85,7 +85,7 @@ _ROOT_LETTERS = set("SAWMNFXUYZO")
 # absent: unprivileged, nmap sends those with connect(), so requiring sudo for
 # them would ask for elevation that is not needed. `-Pn` is not a probe at all.
 _ROOT_PINGS = set("EPMOU")
-_ROOT_FLAGS = {"-O", "-A", "--traceroute", "--privileged"}
+_ROOT_FLAGS = {"-O", "-A", "--traceroute", "--privileged", "--script"}
 
 
 def _is_privileged(token: str) -> bool:
