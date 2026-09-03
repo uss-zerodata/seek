@@ -84,12 +84,25 @@ _MARK_STYLE = "bold bright_magenta"
 # a bar wherever the work can count itself.
 _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 _BAR_WIDTH = 24
-# Rows handed to the table per frame. Larger than any screen, so the list a
-# reader can actually see is always there in the first pass - and no larger
-# than that, because the chunk is the pause: a fifty-thousand-row projection
-# handed over five hundred at a time put a quarter of a second between
-# keystrokes, which is the bound this is meant to stay inside.
+# Rows handed to the table before the clock is consulted at all. Larger than
+# any screen, so the list a reader can actually see is always there in the
+# first pass.
 _FILL_CHUNK = 200
+# ...and after that, as many more as fit in this much of one turn. A fixed
+# count is the wrong unit: it is either too small on a wide terminal, where a
+# fifty-thousand-row projection then takes two seconds of frames to hand over,
+# or too large on a narrow one, where the chunk itself becomes the pause. A
+# budget is the thing actually being spent.
+_FILL_BUDGET = 0.015
+_FILL_STEP = 100                                    # rows between clock reads
+# ...and this much of a turn to reach the row the reader was on, when it is
+# further down than the first chunk. Leaving it to arrive with its own chunk
+# means the list sits at the top until it does - a second of it on a large
+# engagement, on every batch of scans, which is what "the selection jumps
+# around" looks like from the outside. Longer than the ordinary budget and
+# still well inside the fifth of a second the specs allow; a reader deeper in
+# the list than this gets one scroll instead.
+_FILL_REACH = 0.15
 # Below this many hosts every projection here is a few milliseconds, so it is
 # done inline; above it the wait is long enough to be worth a thread and a
 # progress bar.
@@ -105,6 +118,13 @@ _PUBLISH_EVERY = 1.0
 # frames says less than the rows it delayed - the same reason the command's own
 # search line is seeded with its start time.
 _READ_QUIET = 0.25
+# After a batch is fully on screen, leave the reader alone for as long as
+# putting it there took, up to this. Absorbing one means re-projecting the
+# model and handing the table a list that can be fifty thousand rows long, and
+# a read that publishes faster than that means the interface spends all of its
+# time absorbing and none of it answering. Paced this way it spends at most
+# half - which is what "the list is usable while the rest arrives" costs.
+_ABSORB_HEADROOM = 1.5
 
 
 class _Abandoned(Exception):
@@ -146,6 +166,13 @@ class _Busy:
     # would flash away data that is still true; it reports in the status bar
     # instead. A first build has nothing to show and takes the content area.
     refresh: bool = False
+    # A refresh nobody asked for: the model grew under a list that is still on
+    # screen and still usable. It says what it is doing and otherwise stays out
+    # of the way - no "Esc stops waiting", because there is nothing to wait
+    # for and `Esc` has its ordinary meaning while the list works. A re-read
+    # after a scan is the opposite: the user asked for it and has to be able
+    # to stop it.
+    quiet: bool = False
 
 
 @dataclass(slots=True)
@@ -180,22 +207,38 @@ class _Mark:
     """Where the cursor was, and how the list was ordered, when a drill-down was
     opened - so `Esc` comes back to the row it was opened from.
 
-    The row is remembered by identity first and by position only as a fallback:
-    a filter typed inside the drill-down, or cleared on the way out, changes
-    which index the row you came from now sits at.
+    The row is remembered by identity first, by what it *is* second, and by
+    position only as a last resort: a filter typed inside the drill-down, or
+    cleared on the way out, changes which index the row you came from now sits
+    at.
+
+    The middle one is what a growing model needs. `merge` copies a host before
+    a later file writes to it, so after a batch of scans the row the cursor was
+    on is a *different object* describing the same host - object identity finds
+    it only while nothing has touched it, and falling through to the index put
+    the cursor on whatever had since been inserted at that position. `key` is
+    the row's section and its first cell: an address, a name, a bucket label, a
+    statistic - what the reader would call "the row I was on", and the one part
+    of a row that a later scan cannot change.
     """
 
     target: object = None
     index: int = 0
     sort_col: int = 0
     sort_desc: bool = False
+    key: tuple = ()
 
     def locate(self, rows: list[vdefs.Row]) -> int:
-        if self.target is not None:
-            for i, row in enumerate(rows):
-                if row.target is self.target:
-                    return i
-        return self.index
+        if self.target is None and not self.key:
+            return self.index
+        found = -1
+        for i, row in enumerate(rows):
+            if self.target is not None and row.target is self.target:
+                return i
+            if (found < 0 and self.key and row.section == self.key[0]
+                    and row.cells and row.cells[0] == self.key[1]):
+                found = i
+        return found if found >= 0 else self.index
 
 
 class ScanTable(DataTable):
@@ -398,6 +441,9 @@ class NmapApp(App[int]):
         # one supersedes the one waiting rather than queueing behind it: they
         # are alternatives, not a sequence, and only the last is still true.
         self._next_scans: ScanSet | None = None
+        # When the batch currently being put on screen started going there, and
+        # the wall-clock moment the next one may be taken.
+        self._absorb_began = 0.0
         self.config = config or Config()
         # Where a scan writes, and what to re-read when one finishes. Both are
         # the launch directory unless the config says otherwise.
@@ -439,7 +485,7 @@ class NmapApp(App[int]):
         self._busy: _Busy | None = None
         self._build_token = 0
         self._spin = 0
-        self._after_build: tuple[bool, _Mark | None] | None = None
+        self._after_build: tuple[bool, _Mark | None, bool] | None = None
         self._abandoned = ""            # what the last cancelled build was doing
         self._report_mode = "condensed"
         self._log_frozen = False
@@ -449,10 +495,15 @@ class NmapApp(App[int]):
         self._marks: list[_Mark] = []
         self._pending_mark: _Mark | None = None
         self._rows: list[vdefs.Row] = []
+        # The view the rows on screen were built for. A rebuild for that same
+        # view can leave them in place; a rebuild for a different one cannot,
+        # because they are a different shape.
+        self._rows_view: object = None
         # Filling the table is chunked once a list is long enough that doing it
         # in one pass would drop frames; these track where that has got to.
         self._filled = 0
         self._fill_plan: tuple[bool, _Mark | None, int] = (False, None, 0)
+        self._cursor_to: int | None = None
         self._fill_gen = 0
         self._filling = False
         self._sort_col = 0
@@ -464,6 +515,10 @@ class NmapApp(App[int]):
         self._reader: DetailReader | None = None
         self._active_tab = "hosts"
         self._widths: list[int] = []
+        # What the header currently shows: view, widths and sort marker. A
+        # re-lay that would produce the same header is skipped, because the
+        # teardown takes every row in the table with it.
+        self._laid: tuple | None = None
         self._last_width = 0
         self._spec = filtering.FilterSpec()
         self._filter_debounce: Timer | None = None
@@ -550,11 +605,18 @@ class NmapApp(App[int]):
         """
         headers = [f"{i} {c}  " for i, c in enumerate(self.view.columns, start=1)]
         natural = [width_of(h) for h in headers]
-        for row in rows:
-            for i, cell in enumerate(row.cells[:len(natural)]):
-                width = width_of(cell)
-                if width > natural[i]:
-                    natural[i] = width
+        # Measured in the worker when these are the view's own rows, which is
+        # every case that is big enough for the difference to matter.
+        counted = self.view.measured(rows)
+        if counted is not None:
+            natural = [max(header, cell)
+                       for header, cell in zip(natural, counted, strict=False)]
+        else:
+            for row in rows:
+                for i, cell in enumerate(row.cells[:len(natural)]):
+                    width = width_of(cell)
+                    if width > natural[i]:
+                        natural[i] = width
         table = self.query_one(DataTable)
         available = (table.scrollable_content_region.width
                      or table.size.width or 100) - 2 - _MARK_W
@@ -573,17 +635,24 @@ class NmapApp(App[int]):
             widths[widest] -= 1
         return widths
 
-    def _refresh_view(self, preserve: bool = False, restore: _Mark | None = None) -> None:  # noqa: E501
+    def _refresh_view(self, preserve: bool = False, restore: _Mark | None = None,
+                      growing: bool = False) -> None:
         # Built once and used for both halves. `_column_widths` and
         # `_reload_rows` each used to call `View.rows`, so every sort, tab
         # switch and resize recomputed the whole projection twice - for the
         # service and grouping overviews, twice over every host in the set.
         # Widths come from the *unfiltered* rows on purpose: columns that
         # re-budgeted as the filter narrowed would shift under the cursor.
-        all_rows = self._rows_now(self.view)
+        all_rows = self._rows_now(self.view, growing=growing)
         if all_rows is None:                        # being built off the event loop
-            self._after_build = (preserve, restore)
+            self._after_build = (preserve, restore, growing)
             return
+        if growing and restore is None:
+            # Marked here, not when the model was published: a rebuild takes a
+            # second at engagement scale, the list stays usable throughout, and
+            # the row to come back to is the one the cursor is on *now* - not
+            # the one it was on when the batch arrived.
+            restore = self._mark_current()
         table = self.query_one(DataTable)
         # Read before the clear: `DataTable.clear` resets the cursor to (0, 0),
         # so `preserve` used to read back a zero it had just written and a
@@ -600,13 +669,24 @@ class NmapApp(App[int]):
         saying which view that is.
         """
         table = self.query_one(DataTable)
+        widths = self._column_widths(rows)
+        laid = (id(self.view), tuple(widths), self._sort_col, self._sort_desc)
+        if laid == self._laid:
+            # Nothing about the header changed, and tearing it down takes every
+            # row with it. A read publishing into an open list hits this on
+            # every batch: same view, same columns, same widths, and the rows
+            # are about to be replaced by `_fill` anyway.
+            self._refresh_title()
+            self.query_one("#subtitle", Static).update(self.view.subtitle)
+            return
+        self._laid = laid
         # Every row still queued was built for the columns being replaced, and
         # a row with the wrong number of cells is an error, not a cosmetic
         # mismatch - so re-laying the header abandons them.
         self._fill_gen += 1
         self._filling = False
         table.clear(columns=True)
-        self._widths = self._column_widths(rows)
+        self._widths = widths
         # The marker is a column of its own, outside `View.columns`, so the
         # numbered sort columns keep their indices and their `1`-`9` keys.
         table.add_column(" ", key="mark", width=_MARK_W)
@@ -625,7 +705,7 @@ class NmapApp(App[int]):
         restore, self._pending_mark = self._pending_mark, None
         rows = self._rows_now(self.view)
         if rows is None:
-            self._after_build = (preserve, restore)
+            self._after_build = (preserve, restore, False)
             return
         keep = self.query_one(DataTable).cursor_row or 0
         self._fill(self._narrow(rows), preserve=preserve, restore=restore, keep=keep)
@@ -650,7 +730,8 @@ class NmapApp(App[int]):
 
     # --- work that is too slow for the event loop --------------------------
 
-    def _rows_now(self, view: vdefs.View) -> list[vdefs.Row] | None:
+    def _rows_now(self, view: vdefs.View,
+                  growing: bool = False) -> list[vdefs.Row] | None:
         """This view's rows, or `None` while they are being built in a thread.
 
         Projecting a large model is seconds of work - long enough that doing it
@@ -658,18 +739,30 @@ class NmapApp(App[int]):
         cached on the view and only ever paid once per model. Small sets are
         built inline: a spinner that appears and vanishes says less than the
         rows it delayed.
+
+        `growing` says that whatever is on screen was built from an earlier
+        state of the *same* view and is still true - which is what a read publishing
+        a grown model produces. The rows stay and the rebuild reports outside
+        the list; without it every batch of scans would replace a working list
+        with a progress bar, which is the opposite of opening early.
         """
         if len(self.scans.hosts) < _BACKGROUND_ABOVE or not self._needs_building(view):
             return view.rows(self.scans)
         if self._busy is not None and self._busy.view is view:
             return None                             # already being built
         self._build_token += 1
+        # Only when there is something to keep: the first batch has no rows yet,
+        # and a bar under the right column headings is the whole of what the
+        # interface can honestly say then.
+        quiet = growing and bool(self._rows) and self._rows_view is view
         self._busy = _Busy(what=self._building_label(view), view=view,
-                           token=self._build_token)
+                           token=self._build_token, refresh=quiet, quiet=quiet)
         self._abandoned = ""
-        # The header of the view being opened, before its rows exist: the
-        # columns are what say which view the wait belongs to.
-        self._lay_columns([])
+        if not quiet:
+            # The header of the view being opened, before its rows exist: the
+            # columns are what say which view the wait belongs to. A quiet
+            # rebuild keeps the header it already has, along with the rows.
+            self._lay_columns([])
         self._show_busy()
         self._build_rows(view, self.scans, self._build_token)
         return None
@@ -706,6 +799,9 @@ class NmapApp(App[int]):
             # event loop between keystrokes rather than at 5 ms boundaries.
             with bulk.bulk(), bulk.responsive():
                 view.rows(scans, report)
+                # Measured here too: it is a pass over every cell of every row,
+                # and the event loop should not be the one making it.
+                view.measure()
         except _Abandoned:
             return
         except Exception as exc:                      # noqa: BLE001 - report, never crash
@@ -726,16 +822,19 @@ class NmapApp(App[int]):
         if self._busy is None or self._busy.token != token:
             return                                    # cancelled, or superseded
         self._busy = None
-        preserve, restore = self._after_build or (False, None)
+        preserve, restore, growing = self._after_build or (False, None, False)
         self._after_build = None
-        if self._next_scans is not None:
-            # A read published while this was running. Taking it now rather
-            # than showing rows built from the model it superseded.
-            self._offer(self._next_scans, force=True)
-            return
         # The rows are cached on the view now, so this second pass is the
-        # ordinary synchronous one.
-        self._refresh_view(preserve=preserve, restore=restore)
+        # ordinary synchronous one. It happens *before* any snapshot parked
+        # while the build ran, and that order is the whole point: put what was
+        # just built in front of the user, then let the newer model rebuild
+        # behind it. Going straight to the newer one means a read that keeps
+        # publishing never puts a list on screen at all.
+        self._refresh_view(preserve=preserve, restore=restore, growing=growing)
+        if not self._filling:
+            # A fill that is still running calls back when it finishes; one
+            # that completed in a single pass already has.
+            self._take_parked()
 
     def _on_build_failed(self, token: int, exc: Exception) -> None:
         if self._busy is None or self._busy.token != token:
@@ -744,6 +843,7 @@ class NmapApp(App[int]):
         self._abandoned = f"{self.view.title} could not be built: {exc}"
         self.notify(self._abandoned, severity="error", timeout=12)
         self._fill([])
+        self._take_parked()
 
     def _cancel_build(self) -> None:
         """Give up on the build in progress; Esc, and the 2-second rule."""
@@ -753,14 +853,18 @@ class NmapApp(App[int]):
             return
         if busy.refresh:
             # The rows on screen were never replaced, so there is nothing to
-            # restore - they are simply one scan out of date, and saying so is
-            # the whole of the recovery.
-            self.notify("stopped re-reading · the list is one scan out of date",
+            # restore - they are simply out of date, not wrong, and saying so
+            # is the whole of the recovery.
+            self.notify(f"stopped updating {busy.what} · the rows shown are the "
+                        "ones read so far" if busy.quiet else
+                        "stopped re-reading · the list is one scan out of date",
                         severity="warning")
             self._refresh_status()
+            self._take_parked()
             return
         self._abandoned = busy.what
         self._fill([])
+        self._take_parked()
 
     def _show_busy(self) -> None:
         """The loading state, in the tab's own content area.
@@ -804,7 +908,20 @@ class NmapApp(App[int]):
         every fixture - is filled in one pass, exactly as it always was.
         """
         self._rows = rows
+        self._rows_view = self.view
         self._fill_plan = (preserve, restore, keep)
+        # Where the cursor belongs in *this* list, resolved once against the
+        # whole of it. Resolving it per chunk meant a long list dragged the
+        # cursor back to the same row on every frame for the seconds it took to
+        # arrive, so the list could not be moved around while it filled.
+        index = 0
+        if rows:
+            if restore is not None:
+                index = restore.locate(rows)
+            elif preserve:
+                index = keep
+            index = max(0, min(len(rows) - 1, index))
+        self._cursor_to: int | None = index if rows else None
         self._filled = 0
         # Anything still queued belongs to the list that was just replaced.
         self._fill_gen += 1
@@ -822,31 +939,49 @@ class NmapApp(App[int]):
             return
         rows = self._rows
         query = self._spec.query
-        end = min(len(rows), self._filled + _FILL_CHUNK)
-        for row in rows[self._filled:end]:
-            table.add_row(
-                Text(self._mark_glyph(row), style=_MARK_STYLE),
-                *(self._cell(c, query, self._width_at(n), row.style)
-                  for n, c in enumerate(row.cells)))
+        # A screenful without asking the clock, then as much more as the budget
+        # allows - and far enough to reach the row the reader was on, when that
+        # is close enough to be worth one longer turn. Leaving it to arrive with
+        # its own chunk means the list sits at the top for a second first, which
+        # is what "the selection jumps around" looks like from the outside.
+        least = self._filled + _FILL_CHUNK
+        began = time.perf_counter()
+        deadline, reach = began + _FILL_BUDGET, began + _FILL_REACH
+        end = self._filled
+        while end < len(rows):
+            stop = min(len(rows), end + _FILL_STEP)
+            for row in rows[end:stop]:
+                table.add_row(
+                    Text(self._mark_glyph(row), style=_MARK_STYLE),
+                    *(self._cell(c, query, self._width_at(n), row.style)
+                      for n, c in enumerate(row.cells)))
+            end = stop
+            if end < least:
+                continue                            # the screenful, always
+            now = time.perf_counter()
+            if (self._cursor_to is not None and end <= self._cursor_to
+                    and now < reach):
+                continue                            # still chasing the cursor
+            if now >= deadline:
+                break
         if self._filled == 0 and end:
             # The first chunk is on screen: whatever the loading state put up
             # comes down now rather than when the last chunk lands.
             self.query_one("#empty", Static).set_class(False, "-shown")
             table.set_class(False, "-empty")
         self._filled = end
-        preserve, restore, keep = self._fill_plan
-        index = 0
-        if rows:
-            # Re-laying the columns (a resize) must not move the selection, and
-            # neither must coming back out of a drill-down; only a genuine
-            # change of the row set resets it to the top.
-            if restore is not None:
-                index = restore.locate(rows)
-            else:
-                index = keep if preserve else 0
-            index = max(0, min(len(rows) - 1, index))
-            if index < end:
-                table.move_cursor(row=index)
+        # Re-laying the columns (a resize) must not move the selection, and
+        # neither must coming back out of a drill-down; only a genuine change
+        # of the row set resets it to the top. Placed once, on the first chunk
+        # that reaches it, and then left alone - the list belongs to the reader
+        # from that moment, however much of it is still coming.
+        if self._cursor_to is not None and self._cursor_to < end:
+            table.move_cursor(row=self._cursor_to)
+            self._cursor_to = None
+            # The record, as soon as the cursor is on it rather than when the
+            # last chunk lands: otherwise the pane spends the rest of the fill
+            # reporting whatever happens to be at the top of the list.
+            self._refresh_detail()
         if end < len(rows):
             # A timer rather than `call_after_refresh`: the next chunk has to
             # start whether or not the screen happened to need repainting, and
@@ -859,6 +994,7 @@ class NmapApp(App[int]):
         self._refresh_empty(rows)
         self._refresh_status()
         self._refresh_detail()
+        self._absorbed()
 
     def _refresh_empty(self, rows: list[vdefs.Row]) -> None:
         """A list with nothing in it has to say why, and how to get out of it.
@@ -981,11 +1117,13 @@ class NmapApp(App[int]):
         busy = self._busy
         if busy is None or not busy.refresh:
             return None
-        note = Text(f"{_SPINNER[self._spin % len(_SPINNER)]} reading {busy.what}",
+        verb = "updating" if busy.quiet else "reading"
+        note = Text(f"{_SPINNER[self._spin % len(_SPINNER)]} {verb} {busy.what}",
                     style="bold")
         if busy.total:
             note.append(f" {busy.done}/{busy.total} {busy.unit}".rstrip(), style="dim")
-        note.append("  ·  Esc stops waiting", style="dim")
+        if not busy.quiet:
+            note.append("  ·  Esc stops waiting", style="dim")
         return note
 
     def _refresh_status(self) -> None:
@@ -1154,7 +1292,9 @@ class NmapApp(App[int]):
         table = self.query_one(DataTable)
         index = table.cursor_row or 0
         row = self._rows[index] if 0 <= index < len(self._rows) else None
-        return _Mark(target=row.target if row is not None else None, index=index,
+        return _Mark(target=row.target if row is not None else None,
+                     key=(row.section, row.cells[0]) if row and row.cells else (),
+                     index=index,
                      sort_col=self._sort_col, sort_desc=self._sort_desc)
 
     def _reset_sort(self) -> None:
@@ -1871,36 +2011,73 @@ class NmapApp(App[int]):
         # a clean run; the empty list says which files failed.
         if self._to_read and not read:
             self._exit_code = 1
-        self._offer(scans, force=True)
+        self._offer(scans)
         if not scans.hosts and not scans.failures and self.nmap.available:
             # Files that read cleanly and named nobody: the useful thing to
             # offer is a scan, exactly as it is for an empty directory.
             self.call_after_refresh(self.action_new_scan)
 
-    def _offer(self, scans: ScanSet, force: bool = False) -> None:
-        """Take a snapshot now, or hold it until the projection running ends.
+    def _offer(self, scans: ScanSet) -> None:
+        """Take a snapshot now, or park it until the build running ends.
 
         Coalescing rather than queueing: a projection started against an older
         model is already the work this snapshot would repeat, and by the time
         it finishes there may be a newer snapshot still. Only the last one is
         true, so only the last one is kept.
+
+        Nothing is ever published *under* a running build, not even the last
+        snapshot of a read. Doing that leaves the build projecting a model that
+        is no longer on screen, and its completion then replaces a working list
+        with a bar for the rebuild - the exact failure that opening early
+        exists to avoid. Every path that ends a build drains the park instead.
         """
-        if self._busy is not None and not force:
+        if self._busy is not None or self._filling:
             self._next_scans = scans
             return
-        self._next_scans = None
         self._apply(scans)
 
+    def _take_parked(self) -> None:
+        """Apply the snapshot parked while the last one was going on screen."""
+        if self._busy is not None or self._filling:
+            return                                  # whatever ends will call back
+        parked, self._next_scans = self._next_scans, None
+        if parked is not None:
+            self._offer(parked)
+
+    def _absorbed(self) -> None:
+        """A batch is fully on screen; decide when the next one may be taken.
+
+        The pause is the cost of the batch just absorbed, so the pacing follows
+        the size of the model rather than a number chosen in advance: a small
+        engagement takes the next batch immediately, and a large one leaves the
+        reader as much time to use the list as it spent replacing it.
+        """
+        wait = 0.0
+        if self._absorb_began:
+            wait = min(time.monotonic() - self._absorb_began, _ABSORB_HEADROOM)
+            self._absorb_began = 0.0
+        if wait > 0.05 and self._next_scans is not None:
+            self.set_timer(wait, self._take_parked)
+            return
+        self._take_parked()
+
     def _apply(self, scans: ScanSet) -> None:
-        """Put a grown model on screen without moving the cursor under the user."""
-        # By record identity, not by row index: the rows are rebuilt from the
-        # new model, so the row the cursor was on is a different object at a
-        # different position - which is exactly what this machinery is for.
-        mark = self._mark_current()
+        """Put a grown model on screen without moving the cursor under the user.
+
+        The cursor is preserved by record identity rather than by row index -
+        the rows are rebuilt from the new model, and a host that was tenth is
+        now fortieth once the batch before it has been folded in. `_refresh_view`
+        takes that mark for itself at the moment it replaces the rows; marking
+        here would pin the cursor to wherever it was when the batch arrived and
+        undo any movement made while the rebuild ran.
+        """
+        self._absorb_began = time.monotonic()
         self._publish(scans)
         self._refresh_warning()
-        self._refresh_view(restore=mark)
-        self._refresh_detail()
+        self._refresh_view(growing=True)
+        # No `_refresh_detail` here: the rows are not on screen yet, so the
+        # record it would report is whichever one the table happens to hold.
+        # The fill calls it the moment the cursor is on the right row.
         self._refresh_status()
 
     def _refresh_warning(self) -> None:
@@ -2022,9 +2199,11 @@ class NmapApp(App[int]):
         self._refresh_view()
 
     def action_back(self) -> None:
-        if self._busy is not None:
+        if self._busy is not None and not self._busy.quiet:
             # A build over a second or two has to be abandonable, and Esc is
-            # already the key that means "out of this".
+            # already the key that means "out of this". A quiet rebuild is not
+            # one of those: the list it is replacing is on screen and working,
+            # so `Esc` still means back, or clear the filter.
             self._cancel_build()
             return
         box = self.query_one("#filter", Input)

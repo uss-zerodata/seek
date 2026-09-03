@@ -41,6 +41,17 @@ def _listing(prefix: str, count: int) -> vdefs.View:
                       build=lambda _scans: rows, kind="hosts", tab="hosts")
 
 
+def _chunks_of(monkeypatch, size: int) -> None:
+    """Hand the table `size` rows per turn, whatever the machine's speed.
+
+    The fill is budgeted in time, not rows, so a fixture list would otherwise
+    go over in a single pass and there would be no instalments to observe.
+    """
+    monkeypatch.setattr(app_mod, "_FILL_CHUNK", size)
+    monkeypatch.setattr(app_mod, "_FILL_STEP", size)
+    monkeypatch.setattr(app_mod, "_FILL_BUDGET", 0.0)
+
+
 def _slow_view(released: threading.Event) -> vdefs.View:
     """A view whose rows take as long as the test wants them to."""
     def build(_scans):
@@ -238,7 +249,7 @@ async def test_a_running_scan_does_not_restart_the_history_build(monkeypatch):
 
 async def test_a_long_list_reaches_the_table_a_chunk_at_a_time(monkeypatch):
     """The first screenful is there at once; the rest follows without blocking."""
-    monkeypatch.setattr(app_mod, "_FILL_CHUNK", 2)
+    _chunks_of(monkeypatch, 2)
     app = _app()
     async with app.run_test() as pilot:
         app.stack = [_listing("h", 7)]
@@ -252,8 +263,34 @@ async def test_a_long_list_reaches_the_table_a_chunk_at_a_time(monkeypatch):
         assert [r.cells[0] for r in app._rows] == [f"h{i}" for i in range(7)]
 
 
+async def test_the_cursor_is_placed_once_and_then_left_alone(monkeypatch):
+    """A list still filling belongs to the reader, not to the fill.
+
+    The cursor used to be repositioned on every chunk, so a list long enough
+    to take seconds to hand over could not be moved around while it arrived -
+    each frame dragged the selection back to the row the fill had chosen.
+    """
+    _chunks_of(monkeypatch, 2)
+    app = _app()
+    async with app.run_test() as pilot:
+        app.stack = [_listing("h", 40)]
+        app._refresh_view()
+        table = app.query_one(DataTable)
+        assert app._filling, "the rest is still coming"
+        assert table.cursor_row == 0, "placed on the first chunk"
+
+        table.move_cursor(row=1)
+        for _ in range(6):
+            await pilot.pause(0.02)
+            assert table.cursor_row == 1, \
+                "a chunk landing must not take the selection back"
+        await pilot.pause(0.5)
+        assert not app._filling and table.row_count == 40
+        assert table.cursor_row == 1, "and it is still where it was left"
+
+
 async def test_a_new_list_abandons_the_chunks_still_queued(monkeypatch):
-    monkeypatch.setattr(app_mod, "_FILL_CHUNK", 2)
+    _chunks_of(monkeypatch, 2)
     app = _app()
     async with app.run_test() as pilot:
         app.stack = [_listing("a", 9)]
@@ -272,7 +309,7 @@ async def test_switching_tab_while_a_list_is_still_filling(monkeypatch):
     Handing one to the other is an error rather than a cosmetic mismatch, so
     re-laying the header has to abandon whatever was still queued.
     """
-    monkeypatch.setattr(app_mod, "_FILL_CHUNK", 2)
+    _chunks_of(monkeypatch, 2)
     app = _app()
     async with app.run_test() as pilot:
         app.stack = [_listing("a", 40)]

@@ -138,9 +138,16 @@ reproducible with `benchmarks/gen_nmap_corpus.py` and `benchmarks/bench_nmap.py`
 files — a walk of tens of milliseconds — and hands them over; the reading
 happens with the interface already up, and the model is published on a cadence
 of about a second rather than once per file, because re-projecting an overview
-costs more than reading a file. The host list is usable while the rest arrives,
-the cursor stays on the record it was on, and the status line says how many
-files have been read and how many hosts are known so far. A read short enough
+costs more than reading a file. A batch never takes the list away: the rows
+already there were built from part of the same model and every one of them is
+still true, so they stay and the rebuild reports in the status line — the list
+is scrollable, filterable and drillable throughout, `Esc` keeps its ordinary
+meaning, and the cursor stays on the record you left it on — found by what the
+row is rather than by its number, since folding a scan in moves every row below
+the hosts it added. The next batch is
+taken no sooner than the last one took to put on screen, so the interface never
+spends more time replacing the list than answering you. The status line says
+how many files have been read and how many hosts are known so far. A read short enough
 not to matter says nothing at all. If candidate files were found and none of
 them could be read, the list says so and names them, and the process exits
 non-zero.

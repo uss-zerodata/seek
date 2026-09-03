@@ -455,6 +455,46 @@ stdout, `cd`) cannot run while Textual owns the screen. They set
   waiting instead of queueing. Consequence recorded in the specs: candidates
   that all fail to parse can no longer be found out before the viewer opens, so
   the viewer says so and the process exits non-zero.
+- **A batch must never take the list away.** Three rules make that true, and
+  dropping any one of them puts a progress bar back over working rows.
+  (1) A rebuild for the *same* view over a grown model is `quiet`: the rows
+  stay, the report goes to the status line, and `Esc` keeps its ordinary
+  meaning because the reader is not waiting for anything. (2) Nothing is ever
+  published while a build or a fill is running - not even the last snapshot of
+  a read - because a build left projecting a superseded model clears the table
+  when it finishes. Everything that ends a build or a fill drains the park
+  instead. (3) The next batch is taken no sooner than the last one took to
+  absorb (`_ABSORB_HEADROOM`), so the interface spends at most half its time
+  replacing the list and the rest answering the reader.
+- **The cursor is placed once per fill, not once per chunk.** Resolved against
+  the whole list in `_fill` and applied by the first chunk that reaches it. Per
+  chunk, a list long enough to arrive in instalments dragged the selection back
+  every frame and could not be moved around while it filled. For the same
+  reason the mark a growing model restores to is taken when the rows are
+  actually replaced, not when the batch was published - the reader may have
+  moved in between.
+- **A mark finds its row by identity, then by what the row *is*, then by
+  position.** The middle one is what a growing model needs: `merge` copies a
+  host before a later file writes to it, so after a batch the row the cursor
+  was on is a different object describing the same host. Identity alone found
+  it only while nothing had touched it, and the fall-through to the row number
+  then put the cursor on whatever had since been inserted there. `_Mark.key` is
+  the row's section and first cell - an address, a name, a bucket label - the
+  one part of a row a later scan cannot change.
+- **The fill is budgeted in time, and reaches the cursor before it stops.**
+  `_FILL_CHUNK` rows unconditionally (a screenful), then as many more as fit in
+  `_FILL_BUDGET`, except that it keeps going up to `_FILL_REACH` while the row
+  the reader was on has not been handed over yet. Without that last part the
+  table sits at the top of the list until the reader's row arrives with its own
+  chunk - a second of it on a large engagement, on every batch, which is what
+  "the selection jumps around" looks like from the outside. The record pane is
+  refreshed the moment the cursor lands rather than when the last chunk does,
+  for the same reason.
+- **Measuring the columns is a pass over every cell.** `View.measure()` does it
+  in the projection worker and caches it with the rows; `_column_widths` only
+  does the trimming. On the event loop it was 165 ms for a fifty-thousand-row
+  projection. `seek.tui.cells.width_of` is the ASCII shortcut that makes the
+  pass itself cheap - `rich.cells.cell_len` walks the string.
 - **Textual `repr`s a worker's arguments.** `_build_rows(view, scans, token)`
   meant a dataclass repr of every host, service and script result on the event
   loop - 2.8 s at 24 200 hosts, for a string nobody reads. `ScanSet.__repr__` is

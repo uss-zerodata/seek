@@ -121,19 +121,33 @@ async def drive(root: Path) -> int:
         passed &= check("Still reading" in pane(app) or app._rows != [],
                         "and an empty list says the read is unfinished")
 
-        # --- it fills as the scans arrive
+        # --- it fills as the scans arrive. Counted in files rather than hosts:
+        # the generated corpus covers its whole address pool within the first
+        # third of the files, so the host count stops growing long before the
+        # read does.
         passed &= ticker.phase("input latency while opening")
-        grew = len(app.scans.hosts)
-        await pilot.pause(3.0)
-        passed &= check(len(app.scans.hosts) > grew,
-                        "the model grows while the viewer is open",
-                        f"{grew} -> {len(app.scans.hosts)} hosts")
-
-        # --- abandoning a build
+        # Counted in files read rather than hosts known: the generated corpus
+        # covers its whole address pool within the first third of the files.
+        read_before = app._reading.done
+        published = [len(app.scans.sources)]
+        emptied = 0
         for _ in range(600):
             await pilot.pause(0.1)
+            rows = app.query_one(DataTable).row_count
+            if published[0] and rows == 0:
+                emptied += 1
+            if len(app.scans.sources) != published[-1]:
+                published.append(len(app.scans.sources))
             if app._reading is not None and app._reading.finished:
                 break
+        passed &= check(app._reading.done > read_before,
+                        "the model grows while the viewer is open",
+                        f"{read_before} -> {app._reading.done} files read, "
+                        f"{len(published)} publications, "
+                        f"{len(app.scans.hosts)} hosts")
+        passed &= check(emptied == 0,
+                        "and the list is never taken away while it does",
+                        f"empty on {emptied} of the samples")
         passed &= check(app._reading is not None and app._reading.finished,
                         "the read finishes", f"{len(app.scans.hosts)} hosts")
         passed &= check("reading scans" not in status(app),
@@ -177,14 +191,21 @@ async def drive(root: Path) -> int:
         vdefs_view = app.view
         vdefs_view._rows_of = None                  # make it build again
         app._refresh_view()
-        await pilot.pause(0.1)
+        # No pause before the key: `_refresh_view` starts the build
+        # synchronously, and a projection this size sometimes finishes inside
+        # any wait long enough to write down - leaving nothing to abandon.
         building = app._busy is not None
         await pilot.press("escape")
-        await pilot.pause(0.1)
-        passed &= check(building and app._busy is None,
+        abandoned, said = app._busy is None, pane(app)
+        # Sampled the instant the key is handled. A pause first would let the
+        # tab's own width poll notice that the table shrank to its headers and
+        # start the build again, which is the tab doing what it is meant to do
+        # and not what this line is asking about.
+        passed &= check(building and abandoned,
                         "Esc abandons a build in progress")
-        passed &= check("Stopped reading" in pane(app),
-                        "and says what was given up", pane(app)[:60])
+        passed &= check("Stopped reading" in said,
+                        "and says what was given up", said.replace("\n", " ")[:60])
+        await pilot.pause(0.1)
 
         await ticker.stop()
         passed &= ticker.phase("input latency, closing")

@@ -16,6 +16,7 @@ from seek.nmap.export import Record
 from seek.nmap.merge import addr_key as _addr
 from seek.nmap.models import Host, ScanSet, Service
 from seek.nmap.progress import HOSTS, Report, counted
+from seek.tui.cells import width_of
 
 ABSENT = "—"
 
@@ -125,6 +126,7 @@ class View:
     reports: bool = False
     _rows_of: ScanSet | None = field(default=None, repr=False, compare=False)
     _rows: list[Row] = field(default_factory=list, repr=False, compare=False)
+    _natural: list[int] | None = field(default=None, repr=False, compare=False)
 
     def cached_for(self, scans: ScanSet) -> bool:
         """Are this view's rows already built for exactly this model?"""
@@ -143,10 +145,36 @@ class View:
         if self._rows_of is not scans:
             self._rows = self._built(scans, report)
             self._rows_of = scans
+            self._natural = None
         return self._rows
 
     def _built(self, scans: ScanSet, report: Report | None) -> list[Row]:
         return self.build(scans, report) if self.reports else self.build(scans)
+
+    def measure(self) -> list[int]:
+        """The widest cell in each column, over the rows this view built.
+
+        Budgeting the columns means measuring every cell of every row - a sixth
+        of a second for a projection that yields fifty thousand of them, and it
+        is a pure function of the rows, so it belongs beside the projection in
+        the worker rather than on the event loop with the reader waiting. Kept
+        with the rows and thrown away with them.
+        """
+        if self._natural is None:
+            widths = [0] * len(self.columns)
+            for row in self._rows:
+                for i, cell in enumerate(row.cells[:len(widths)]):
+                    width = width_of(cell)
+                    if width > widths[i]:
+                        widths[i] = width
+            self._natural = widths
+        return self._natural
+
+    def measured(self, rows: list[Row]) -> list[int] | None:
+        """`measure()`, but only if `rows` really are the ones this view built."""
+        if not self.cacheable or rows is not self._rows or not rows:
+            return None
+        return self.measure()
 
 
 def _fmt(value: object) -> str:

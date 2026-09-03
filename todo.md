@@ -1,0 +1,2 @@
+- show nmap log output in host, port and service details
+- offer to copy the nmap and gowhitness command to clipboard
