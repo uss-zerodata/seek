@@ -1,2 +1,7 @@
 - fix scrolling in detail view
 - offer to copy the nmap and gowhitness command to clipboard
+- tagging feature to mark hosts, services and ports as done
+- query feature to filter hosts, services and ports by:
+  - up/down status (e.g. `up:80/tcp`, `down:443/tcp`)
+  - tags (e.g. `tag:done`)
+  - service (e.g. `service:nginx`, `service:mysql`)
