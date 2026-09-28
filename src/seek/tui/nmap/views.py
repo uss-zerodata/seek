@@ -221,13 +221,21 @@ def _host_row(h: Host) -> Row:
     )
 
 
-def hosts_view(only_up: bool = False) -> View:
+def hosts_view(only_up: bool = False, only_ports: bool = False) -> View:
+    """The host list, narrowed by `u` (up), `r` (an open port), or both.
+
+    Every host with an open port is up, so both together are `r` alone; they
+    stay two flags so that turning one off leaves the other where it was.
+    """
     def build(scans: ScanSet, report: Report | None = None) -> list[Row]:
         hosts = scans.up if only_up else scans.hosts
+        if only_ports:
+            hosts = [h for h in hosts if h.open_services]
         return [_host_row(h) for h in counted(hosts, report, HOSTS)]
 
+    narrowed = [label for on, label in ((only_up, "up"), (only_ports, "open ports")) if on]
     return View(
-        title="Hosts" + (" (up)" if only_up else ""),
+        title="Hosts" + (f" ({', '.join(narrowed)})" if narrowed else ""),
         columns=HOST_COLUMNS, build=build, kind="hosts", tab="hosts",
         reports=True,
     )

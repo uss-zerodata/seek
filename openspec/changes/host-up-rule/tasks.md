@@ -36,3 +36,13 @@
 - [x] 6.2 Run `benchmarks/check_nmap_real.py` against the local scans and compare the up counts with what nmap itself reports for the discovery scans
 - [x] 6.3 `uv run ruff check`, `uv run pytest -q`, and `openspec validate host-up-rule --strict`
 - [x] 6.4 Remove the item from `todo.md` (the user ticked it instead; left as they have it)
+
+## 7. Sorting toggle and the `r` filter (added on request)
+
+- [x] 7.1 `action_sort`: the already-sorted column reverses, another column starts ascending; heading clicks go the same way
+- [x] 7.2 Drop the `r` → reverse binding and every `r reverse` hint; keep "Reverse sort" in the palette with its new key description
+- [x] 7.3 `r` toggles hosts-with-open-ports on the host list (`hosts_view(only_up, only_ports)`, title names both), goes to the host list from other tabs, and means open ports only on a host's port list
+- [x] 7.4 Empty-list message for `r`, naming every key that is on
+- [x] 7.5 Help overlay, palette entry, README; spec delta for Sorting and the `r` filter
+- [x] 7.6 Tests: toggle and flip-back, opening order counts as chosen, heading click reverses, `r` alone / with `u` / from another tab / on a port list / empty
+- [x] 7.7 `uv run ruff check`, full `uv run pytest -q`, `openspec validate host-up-rule --strict`

@@ -275,19 +275,19 @@ class ScanTable(DataTable):
 
 _HINTS = {
     "hosts": [("↑↓", "select"), ("JK←→", "read record"), ("↵", "services"), ("v", "swap"),
-              ("1-9", "sort"), ("r", "reverse"), ("/", "filter"), ("u", "up"),
+              ("1-9", "sort"), ("/", "filter"), ("u", "up"), ("r", "open ports"),
               ("s", "stats"), ("b", "group"), ("d", "detail"), ("m", "mark"), ("n", "scan"),
               ("x", "export"), ("?", "help"), ("^P", "commands")],
     "services": [("↑↓", "select"), ("JK←→", "read record"), ("↵", "hosts"), ("v", "swap"),
-                 ("1-9", "sort"), ("r", "reverse"), ("/", "filter"), ("s", "stats"),
+                 ("1-9", "sort"), ("/", "filter"), ("s", "stats"),
                  ("b", "group"), ("d", "detail"), ("m", "mark"), ("n", "scan"),
                  ("x", "export"), ("?", "help"), ("^P", "commands")],
     "host-detail": [("↑↓", "select"), ("JK←→", "read record"), ("↵", "same service everywhere"),
-                    ("1-9", "sort"), ("r", "reverse"), ("u", "open only"),
+                    ("1-9", "sort"), ("u", "open only"),
                     ("/", "filter"), ("d", "detail"), ("D", "pane"), ("m", "mark"),
                     ("x", "export"), ("?", "help"), ("^P", "commands")],
-    "group-hosts": [("↑↓", "select"), ("JK←→", "read record"), ("↵", "host"), ("1-9", "sort"),
-                    ("r", "reverse"), ("/", "filter"), ("d", "detail"), ("m", "mark"),
+    "group-hosts": [("↑↓", "select"), ("JK←→", "read record"), ("↵", "host"),
+                    ("1-9", "sort"), ("/", "filter"), ("d", "detail"), ("m", "mark"),
                     ("x", "export"), ("?", "help"), ("^P", "commands")],
     "service-detail": [("↑↓", "select"), ("JK←→", "read record"), ("↵", "host"),
                        ("1-9", "sort"), ("/", "filter"), ("d", "detail"), ("m", "mark"),
@@ -297,14 +297,14 @@ _HINTS = {
                  ("d", "detail"), ("m", "mark"), ("x", "export"), ("?", "help"),
                  ("^P", "commands")],
     "names": [("↑↓", "select"), ("JK←→", "read record"), ("↵", "hosts"),
-              ("1-9", "sort"), ("r", "reverse"), ("/", "filter"), ("d", "detail"),
+              ("1-9", "sort"), ("/", "filter"), ("d", "detail"),
               ("m", "mark"), ("n", "scan"), ("x", "export"), ("?", "help"),
               ("^P", "commands")],
     "scans": [("↑↓", "select"), ("d", "detail"), ("o", "report view"),
               ("p", "freeze log"), ("c", "cancel"), ("n", "new scan"), ("1-9", "sort"),
               ("/", "filter"), ("x", "export"), ("?", "help"), ("^P", "commands")],
     "stats": [("↑↓", "select"), ("↵", "open the figure"), ("1-9", "sort"),
-              ("r", "reverse"), ("/", "filter"), ("s", "back"), ("d", "detail"),
+              ("/", "filter"), ("s", "back"), ("d", "detail"),
               ("m", "mark"), ("x", "export"), ("?", "help"), ("^P", "commands")],
 }
 
@@ -389,7 +389,7 @@ class NmapApp(App[int]):
         Binding("enter", "drill", "Open", show=False),
         Binding("v", "swap", "Next overview", show=False),
         Binding("V", "swap_back", "Previous overview", show=False),
-        Binding("r", "reverse", "Reverse sort", show=False),
+        Binding("r", "open_ports", "Hosts with open ports only", show=False),
         Binding("s", "stats", "Statistics", show=False),
         Binding("b", "group", "Group by", show=False),
         Binding("u", "up", "Up hosts / open ports only", show=False),
@@ -550,7 +550,8 @@ class NmapApp(App[int]):
         self._sort_desc = False
         self._group_keys = ("service", "product", "port")
         self._group_at = 0
-        self._only_up = False
+        self._only_up = False                   # `u` on the host list
+        self._only_ports = False                # `r` on the host list
         self._only_open = False                 # `u` on a host's own port list
         self._show_detail = True
         self._reader: DetailReader | None = None
@@ -1094,9 +1095,13 @@ class NmapApp(App[int]):
             # Ahead of the next branch: a host's ports inherit the Hosts tab.
             headline = "No open port on this host"
             hint = "u lists every port the scan recorded, closed and filtered too"
-        elif self._only_up and self._active_tab == "hosts":
-            headline = "No host is up"
-            hint = "u lists every host the scan named"
+        elif (self._only_up or self._only_ports) and self._active_tab == "hosts":
+            # `r` is the narrower of the two, so it names the headline; the
+            # hint names every key that is on, since each has to be undone.
+            headline = "No host has an open port" if self._only_ports else "No host is up"
+            keys = [k for on, k in ((self._only_up, "u"), (self._only_ports, "r")) if on]
+            verb = "lists" if len(keys) == 1 else "list"
+            hint = f"{' and '.join(keys)} {verb} every host the scan named"
         elif len(self.stack) > 1:
             headline = f"{self.view.title} has nothing to show"
             hint = "Esc goes back · ? for help"
@@ -1309,16 +1314,23 @@ class NmapApp(App[int]):
                                              (table.cursor_row or 0) + delta)))
 
     def action_sort(self, index: int) -> None:
-        """A number picks the column and always sorts ascending.
+        """A number (or a click on the heading) picks the column, ascending;
+        the same one again reverses it, and again flips it back.
 
-        Toggling direction by pressing the same number again was the thing
-        testers could not form a model of - `r` reverses, and that is the only
-        thing that does.
+        This was once the other way round - a number always sorted ascending
+        and `r` reversed - because testers could not form a model of the
+        toggle. It came back at the user's request, which freed `r` for the
+        open-ports filter. "Same column" means the one currently sorted, which
+        the arrow in its heading and the status line both name, so a list that
+        opens sorted by its first column reverses on the first `1`.
         """
         if index >= len(self.view.columns):
             return
-        self._sort_col = index
-        self._sort_desc = False
+        if index == self._sort_col:
+            self._sort_desc = not self._sort_desc
+        else:
+            self._sort_col = index
+            self._sort_desc = False
         self._refresh_view()
 
     def action_stats(self) -> None:
@@ -1329,6 +1341,9 @@ class NmapApp(App[int]):
 
     def action_up(self) -> None:
         self._toggle_up()
+
+    def action_open_ports(self) -> None:
+        self._toggle_open_ports()
 
     def _toggle_stats(self) -> None:
         self._activate("hosts" if self._active_tab == "stats" else "stats")
@@ -1341,12 +1356,19 @@ class NmapApp(App[int]):
             self._activate(_GROUP_TABS[0])
 
     def _toggle_up(self) -> None:
-        """A filter on the host list, not an overview of its own.
+        self._toggle_host_filter("_only_up")
 
-        On a host's port list it is the same question asked of ports - which of
-        these did the scan actually find open - and it stays where it is rather
-        than throwing the reader back to the host list. The two flags are
-        separate: hiding closed ports is no reason to hide hosts that are down.
+    def _toggle_open_ports(self) -> None:
+        self._toggle_host_filter("_only_ports")
+
+    def _toggle_host_filter(self, flag: str) -> None:
+        """`u` (up) and `r` (an open port): filters on the host list, not
+        overviews of their own, so from another tab they go to the host list.
+
+        On a host's port list both ask the same question of ports - which of
+        these did the scan actually find open - and stay where they are rather
+        than throwing the reader back to the host list. That flag is separate
+        from the host-list ones: hiding closed ports is no reason to hide hosts.
         """
         if self.view.kind == "host-detail" and self.view.hosts:
             self._only_open = not self._only_open
@@ -1356,8 +1378,8 @@ class NmapApp(App[int]):
             return
         if self._active_tab != "hosts":
             self._activate("hosts")
-        self._only_up = not self._only_up
-        self.stack[-1] = vdefs.hosts_view(self._only_up)
+        setattr(self, flag, not getattr(self, flag))
+        self.stack[-1] = vdefs.hosts_view(self._only_up, self._only_ports)
         self._reset_sort()
 
     def _mark_current(self) -> _Mark:
@@ -1385,7 +1407,7 @@ class NmapApp(App[int]):
             return vdefs.statistics_view()
         if tab_id in _GROUP_TABS:
             return vdefs.grouping_view(tab_id.removeprefix("group-"))
-        return vdefs.hosts_view(self._only_up)
+        return vdefs.hosts_view(self._only_up, self._only_ports)
 
     def _scans_index(self) -> rawlog.Scanned:
         """The scan index for the model on screen, rebuilt when it is replaced."""

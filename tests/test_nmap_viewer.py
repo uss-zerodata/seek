@@ -148,6 +148,69 @@ async def test_u_lists_exactly_the_up_hosts_and_agrees_with_the_export():
         assert all(isinstance(rec, Record) for rec in filtered)
 
 
+async def test_r_keeps_hosts_with_an_open_port_and_pairs_with_u():
+    app = _app("up-rule-pn", "up-rule-discovery")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause(0.2)
+        await pilot.press("r")
+        await pilot.pause(0.2)
+        assert _cells(app) == ["203.0.113.1", "203.0.113.6"], "open ports only"
+        assert app.view.title == "Hosts (open ports)"
+        await pilot.press("u")                    # both: an open port is always up
+        await pilot.pause(0.2)
+        assert _cells(app) == ["203.0.113.1", "203.0.113.6"]
+        assert app.view.title == "Hosts (up, open ports)"
+        await pilot.press("r")                    # r off leaves u where it was
+        await pilot.pause(0.2)
+        assert _cells(app) == ["203.0.113.1", "203.0.113.4", "203.0.113.6"]
+        assert app._only_up and not app._only_ports
+
+
+async def test_r_from_another_tab_goes_to_the_host_list():
+    app = _app("basic")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause(0.2)
+        await pilot.press("s")
+        await pilot.pause(0.2)
+        await pilot.press("r")
+        await pilot.pause(0.3)
+        assert app.view.kind == "hosts"
+        assert _cells(app) == ["192.0.2.1", "192.0.2.2"], ".3 is down with no ports"
+
+
+async def test_r_on_a_hosts_ports_keeps_the_open_ones_like_u():
+    app = _app("basic")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause(0.2)
+        await pilot.press("enter")                # 192.0.2.1's ports
+        await pilot.pause(0.2)
+        await pilot.press("r")
+        await pilot.pause(0.2)
+        assert app.view.kind == "host-detail"
+        assert [r.cells[0] for r in app._rows] == ["22/tcp", "80/tcp"]
+        assert not app._only_ports, "the host list is not filtered"
+
+
+async def test_r_names_itself_when_nothing_has_an_open_port(tmp_path):
+    scan = tmp_path / "ping.xml"                  # up by discovery, no ports
+    scan.write_text(
+        '<?xml version="1.0"?>\n<nmaprun scanner="nmap" args="nmap -sn -oX ping.xml '
+        '203.0.113.9" start="1756000000" version="7.94" xmloutputversion="1.05">\n'
+        '<host><status state="up" reason="echo-reply" reason_ttl="64"/>'
+        '<address addr="203.0.113.9" addrtype="ipv4"/></host>\n</nmaprun>\n')
+    app = NmapApp(prepare(load([scan])))
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.2)
+        await pilot.press("u")
+        await pilot.pause(0.2)
+        assert _cells(app) == ["203.0.113.9"], "up, by discovery"
+        await pilot.press("r")
+        await pilot.pause(0.3)
+        assert not app._rows
+        shown = _empty_text(app)
+        assert "No host has an open port" in shown and "u and r list every host" in shown
+
+
 async def test_up_toggle_filters_by_the_rule():
     app = _app("pn-asserted")
     async with app.run_test(size=(120, 30)) as pilot:
@@ -205,12 +268,15 @@ async def test_sorting_by_a_column_and_reversing_it():
         await pilot.pause(0.1)
         # .1 has 22+80 open, .2 has only 80 (22 is filtered), .3 is down
         assert [r.cells[4] for r in app._rows] == ["0", "1", "2"]
-        await pilot.press("5")            # picking the same column keeps it ascending
-        await pilot.pause(0.1)
-        assert [r.cells[4] for r in app._rows] == ["0", "1", "2"]
-        await pilot.press("r")            # `r` is the only thing that reverses
+        await pilot.press("5")            # the same column again reverses it
         await pilot.pause(0.1)
         assert [r.cells[4] for r in app._rows] == ["2", "1", "0"]
+        await pilot.press("5")            # and again flips it back
+        await pilot.pause(0.1)
+        assert [r.cells[4] for r in app._rows] == ["0", "1", "2"]
+        await pilot.press("2")            # another column starts ascending
+        await pilot.pause(0.1)
+        assert app._sort_col == 1 and not app._sort_desc
 
 
 async def test_sorting_respects_an_active_filter():
@@ -534,20 +600,21 @@ async def test_ip_addresses_sort_numerically_not_alphabetically():
     app = _app("pn-asserted")
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.1)
-        await pilot.press("1")
+        await pilot.press("4")                    # away from the address column,
+        await pilot.press("1")                    # so `1` sorts it ascending
         await pilot.pause(0.1)
         got = _cells(app)
         assert got == sorted(got, key=lambda a: tuple(int(p) for p in a.split("."))), got
         assert got[:3] == ["198.51.100.1", "198.51.100.2", "198.51.100.3"]
 
 
-async def test_reversing_the_sort_is_its_own_key():
+async def test_the_already_sorted_column_reverses_on_its_first_press():
+    """The list opens sorted by address; `1` names that column, so it reverses."""
     app = _app("pn-asserted")
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.press("1")
         await pilot.pause(0.1)
         ascending = _cells(app)
-        await pilot.press("r")
+        await pilot.press("1")
         await pilot.pause(0.1)
         assert _cells(app) == list(reversed(ascending))
 
@@ -560,7 +627,7 @@ async def test_the_sorted_column_is_named_in_the_status():
         status = _render(app.query_one("#status"))
         assert "sorted by 3 OS" in status
         assert "↑" in status
-        await pilot.press("r")
+        await pilot.press("3")
         await pilot.pause(0.1)
         assert "↓" in _render(app.query_one("#status"))
 
@@ -1142,12 +1209,13 @@ async def test_by_port_sorts_the_column_as_numbers():
             await pilot.press("b")
             await pilot.pause(0.1)
         assert app.view.title == "Grouped by port"
-        await pilot.press("1")              # sort by the Port column
-        await pilot.pause(0.2)
-        assert _cells(app) == ["80/tcp", "443/tcp", "8080/tcp"]
-        await pilot.press("r")
+        assert _cells(app) == ["80/tcp", "443/tcp", "8080/tcp"], "opens on the Port column"
+        await pilot.press("1")              # the sorted column again: reversed
         await pilot.pause(0.2)
         assert _cells(app) == ["8080/tcp", "443/tcp", "80/tcp"]
+        await pilot.press("1")
+        await pilot.pause(0.2)
+        assert _cells(app) == ["80/tcp", "443/tcp", "8080/tcp"]
 
 
 async def test_a_grouping_row_drills_on_into_one_hosts_record():
@@ -1216,7 +1284,7 @@ async def test_esc_comes_back_to_the_row_that_was_opened():
     app = _app("basic")
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.2)
-        await pilot.press("r")                           # reverse the host list
+        await pilot.press("1")                           # reverse the host list
         await pilot.pause(0.2)
         app.query_one(DataTable).move_cursor(row=1)
         opened = app._rows[1].cells[0]
@@ -1269,7 +1337,7 @@ async def test_the_section_machinery_is_a_no_op_in_every_other_view():
         await pilot.pause(0.2)
         assert all(not r.heading and r.section_rank == 0 for r in app._rows)
         assert _cells(app) == ["192.0.2.1", "192.0.2.2", "192.0.2.3"]
-        await pilot.press("r")
+        await pilot.press("1")                 # the sorted column again: reversed
         await pilot.pause(0.2)
         assert _cells(app) == ["192.0.2.3", "192.0.2.2", "192.0.2.1"]
 
@@ -1302,7 +1370,7 @@ async def test_reversing_a_sectioned_view_keeps_its_sections():
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.press("s")
         await pilot.pause(0.2)
-        await pilot.press("r")
+        await pilot.press("2")                 # opens on Count: again reverses it
         await pilot.pause(0.2)
         headings = [(i, label) for i, (label, _, h) in enumerate(_stats(app)) if h]
         assert [label for _, label in headings] == ["Coverage", "Services", "Ports"]
@@ -1426,7 +1494,8 @@ async def test_clicking_a_column_heading_sorts_by_it():
         table.post_message(DataTable.HeaderSelected(
             table, list(table.columns)[2], 2, label=Text("OS")))
         await pilot.pause(0.2)
-        assert app._sort_desc is False, "choosing a column does not reverse it"
+        assert app._sort_desc is True, "clicking the sorted heading again reverses it"
+        assert "3 OS ↓" in _render(app.query_one(DataTable))
 
 
 # --- the tab row follows the drill-down --------------------------------------
@@ -1549,7 +1618,7 @@ async def test_a_mark_survives_everything_that_rebuilds_the_list():
         assert _marks(app) == [("192.0.2.2",)]
 
         await _type(pilot, "alpha")            # filter it off screen
-        await pilot.press("r")                 # sort
+        await pilot.press("1")                 # sort
         await pilot.press("enter")             # drill in
         await pilot.pause(0.3)
         await pilot.press("escape")            # and back

@@ -37,6 +37,13 @@ practice:
   reason stay visible in the host record, unchanged.
 - **The export gains an "Up hosts" recipe** that uses the rule above. The
   "Hosts with open ports" and "All hosts" recipes stay as they are.
+- **`r` becomes the tighter companion of `u`**: hosts with at least one open
+  port. It toggles on its own and combines with `u`; on a host's port list it
+  means the same as `u` there (open ports only).
+- **A sort key reverses on a second press.** Choosing the column that is
+  already sorted (by number or by clicking its heading) reverses it, and again
+  flips it back. That frees `r`, which used to be the only way to reverse; the
+  command palette keeps a "Reverse sort" entry.
 
 Non-goals: no change to what `u` does on a host's own port list (open ports
 only). No new setting to choose between rules. No change to how a scan's

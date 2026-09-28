@@ -75,8 +75,8 @@ yourself replaces the drill-down. The filter box uses the same fuzzy grammar (`'
 | `Enter` | open the selected row — press again to keep digging |
 | `v` `V` | next / previous overview tab |
 | `/` | filter (`Enter` or `Esc` returns to the list) |
-| `1`…`9` | sort by that column, ascending — or click its heading |
-| `r` | reverse the sort |
+| `1`…`9` | sort by that column, ascending — or click its heading; again reverses it |
+| `r` | hosts with at least one open port only (on a host: open ports only) |
 | `d` | open the detail full-screen: searchable, `←`/`→` steps entries · `D` show / hide the pane |
 | `s` | statistics · `b` group by · `u` up hosts only (on a host: open ports only) |
 | `m` `M` | mark the selected row · clear every mark |
@@ -99,7 +99,8 @@ CSV with a header row, or JSON. Two worked examples:
 
 ```bash
 # every up host, for a focused re-scan
-#   Hosts tab → x → Up hosts → text → file   (the same list as u → All hosts)
+#   Hosts tab → x → Up hosts → text → file   (the same list as u → All hosts;
+#   r → All hosts gives the hosts with open ports)
 nmap -sV -iL up-hosts.txt
 
 # every web service, for screenshots
@@ -274,8 +275,10 @@ stays an ordinary fuzzy term and matches everything under it.
 Rows are clipped to fit the terminal rather than overflowing — the full value is
 in the detail pane, which scrolls with `←`/`→` when a record is long.
 
-Choosing a column and reversing are separate: a number always sorts ascending,
-`r` alone reverses. Addresses sort numerically, so `10.0.0.2` comes before
+A number (or a click on the heading) sorts by that column, ascending; the same
+column again reverses it, and again flips it back. The arrow in the heading and
+the status line say which column is sorted, so a list that opens sorted by its
+first column reverses on the first `1`. Addresses sort numerically, so `10.0.0.2` comes before
 `10.0.0.11`. While a filter is active the matched characters are highlighted in
 the list, so you can see why a row survived.
 

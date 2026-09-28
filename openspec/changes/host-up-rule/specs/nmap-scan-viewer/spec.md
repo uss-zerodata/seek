@@ -28,12 +28,19 @@ recorded state and reason available, and SHALL make it visible when a scan
 asserted more hosts up than the rule accepts, rather than silently reporting the
 asserted number. The interface SHALL call this state "up".
 
-The same key SHALL ask the same question of a single host's port list, the one
-list that shows closed and filtered ports as well as open ones: there it SHALL
-restrict the list to open ports, in place, without leaving the host. The choice
-SHALL carry to the next host opened, and SHALL be independent of the host-list
-filter. A host with no open port SHALL say so and name the key that lists every
-port.
+A second, tighter host-list filter SHALL keep only the hosts with at least one
+open port, on a key of its own. The two filters SHALL be independent toggles
+that combine; since every host with an open port is up, both together SHALL
+list the same hosts as the tighter one alone, and turning either off SHALL leave
+the other as it was. From any other overview, either key SHALL go to the host
+list and apply there. The list's title SHALL name the filters that are on.
+
+Both keys SHALL ask the same question of a single host's port list, the one
+list that shows closed and filtered ports as well as open ones: there either
+SHALL restrict the list to open ports, in place, without leaving the host. The
+choice SHALL carry to the next host opened, and SHALL be independent of the
+host-list filters. A host with no open port SHALL say so and name the key that
+lists every port.
 
 #### Scenario: A `-Pn` scan does not report every target as up
 - **WHEN** a scan run with `-Pn` marks 255 targets `up` with reason `user-set`, and only 9 of them have an open port
@@ -63,8 +70,20 @@ port.
 - **WHEN** the user filters the host view to up hosts in a scan set that mixes `-Pn` and discovery scans
 - **THEN** exactly the hosts with an open port or a recorded discovery `up` are listed
 
+#### Scenario: Filtering to hosts with an open port
+- **WHEN** the user presses `r` on a host list holding a `-Pn` host with an open port, a host that answered discovery with no open port, and a `-Pn` host with neither
+- **THEN** only the first is listed, and the title says the list is limited to open ports
+
+#### Scenario: The two filters combine
+- **WHEN** both `u` and `r` are on and the user presses `r` again
+- **THEN** the list shows every up host, and `u` is still on
+
+#### Scenario: The open-port filter from another tab
+- **WHEN** the user presses `r` on the statistics tab
+- **THEN** the host list is shown, limited to hosts with an open port
+
 #### Scenario: A host's ports filtered to the open ones
-- **WHEN** a host's port list shows two open ports and one closed, and the user presses `u`
+- **WHEN** a host's port list shows two open ports and one closed, and the user presses `u` or `r`
 - **THEN** only the two open ports are listed, the host stays open, and the host list is not filtered
 
 #### Scenario: A host with no open port
@@ -280,6 +299,10 @@ to report, and the message SHALL sit inside the same region the rows occupy.
 - **WHEN** the up-only host list has no host that is up
 - **THEN** the message says that no host is up and names the key that lists every host
 
+#### Scenario: Two options emptied the list
+- **WHEN** both host-list filters are on and no host has an open port
+- **THEN** the message says that no host has an open port and names both keys
+
 #### Scenario: Empty because the work is not finished
 - **WHEN** the host list has no rows because the scans are still being read
 - **THEN** the message says the reading is still going and how far it has got, and is distinct from the settled no-hosts message
@@ -445,3 +468,65 @@ written once.
 #### Scenario: Repeated rows collapse
 - **WHEN** the chosen fields are the address alone and several marked services belong to one host
 - **THEN** that address is written once
+
+### Requirement: Sorting
+Each view SHALL allow sorting by any of its columns, in ascending and descending
+order, and SHALL indicate which column is sorted and in which direction, both on
+the column itself and in the status line. Sorting SHALL apply to the filtered set.
+
+Choosing a column SHALL sort by it ascending; choosing the column that is
+already sorted SHALL reverse the order, and choosing it again SHALL reverse it
+back. Which column counts as already sorted SHALL be the one the view indicates,
+including the order a view opens in. Values SHALL be ordered by their meaning rather than their text —
+in particular IP addresses SHALL sort numerically, so that `10.0.0.2` precedes
+`10.0.0.11`, and port numbers SHALL sort numerically even where they are shown
+as part of a label such as `80/tcp`.
+
+A view SHALL be able to declare the order it opens in, so that a list arrives in
+the order that is useful for what it shows rather than always ascending by its
+first column. In a view divided into sections, sorting SHALL order the lines
+within each section.
+
+Clicking a column heading SHALL sort by that column, so the sort is reachable
+without knowing a key.
+
+#### Scenario: Sort by a column
+- **WHEN** the user sorts the host view by service count
+- **THEN** hosts are ordered by that count and the view indicates the sorted column and direction
+
+#### Scenario: Reversing a sort
+- **WHEN** the user sorts by a column and then chooses the same column again
+- **THEN** the order reverses, and choosing it a third time restores ascending order
+
+#### Scenario: Another column starts ascending
+- **WHEN** the list is sorted descending by one column and the user chooses another
+- **THEN** the list is sorted by the new column in ascending order
+
+#### Scenario: The opening order counts as chosen
+- **WHEN** a list opens sorted by its first column and the user chooses that column
+- **THEN** the order reverses
+
+#### Scenario: Addresses sort numerically
+- **WHEN** a host list containing `10.0.0.2`, `10.0.0.11` and `10.0.0.100` is sorted by address
+- **THEN** they are ordered `10.0.0.2`, `10.0.0.11`, `10.0.0.100`
+
+#### Scenario: Ports sort numerically
+- **WHEN** a list containing ports `80/tcp`, `443/tcp` and `8080/tcp` is sorted by its port column
+- **THEN** they are ordered `80/tcp`, `443/tcp`, `8080/tcp`
+
+#### Scenario: A view opens in its own order
+- **WHEN** the statistics view is opened
+- **THEN** its service and port lines are ordered by how often they occur, not alphabetically
+
+#### Scenario: Sorting a sectioned view
+- **WHEN** the user sorts the statistics view by one of its columns
+- **THEN** the lines are ordered within each section and the headings stay at the top of their own section
+
+#### Scenario: Sorting by clicking a heading
+- **WHEN** the user clicks the heading of a column
+- **THEN** the list is sorted by that column, as if its number had been pressed,
+  and clicking it again reverses the order
+
+#### Scenario: Sorting respects the filter
+- **WHEN** a filter is active and the user sorts
+- **THEN** only the filtered rows are ordered, and the filter stays applied
