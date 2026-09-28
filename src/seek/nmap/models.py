@@ -173,6 +173,10 @@ class ScanFile:
     args: str = ""
     hosts: list[Host] = field(default_factory=list)
     start: int | None = None        # <nmaprun start="..."> as a unix epoch
+    # What the scan is called everywhere it is named - provenance, the Scans
+    # tab, failures, exports. The file name unless several directories were
+    # read, where two `scan.xml` would otherwise be one source (`merge.naming`).
+    label: str = ""
 
     def __repr__(self) -> str:
         """A summary, for the same reason `ScanSet` has one.
@@ -182,11 +186,16 @@ class ScanFile:
         that entry is handed to - would pay for that the moment something
         printed it, and Textual prints a worker's arguments.
         """
-        return f"ScanFile({self.path.name}, {len(self.hosts)} host(s))"
+        return f"ScanFile({self.name}, {len(self.hosts)} host(s))"
 
     @property
     def name(self) -> str:
-        return self.path.name
+        return self.label or self.path.name
+
+    @property
+    def stem(self) -> str:
+        """The name without its extension, for lists that show many scans."""
+        return self.name.removesuffix(self.path.suffix)
 
     @property
     def disabled_ping(self) -> bool:

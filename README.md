@@ -27,7 +27,17 @@ seek nmap                                # every scan under the working director
 seek nmap scan.xml                       # one scan
 seek nmap discovery.xml services.xml     # consolidated
 seek nmap scans/                         # every scan under a directory
+seek nmap site-a/ site-b/ day2/          # several directories, one merged view
 ```
+
+Several directories are read as one engagement. A scan found through two of
+them (a directory and one of its subdirectories, say) is read once. Their scans
+are then named by where they sit below the directories' common parent —
+`site-a/scan.xml`, `site-b/scan.xml` — everywhere a scan is named, because tools
+write the same file names into every directory and a bare `scan.xml` could be
+either. Screenshot captures are read from every directory's `gowitness/`. Scans
+and captures started in the viewer write into the **first** directory; the
+status line, the scan review and the capture entry say so before anything runs.
 
 A directory is searched all the way down, so an engagement directory whose scans
 sit in per-phase or per-target subdirectories can be named instead of its files,

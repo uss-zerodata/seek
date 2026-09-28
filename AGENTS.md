@@ -256,6 +256,16 @@ stdout, `cd`) cannot run while Textual owns the screen. They set
 - **Stateless.** The files named on the command line are the whole truth for a
   run: no import, no database, nothing written but an explicit export. Parsing
   1.4 MB takes ~11 ms, so there is no performance argument for caching.
+- **A scan's label is unique within a run; provenance is per file, never per
+  file name.** `merge.naming(roots)` decides it once, from the command line:
+  the bare file name for one directory or for files, the path below the
+  directories' common parent for two or more. Merging unions `sources` *as
+  strings*, so two `scan.xml` labelled alike were one source and a host seen in
+  both read as seen once. The naming rides on `Pending` and the viewer keeps it
+  (`NmapApp._name`) so a re-read after a finished scan names every file exactly
+  as the first read did. Anything that shows a scan uses `ScanFile.name` /
+  `.stem`, never `path.name`. Captures are read from every directory given;
+  output goes to the first, and the status line says so when there are several.
 - **`line_no`-style split, again:** a host's *recorded* state (`state`/`reason`)
   and whether it is `up` are different things. `-Pn` makes nmap report `up`
   with reason `user-set` for every target — 255 of 256 in the real sample, 9 of

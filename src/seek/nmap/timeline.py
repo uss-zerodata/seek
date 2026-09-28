@@ -62,12 +62,6 @@ class Scan:
         return self.added.summary()
 
 
-def _stem(path: Path) -> str:
-    """A readable label from the filename, without seek's own prefix noise."""
-    name = path.stem
-    return name
-
-
 def build(files: list[ScanFile], report: Report | None = None) -> list[Scan]:
     """The scan history, oldest first, each diffed against the merged prior.
 
@@ -103,7 +97,7 @@ def build(files: list[ScanFile], report: Report | None = None) -> list[Scan]:
         # list does, rather than in whatever order one file happened to use.
         scanned.sort(key=seen.__getitem__)
         out.append(Scan(
-            label=_stem(sf.path),
+            label=sf.stem,
             path=sf.path,
             start=sf.start,
             hosts=sf.hosts,

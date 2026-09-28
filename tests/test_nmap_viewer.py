@@ -2043,3 +2043,74 @@ async def test_a_web_service_lists_the_vhosts_to_try_against_it():
         shown = _render(app.query_one("#detail-body"))
         assert "https://blog.example.test" in shown
         assert "https://www.example.test" in shown
+
+
+# --- several directories ----------------------------------------------------
+
+
+async def test_same_named_scans_in_two_directories_are_both_listed(tmp_path):
+    import shutil
+
+    from seek.nmap.merge import Pending, discover, naming
+
+    for name, src in (("x", "merge-a"), ("y", "merge-b")):
+        (tmp_path / name).mkdir()
+        shutil.copy(FIX / f"{src}.xml", tmp_path / name / "scan.xml")
+    roots = [tmp_path / "x", tmp_path / "y"]
+    app = NmapApp(Pending(discover(roots), naming(roots)), sources=roots,
+                  config=Config(nmap_path="/nonexistent/nmap"))
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause(0.5)
+        row = next(i for i, r in enumerate(app._rows) if r.cells[0] == "192.0.2.40")
+        app.query_one(DataTable).move_cursor(row=row)
+        await pilot.pause(0.3)
+        record = _render(app.query_one("#detail-body"))
+        assert "x/scan" in record and "y/scan" in record, "one entry per file"
+        app.query_one(Tabs).active = "scans"
+        await pilot.pause(0.5)
+        labels = " ".join(" ".join(r.cells) for r in app._rows)
+        assert "x/scan" in labels and "y/scan" in labels
+
+
+GW_DB = Path(__file__).parent / "fixtures" / "gowitness" / "capture.sqlite3"
+
+
+def _capture_in(root):
+    from seek.gowitness.capture import capture_dir
+
+    paths = capture_dir(root)
+    paths.root.mkdir(parents=True)
+    paths.db.write_bytes(GW_DB.read_bytes())
+
+
+def _opened_on(tmp_path, *with_capture):
+    from seek.nmap.models import ScanSet
+
+    roots = []
+    for name in ("x", "y"):
+        (tmp_path / name).mkdir()
+        roots.append(tmp_path / name)
+        if name in with_capture:
+            _capture_in(tmp_path / name)
+    return NmapApp(ScanSet(), Config(nmap_path="/nonexistent/nmap"),
+                   sources=roots, scan_dir=roots[0])
+
+
+async def test_a_capture_in_the_second_directory_is_read(tmp_path):
+    app = _opened_on(tmp_path, "y")
+    assert len(app.shots) == 7, "read, although output goes to the first directory"
+    assert [run.label for run in app.captures.runs] == ["capture · y/gowitness"]
+
+
+async def test_captures_in_both_directories_are_both_listed(tmp_path):
+    app = _opened_on(tmp_path, "x", "y")
+    assert len(app.shots) == 7, "the same URLs, one result each"
+    assert [run.label for run in app.captures.runs] == [
+        "capture · x/gowitness", "capture · y/gowitness"]
+    assert all(run.total == 7 for run in app.captures.runs), "each counts its own"
+
+
+async def test_no_capture_anywhere_is_silent(tmp_path):
+    app = _opened_on(tmp_path)
+    assert len(app.shots) == 0 and app.shots.problems == []
+    assert app.captures.runs == []

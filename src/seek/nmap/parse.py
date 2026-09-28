@@ -93,10 +93,15 @@ def _host(el: ET.Element, source: str) -> Host:
     )
 
 
-def parse_file(path: Path) -> ScanFile:
-    """Parse one nmap XML file. Raises :class:`NmapParseError` on anything else."""
+def parse_file(path: Path, label: str | None = None) -> ScanFile:
+    """Parse one nmap XML file. Raises :class:`NmapParseError` on anything else.
+
+    `label` is what the scan is called - stamped on every host and service as
+    their source. The file name when not given; `merge.naming` qualifies it by
+    directory when several directories are read.
+    """
     hosts: list[Host] = []
-    source = path.name
+    source = label or path.name
     try:
         stream = ET.iterparse(path, events=("start", "end"))
         _, root = next(stream)
@@ -115,4 +120,5 @@ def parse_file(path: Path) -> ScanFile:
     except StopIteration:
         raise NmapParseError(f"{path}: empty file") from None
     return ScanFile(path=path, args=args, hosts=hosts,
-                    start=int(start) if start and start.isdigit() else None)
+                    start=int(start) if start and start.isdigit() else None,
+                    label=source)

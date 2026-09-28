@@ -95,8 +95,8 @@ def nmap(
     paths: Annotated[
         list[Path] | None,
         typer.Argument(
-            help="nmap XML files, or directories to search (default: the "
-                 "working directory).",
+            help="nmap XML files and directories to search, as many as you "
+                 "like, merged into one view (default: the working directory).",
         ),
     ] = None,
 ) -> None:
@@ -104,12 +104,14 @@ def nmap(
 
     A directory is searched all the way down, so an engagement directory can be
     named instead of its files; with nothing named at all the working directory
-    is searched, which is where a scan was run from.
+    is searched, which is where a scan was run from. Several directories are
+    read as one engagement; their scans are then named by directory
+    (`dir1/scan.xml`), and scans started in the viewer write into the first.
 
     Stateless: the files found are read straight into memory for this run, with
     no import step and nothing written.
     """
-    from seek.nmap.merge import Pending, discover
+    from seek.nmap.merge import Pending, discover, naming
 
     # The working directory is the engagement directory often enough that
     # naming it adds nothing, and it is the directory a scan started here would
@@ -155,14 +157,14 @@ def nmap(
     scan_dir = first if first.is_dir() else Path.cwd()
     # The paths given are the sources: a directory keeps covering whatever a
     # scan writes into it, so a finished run needs no special case.
-    raise typer.Exit(code=run_viewer(Pending(candidates), config,
+    raise typer.Exit(code=run_viewer(Pending(candidates, naming(paths)), config,
                                      sources=[Path(p) for p in paths],
                                      scan_dir=scan_dir))
 
 
 _OTHER_COMMANDS = (
     "Other commands (run `seek <command> --help`):\n"
-    "  seek nmap [files|dir]   browse or run nmap scans\n"
+    "  seek nmap [files|dirs]  browse or run nmap scans, several merged into one\n"
     "  seek init <bash|zsh>    print shell-integration code"
 )
 

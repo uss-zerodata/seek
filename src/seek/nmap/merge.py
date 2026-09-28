@@ -10,6 +10,8 @@ for a run. Nothing is cached, indexed or written.
 
 from __future__ import annotations
 
+import os
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -112,6 +114,49 @@ def discover(paths: list[Path], report: Report | None = None) -> list[Path]:
     return out
 
 
+# What a scan is called, given its path. One function per run, built once from
+# the command line, so every file - read at start, or written by a scan later -
+# is named the same way.
+Naming = Callable[[Path], str]
+
+
+def bare(path: Path) -> str:
+    """The file name alone: one directory, or files named directly."""
+    return path.name
+
+
+def naming(roots: Iterable[Path]) -> Naming:
+    """How to name the scans found under `roots`.
+
+    With fewer than two directories a scan is its file name, as it always was.
+    With two or more, the file name no longer identifies it - presets and tools
+    write the same names everywhere, and two `scan.xml` merged as one source
+    recorded a host seen in both as seen once. Every scan is then named by its
+    path below the directories' common parent: `x/scan.xml`, `y/sub/scan.xml`.
+    All of them rather than only the colliding ones, so a name says where a
+    scan came from on its own and does not change when a later scan collides.
+    """
+    dirs: list[Path] = []
+    for root in roots:
+        try:
+            if Path(root).is_dir():
+                dirs.append(Path(root).resolve())
+        except OSError:
+            continue
+    dirs = list(dict.fromkeys(dirs))
+    if len(dirs) < 2:
+        return bare
+    base = Path(os.path.commonpath(dirs))
+
+    def name(path: Path) -> str:
+        try:
+            return path.resolve().relative_to(base).as_posix()
+        except (OSError, ValueError):           # a file named outside them all
+            return str(path.absolute())
+
+    return name
+
+
 # The name this had before discovery and reading were separable. Kept because
 # it says something `discover` does not - that a directory is *expanded* into
 # the files it holds - and because it is what the tests ask for.
@@ -130,6 +175,8 @@ class Pending:
     """
 
     paths: list[Path] = field(default_factory=list)
+    # How to name what is read - decided by the command, which has the roots.
+    name: Naming = bare
 
     def __len__(self) -> int:
         return len(self.paths)
@@ -294,7 +341,8 @@ def addr_key(addr: str) -> tuple:
     return (1, (), addr)
 
 
-def read(paths: list[Path], report: Report | None = None) -> ScanSet:
+def read(paths: list[Path], report: Report | None = None,
+         name: Naming = bare) -> ScanSet:
     """Parse the files named, in the order given, and consolidate them.
 
     Discovery has already happened: `paths` are files, not directories. Split
@@ -308,9 +356,9 @@ def read(paths: list[Path], report: Report | None = None) -> ScanSet:
     total = len(paths)
     for done, path in enumerate(paths, start=1):
         try:
-            acc.add(parse_file(path))
+            acc.add(parse_file(path, name(path)))
         except NmapParseError as exc:
-            failures.append((path.name, str(exc)))
+            failures.append((name(path), str(exc)))
         if report is not None:
             report(done, total, FILES)
     scans = acc.snapshot()
@@ -318,11 +366,13 @@ def read(paths: list[Path], report: Report | None = None) -> ScanSet:
     return scans
 
 
-def load(paths: list[Path], report: Report | None = None) -> ScanSet:
+def load(paths: list[Path], report: Report | None = None,
+         name: Naming | None = None) -> ScanSet:
     """Discover and read. Unreadable files are reported, never fatal.
 
     `report` is called as the search walks (files found, against a total of
     zero, because the walk cannot know it yet) and again as each file is read
-    (files read, out of files found).
+    (files read, out of files found). Scans are named from `paths` unless a
+    naming is given - a caller re-reading after a scan passes the run's own.
     """
-    return read(discover(paths, report), report)
+    return read(discover(paths, report), report, name or naming(paths))

@@ -1133,3 +1133,27 @@ async def test_stepping_shows_the_same_record_the_pane_shows(tmp_path):
         pane = _render(app.query_one("#detail-body"))
         for token in app._rows[1].cells[0].split():
             assert token in reader_text and token in pane
+
+
+async def test_opened_on_two_directories_a_scan_writes_into_the_first(tmp_path):
+    roots = [tmp_path / "x", tmp_path / "y"]
+    for root in roots:
+        root.mkdir()
+    config = Config(nmap_path=_stub(tmp_path), nmap_presets={"Quick": "-sV"})
+    app = NmapApp(prepare(load([FIX / "basic.xml"])), config, sources=roots,
+                  scan_dir=roots[0])
+    async with app.run_test(size=(220, 40)) as pilot:
+        await pilot.pause(0.3)
+        assert "output → " in _render(app.query_one("#status")), "said before anything runs"
+        await pilot.press("n")
+        await pilot.pause(0.4)
+        app.screen.query_one(TextArea).text = "10.0.0.1\n"
+        await pilot.pause(0.3)
+        await pilot.press("ctrl+s")
+        await pilot.pause(0.4)
+        await _choose(pilot, app, "Quick")
+        await pilot.press("ctrl+s")
+        await pilot.pause(0.5)
+        assert isinstance(app.screen, ReviewScreen)
+        shown = _modal_text(app).replace("\n", "")
+        assert str(roots[0]) in shown and str(roots[1]) not in shown

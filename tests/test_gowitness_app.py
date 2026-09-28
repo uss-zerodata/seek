@@ -659,3 +659,20 @@ async def test_the_three_follow_states_read_differently(tmp_path):
     assert "frozen" in frozen and "still running" in frozen
     assert len({following, paused, frozen}) == 3
     assert follow_note(False, False, True)[0] == "", "a finished run says nothing"
+
+
+async def test_the_capture_entry_names_where_it_will_write(tmp_path):
+    """Opened on two directories, output goes to the first - said before it runs."""
+    roots = [tmp_path / "x", tmp_path / "y"]
+    for root in roots:
+        root.mkdir()
+    app = NmapApp(prepare(load([FIX / "basic.xml"])), Config(), sources=roots,
+                  scan_dir=roots[0])
+    app.gowitness = Probe(backend="docker", path="/usr/bin/docker",
+                          image="ghcr.io/sensepost/gowitness")
+    async with app.run_test(size=(160, 30)) as pilot:
+        await pilot.pause(0.3)
+        await pilot.press("x")
+        await pilot.pause(0.4)
+        label = dict(app.screen._choices)["capture"]
+        assert label.endswith("x/gowitness"), label

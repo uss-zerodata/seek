@@ -72,7 +72,7 @@ class Entry:
 
     @property
     def label(self) -> str:
-        return self.scan.path.stem
+        return self.scan.stem
 
     @property
     def written(self) -> bool:

@@ -33,6 +33,7 @@ from seek.gowitness import detect as gw_detect
 from seek.gowitness import results as gw_results
 from seek.nmap import bulk, filtering, rawlog, timeline
 from seek.nmap import export as exporter
+from seek.nmap import merge as merge_mod
 from seek.nmap import presets as presets_mod
 from seek.nmap import views as proj
 from seek.nmap.diff import ScanDiff, diff_from, snapshot
@@ -465,6 +466,14 @@ class NmapApp(App[int]):
         # Where a scan writes, and what to re-read when one finishes. Both are
         # the launch directory unless the config says otherwise.
         self.sources: list[Path] = list(sources or [])
+        # How scans are named for the whole run - the reading worker's and a
+        # re-read after a finished scan's - so a file never changes its name
+        # between the two. Built from the sources when a model was handed in.
+        self._name: merge_mod.Naming = (
+            pending.name if pending is not None else merge_mod.naming(self.sources))
+        # Decided once: the status line asks on every redraw, and a `stat` per
+        # source per draw is the kind of cost the record pane had to shed.
+        self._several_dirs = sum(1 for p in self.sources if p.is_dir()) > 1
         self.scan_dir = Path(self.config.scan_output_dir or scan_dir or Path.cwd())
         self.nmap = presets_mod.probe(self.config.nmap_path)
         self.gowitness = gw_detect.probe(self.config.gowitness_mode,
@@ -1192,6 +1201,9 @@ class NmapApp(App[int]):
         total_runs = len(self.runner.runs) + len(self.captures.runs)
         if total_runs:
             right.append(f"  ·  {total_runs} run(s)", style="dim")
+        if self._several_dirs:
+            # Opened on several directories, output goes to only one of them.
+            right.append(f"  ·  output → {_short(self.scan_dir)}", style="dim")
         # Symbol and words, never colour alone: whether a scan can be started at
         # all is worth knowing before reaching for the key that starts one.
         if self._sort_col < len(self.view.columns):
@@ -1900,13 +1912,42 @@ class NmapApp(App[int]):
                 *actions.opener_argv(url),
                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
 
-    def _load_captures(self) -> None:
-        """Read the capture directory. Absence is the ordinary case, not an error."""
-        paths = gw_capture.capture_dir(self.scan_dir)
-        self.shots.load(paths.db, paths.shots)
-        self._register_disk_capture(paths)
+    def _capture_dirs(self) -> list[gw_capture.Paths]:
+        """Where captures can be: the one output goes to, then the one under
+        each directory the viewer was opened on. Several directories are one
+        engagement, and a capture in the second is as much its result as one
+        in the first."""
+        roots = [self.scan_dir] + [p for p in self.sources if p.is_dir()]
+        out: list[gw_capture.Paths] = []
+        for root in roots:
+            paths = gw_capture.capture_dir(root)
+            if paths not in out:
+                out.append(paths)
+        return out
 
-    def _register_disk_capture(self, paths: gw_capture.Paths) -> None:
+    def _load_captures(self) -> None:
+        """Read every capture directory. Absence is the ordinary case, not an error.
+
+        Read one by one rather than through `Captures.load`, so each directory's
+        own URLs are known: a run listed for it counts those, not everyone's.
+        """
+        dirs = self._capture_dirs()
+        for paths in dirs:
+            captures, problems = gw_results.read_database(paths.db, paths.shots)
+            self.shots.add(captures)
+            self.shots.problems.extend(problems)
+            where = ""
+            if len(dirs) > 1:
+                # Named like the scans beside it; a run whose scans keep bare
+                # names (one directory plus a configured output directory)
+                # would call both "gowitness", so that case shows the path.
+                where = self._name(paths.root)
+                if where == paths.root.name:
+                    where = str(paths.root)
+            self._register_disk_capture(paths, [c.url for c in captures], where)
+
+    def _register_disk_capture(self, paths: gw_capture.Paths, urls: list[str],
+                               where: str = "") -> None:
         """List a capture that exists on disk but was not run in this session.
 
         Without this the Scans tab is empty after a restart even though the
@@ -1914,15 +1955,14 @@ class NmapApp(App[int]):
         rule the scan history follows, where what is on disk is listed whoever
         produced it.
         """
-        if not paths.db.exists() or not self.shots:
+        if not paths.db.exists() or not urls:
             return
         # A run started here already stands for this directory; a second row
         # would be the same capture listed twice.
         if any(getattr(run, "paths", None) == paths for run in self.captures.runs):
             return
-        urls = self.shots.urls()
         self.captures.runs.append(
-            gw_capture.from_disk(paths, urls, captured=len(urls)))
+            gw_capture.from_disk(paths, urls, captured=len(urls), where=where))
 
     def _stop_report_server(self) -> None:
         """Never leave a web server running behind a closed viewer."""
@@ -2004,7 +2044,7 @@ class NmapApp(App[int]):
         try:
             # The other owner of a long phase; see `_build_rows`.
             with bulk.bulk(), bulk.responsive():
-                scans = prepare(load(paths, report))
+                scans = prepare(load(paths, report, self._name))
         except _Abandoned:
             return
         except Exception as exc:                      # noqa: BLE001 - report, never crash
@@ -2029,7 +2069,7 @@ class NmapApp(App[int]):
                           exc: Exception) -> None:
         if self._busy is not None and self._busy.token == token:
             self._busy = None
-        self.notify(f"{run.xml_path.name} could not be read: {exc}",
+        self.notify(f"{self._name(run.xml_path)} could not be read: {exc}",
                     severity="error")
         if not covered and self.sources and self.sources[-1] == run.xml_path:
             self.sources.pop()
@@ -2067,13 +2107,14 @@ class NmapApp(App[int]):
             for done, path in enumerate(paths, start=1):
                 if self._read_token != token:       # a re-read superseded this
                     return
+                label = self._name(path)
                 try:
-                    acc.add(parse_file(path))
+                    acc.add(parse_file(path, label))
                     unread = True
                 except NmapParseError as exc:
-                    failures.append((path.name, str(exc)))
+                    failures.append((label, str(exc)))
                 except Exception as exc:            # noqa: BLE001 - never crash
-                    failures.append((path.name, str(exc)))
+                    failures.append((label, str(exc)))
                 now = time.monotonic()
                 snapshot = None
                 if unread and now - last >= _PUBLISH_EVERY and done < total:
@@ -2973,8 +3014,11 @@ class NmapApp(App[int]):
         # hundred URLs is a capture measured in minutes.
         urls = len(self._capture_urls(records))
         if self.gowitness.available:
+            # Where it will write, before it writes: with several directories
+            # the first is only a default, and it should not be a surprise.
+            where = _short(gw_capture.capture_dir(self.scan_dir).root)
             choices.append(("capture",
-                            f"capture {urls} url(s) with gowitness…"))
+                            f"capture {urls} url(s) with gowitness… → {where}"))
         else:
             disabled.add("capture")
             choices.append(("capture",
@@ -3036,6 +3080,15 @@ class NmapApp(App[int]):
             self.notify(f"wrote {path}")
         except OSError as exc:
             self.notify(f"write failed: {exc}", severity="error")
+
+
+def _short(path: Path) -> str:
+    """A directory as the user would type it: relative to where seek was started
+    when it is below it, absolute otherwise."""
+    try:
+        return path.resolve().relative_to(Path.cwd().resolve()).as_posix() or "."
+    except (OSError, ValueError):
+        return str(path)
 
 
 def _rows_of(renderable: RenderableType, width: int) -> int:

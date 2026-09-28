@@ -93,7 +93,7 @@ class Paths:
         return self.root / SHOTS_NAME
 
 
-def from_disk(paths: Paths, urls: list[str], captured: int) -> CaptureRun:
+def from_disk(paths: Paths, urls: list[str], captured: int, where: str = "") -> CaptureRun:
     """A finished capture that this session did not run.
 
     The Scans tab lists what is on disk whoever produced it - the same
@@ -105,7 +105,7 @@ def from_disk(paths: Paths, urls: list[str], captured: int) -> CaptureRun:
     with contextlib.suppress(OSError):
         when = datetime.fromtimestamp(paths.db.stat().st_mtime).strftime("%m-%d %H:%M")
     run = CaptureRun(argv=[], paths=paths, urls=urls, backend="on disk",
-                     captured=captured, recorded=when)
+                     captured=captured, recorded=when, where=where)
     run.state = State.DONE
     run.ended = run.started
     run.result = run.summarise()
@@ -212,6 +212,9 @@ class CaptureRun(Run):
     # url -> why it could not be captured. Kept here because it is the only
     # place it exists: the results file has no line for a failed target.
     failures: dict[str, str] = field(default_factory=dict)
+    # Which directory's capture this is, when the viewer was opened on several
+    # and "capture" alone would list two runs under one name.
+    where: str = ""
 
     @property
     def failed(self) -> int:
@@ -219,7 +222,7 @@ class CaptureRun(Run):
 
     @property
     def label(self) -> str:
-        return "capture"
+        return f"capture · {self.where}" if self.where else "capture"
 
     @property
     def scope(self) -> str:

@@ -229,3 +229,50 @@ def test_omitting_a_file_removes_its_contribution():
     assert "192.0.2.42" not in [h.address for h in without_b.hosts]
     assert _host(without_b, "192.0.2.40").os is None, "B's OS must not persist"
     assert _host(without_b, "192.0.2.40").hostname is None
+
+
+# --- several directories ----------------------------------------------------
+
+
+def _two_dirs(tmp_path):
+    """`x/scan.xml` and `y/scan.xml`: the names tools write in every directory."""
+    for name, src in (("x", A), ("y", B)):
+        (tmp_path / name).mkdir()
+        shutil.copy(src, tmp_path / name / "scan.xml")
+    return tmp_path / "x", tmp_path / "y"
+
+
+def test_same_named_scans_in_two_directories_stay_two_sources(tmp_path):
+    x, y = _two_dirs(tmp_path)
+    scans = load([x, y])
+    assert scans.sources == ["x/scan.xml", "y/scan.xml"]
+    host = _host(scans, "192.0.2.40")               # in both files
+    assert host.sources == ["x/scan.xml", "y/scan.xml"], "seen in both, not once"
+    assert _svc(host, 22).sources == ["x/scan.xml", "y/scan.xml"]
+
+
+def test_every_scan_is_qualified_once_there_are_several_directories(tmp_path):
+    x, y = _two_dirs(tmp_path)
+    (y / "sub").mkdir()
+    shutil.copy(A, y / "sub" / "other.xml")         # collides with nothing
+    assert "y/sub/other.xml" in load([x, y]).sources
+
+
+def test_one_directory_or_files_keep_bare_names(tmp_path):
+    x, _ = _two_dirs(tmp_path)
+    assert load([x]).sources == ["scan.xml"]
+    assert load([A, B]).sources == ["merge-a.xml", "merge-b.xml"]
+    assert load([x, x]).sources == ["scan.xml"], "one directory named twice is one"
+
+
+def test_failures_are_named_by_directory_too(tmp_path):
+    for name in ("x", "y"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "scan.xml").write_text('<?xml version="1.0"?>\n<nmaprun scanner="nmap"')
+    failed = [name for name, _ in load([tmp_path / "x", tmp_path / "y"]).failures]
+    assert failed == ["x/scan.xml", "y/scan.xml"]
+
+
+def test_the_scan_file_carries_its_label(tmp_path):
+    x, y = _two_dirs(tmp_path)
+    assert [f.name for f in load([x, y]).files] == ["x/scan.xml", "y/scan.xml"]

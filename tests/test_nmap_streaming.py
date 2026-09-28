@@ -45,11 +45,11 @@ def _held(monkeypatch, release: threading.Event, after: int = 2):
     real = app_mod.parse_file
     seen = []
 
-    def held(path):
+    def held(path, label=None):
         seen.append(path)
         if len(seen) > after:
             release.wait(5)
-        return real(path)
+        return real(path, label)
 
     monkeypatch.setattr(app_mod, "parse_file", held)
 
