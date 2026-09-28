@@ -120,6 +120,30 @@ class Statistics:
         return self.asserted_up > self.up
 
 
+# Where two ports share a number, the protocol decides - tcp, then udp, then
+# the rest - so `8080/tcp` always precedes `8080/udp` rather than whichever the
+# model happened to hold first. Keys are all integers so the sort compares them
+# as numbers, never as the text "8080/tcp" (which puts 1000 before 22).
+_PROTO_ORDER = {"tcp": 0, "udp": 1, "sctp": 2}
+
+
+def port_key(port: int, protocol: str | None = None) -> tuple[int, int]:
+    """How a port sorts: by its number, then its protocol."""
+    return (port, _PROTO_ORDER.get((protocol or "").lower(), len(_PROTO_ORDER)))
+
+
+def label_key(label: str) -> tuple[int, int]:
+    """`port_key` for a `80/tcp` label; a label that is not one sorts last."""
+    number, _, protocol = label.partition("/")
+    return port_key(int(number), protocol) if number.isdigit() else (1 << 31, 0)
+
+
+def ports_key(labels: list[str]) -> tuple[int, ...]:
+    """A list of port labels as one key, compared port by port numerically -
+    so the cell `22/tcp, 80/tcp` sorts before `80/tcp, 443/tcp`."""
+    return tuple(n for label in labels for n in label_key(label))
+
+
 def statistics(hosts: list[Host], report: Report | None = None) -> Statistics:
     """Counts over the hosts given, so an active filter is respected."""
     counts: Counter[str] = Counter()
@@ -137,7 +161,7 @@ def statistics(hosts: list[Host], report: Report | None = None) -> Statistics:
             hosts_on[key].add(host.address)
             services_on[key].add(label)
     services = [
-        (name, count, sorted(ports_for[name], key=lambda p: int(p.split("/")[0])))
+        (name, count, sorted(ports_for[name], key=label_key))
         for name, count in counts.most_common()
     ]
     # Busiest port first, then by number - the same question the service
@@ -146,7 +170,7 @@ def statistics(hosts: list[Host], report: Report | None = None) -> Statistics:
         (f"{port}/{proto}", len(hosts_on[(port, proto)]),
          sorted(services_on[(port, proto)]))
         for port, proto in sorted(all_ports,
-                                  key=lambda k: (-len(hosts_on[k]), k[0], k[1]))
+                                  key=lambda k: (-len(hosts_on[k]), *port_key(*k)))
     ]
     return Statistics(
         targets=len(hosts),
@@ -155,7 +179,8 @@ def statistics(hosts: list[Host], report: Report | None = None) -> Statistics:
         with_open_ports=sum(1 for h in hosts if h.open_services),
         services=services,
         ports=ports,
-        open_ports=[f"{p}/{proto}" for p, proto in sorted(all_ports)],
+        open_ports=[f"{p}/{proto}" for p, proto in sorted(all_ports,
+                                                            key=lambda k: port_key(*k))],
     )
 
 

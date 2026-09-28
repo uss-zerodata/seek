@@ -85,7 +85,7 @@ class Grouping:
         if self._ports is None:
             self._ports = sorted(
                 {f"{s.port}/{s.protocol}" for _, s in self.members},
-                key=lambda p: int(p.split("/")[0]))
+                key=proj.label_key)
         return self._ports
 
 
@@ -266,7 +266,8 @@ def services_view() -> View:
                 target=g,
                 records=tuple(Record(h, s) for h, s in g.members),
                 addresses=tuple(h.address for h, _ in g.members),
-                sort_key=(g.port, g.protocol, g.name or "", g.product or "",
+                sort_key=(proj.port_key(g.port, g.protocol), g.protocol, g.name or "",
+                          g.product or "",
                           g.version or "", g.extrainfo or "",
                           g.host_count, g.vulnerability_count),
             ))
@@ -297,7 +298,8 @@ def host_detail(host: Host, only_open: bool = False) -> View:
                 host=host,
                 records=(Record(host, s),),
                 addresses=(host.address,),
-                sort_key=(s.port, s.state or "", s.name or "", s.product or "",
+                sort_key=(proj.port_key(s.port, s.protocol), s.state or "", s.name or "",
+                          s.product or "",
                           s.version or "", s.extrainfo or "",
                           len(s.vulnerabilities), ""),
             ))
@@ -350,7 +352,7 @@ def grouping_view(key: str) -> View:
             ports = group.ports
             # A `by port` label reads "443/tcp"; compared as text, 1000 sorts
             # before 22. The column sorts on the number the label starts with.
-            first: object = int(label.split("/")[0]) if key == "port" else label
+            first: object = proj.label_key(label) if key == "port" else label
             out.append(Row(
                 cells=(label, str(len(members)), str(len(addresses)),
                        ", ".join(ports[:6]) + (" …" if len(ports) > 6 else "")),
@@ -358,7 +360,7 @@ def grouping_view(key: str) -> View:
                 target=group,
                 records=tuple(Record(h, s) for h, s in group.members),
                 addresses=addresses,
-                sort_key=(first, len(members), len(addresses), ""),
+                sort_key=(first, len(members), len(addresses), proj.ports_key(ports)),
             ))
         return out
 
@@ -392,7 +394,8 @@ def grouping_detail(group: Grouping) -> View:
                 drill=host,
                 records=(Record(host, svc),),
                 addresses=(host.address,),
-                sort_key=(_addr(host.address), host.hostname or "", svc.port,
+                sort_key=(_addr(host.address), host.hostname or "",
+                          proj.port_key(svc.port, svc.protocol),
                           svc.name or "", svc.version or "",
                           len(svc.vulnerabilities), ""),
             ))
@@ -448,7 +451,7 @@ def names_view() -> View:
             hosts = list(hosts_for[name].values())
             members = list(members_for.get(name, {}).values())
             ports = sorted({f"{s.port}/{s.protocol}" for _, s in members},
-                           key=lambda p: int(p.split("/")[0]))
+                           key=proj.label_key)
             source = ", ".join(sorted(sources_for[name]))
             out.append(Row(
                 cells=(name, source, str(len(hosts)),
@@ -535,7 +538,7 @@ def statistics_view() -> View:
                 cells=(name, str(count), ", ".join(ports)),
                 text=f"{name} {' '.join(ports)}",
                 section="Services", section_rank=1,
-                sort_key=(name, count, ", ".join(ports)),
+                sort_key=(name, count, proj.ports_key(ports)),
                 target=Grouping(key="service", label=name, members=members),
                 records=tuple(Record(h, s) for h, s in members),
                 addresses=tuple(h.address for h, _ in members),
@@ -549,7 +552,7 @@ def statistics_view() -> View:
                 text=f"{label} {' '.join(names)}",
                 section="Ports", section_rank=2,
                 # The number, not the label: "1000/tcp" sorts before "22/tcp".
-                sort_key=(int(label.split("/")[0]), count, ", ".join(names)),
+                sort_key=(proj.label_key(label), count, ", ".join(names)),
                 target=Grouping(key="port", label=label, members=members),
                 records=tuple(Record(h, s) for h, s in members),
                 addresses=tuple(h.address for h, _ in members),

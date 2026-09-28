@@ -166,3 +166,65 @@ def test_groups_are_ordered_by_size():
 def test_the_projections_no_longer_carry_the_exporters():
     """`views` projects the model; `export` shapes a selection for another tool."""
     assert not [n for n in dir(views) if n.startswith("export_")]
+
+
+# --- sorting ports ------------------------------------------------------------
+
+
+_EXAMPLE = ["8080/tcp", "80/tcp", "22/tcp", "8080/udp", "443/tcp", "53/udp"]
+_SORTED = ["22/tcp", "53/udp", "80/tcp", "443/tcp", "8080/tcp", "8080/udp"]
+
+
+def _one_host_with(tmp_path, labels):
+    ports = "".join(
+        f'<port protocol="{label.split("/")[1]}" portid="{label.split("/")[0]}">'
+        f'<state state="open" reason="syn-ack" reason_ttl="64"/>'
+        f'<service name="svc{i}" method="table" conf="3"/></port>'
+        for i, label in enumerate(labels))
+    scan = tmp_path / "ports.xml"
+    scan.write_text(
+        '<?xml version="1.0"?>\n<nmaprun scanner="nmap" args="nmap -oX ports.xml '
+        '192.0.2.9" start="1756000000" version="7.94" xmloutputversion="1.05">\n'
+        '<host><status state="up" reason="syn-ack" reason_ttl="64"/>'
+        f'<address addr="192.0.2.9" addrtype="ipv4"/><ports>{ports}</ports></host>\n'
+        '</nmaprun>\n')
+    return views.prepare(load([scan]))
+
+
+def _sorted_by(rows, col, desc=False):
+    from seek.tui.nmap.app import _key_at
+
+    return [r.cells[col] for r in sorted(rows, key=lambda r: _key_at(r, col), reverse=desc)]
+
+
+def test_the_keys_order_by_number_then_protocol():
+    assert sorted(_EXAMPLE, key=views.label_key) == _SORTED
+    assert views.ports_key(["22/tcp", "80/tcp"]) < views.ports_key(["80/tcp", "443/tcp"])
+
+
+def test_a_hosts_ports_sort_by_number_not_text(tmp_path):
+    from seek.tui.nmap import views as vdefs
+
+    scans = _one_host_with(tmp_path, _EXAMPLE)
+    rows = vdefs.host_detail(scans.hosts[0]).rows(scans)
+    assert _sorted_by(rows, 0) == _SORTED
+    assert _sorted_by(rows, 0, desc=True) == list(reversed(_SORTED))
+
+
+def test_the_by_port_grouping_sorts_by_number(tmp_path):
+    from seek.tui.nmap import views as vdefs
+
+    scans = _one_host_with(tmp_path, _EXAMPLE)
+    rows = vdefs.grouping_view("port").rows(scans)
+    assert _sorted_by(rows, 0) == _SORTED
+
+
+def test_a_groupings_ports_column_is_sorted_at_all(tmp_path):
+    """Its sort key used to be an empty string: choosing it left the order as built."""
+    from seek.tui.nmap import views as vdefs
+
+    scans = views.prepare(load([FIX / "basic.xml", FIX / "vuln.xml"]))
+    rows = vdefs.grouping_view("service").rows(scans)
+    got = _sorted_by(rows, 3)
+    keys = [views.ports_key(cell.rstrip(" …").split(", ")) for cell in got]
+    assert keys == sorted(keys), got

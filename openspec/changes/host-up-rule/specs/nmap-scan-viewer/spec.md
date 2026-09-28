@@ -514,6 +514,14 @@ without knowing a key.
 - **WHEN** a list containing ports `80/tcp`, `443/tcp` and `8080/tcp` is sorted by its port column
 - **THEN** they are ordered `80/tcp`, `443/tcp`, `8080/tcp`
 
+#### Scenario: The protocol only breaks ties
+- **WHEN** a list holding `8080/tcp`, `80/tcp`, `22/tcp`, `8080/udp`, `443/tcp` and `53/udp` is sorted by its port column
+- **THEN** they are ordered `22/tcp`, `53/udp`, `80/tcp`, `443/tcp`, `8080/tcp`, `8080/udp`
+
+#### Scenario: A column listing several ports sorts numerically
+- **WHEN** a grouping is sorted by its Ports column
+- **THEN** its rows are ordered by their ports compared as numbers, first port first, and the ports within each cell are in the same order
+
 #### Scenario: A view opens in its own order
 - **WHEN** the statistics view is opened
 - **THEN** its service and port lines are ordered by how often they occur, not alphabetically
