@@ -62,8 +62,18 @@ appears in only one of them the user can tell which scan it came from.
 - **THEN** the consolidated host carries the observed state and reason
 ### Requirement: Malformed input is reported and skipped
 A file that cannot be parsed SHALL NOT abort the run. The system SHALL report
-which files failed and continue with those that succeeded. When no file can be
-parsed the system SHALL say so and exit without opening an empty viewer.
+which files failed and continue with those that succeeded.
+
+Whether a file can be parsed is only known once it has been read, and reading
+now happens with the viewer already open, so the system SHALL decide from what
+it can establish cheaply whether opening the viewer is worthwhile: whether any
+candidate scan file was found, and whether a scan could be started. When neither
+holds, the system SHALL say so and exit without opening the viewer, as before.
+
+When candidate files were found but every one of them fails to parse, the system
+SHALL report the failures in the viewer and SHALL say, where the rows would have
+been, that nothing could be read and which files failed — rather than appearing
+to be an engagement with no hosts in it.
 
 #### Scenario: One bad file among several
 - **WHEN** three files are given and one is truncated mid-document
@@ -75,7 +85,11 @@ parsed the system SHALL say so and exit without opening an empty viewer.
 
 #### Scenario: Nothing parseable
 - **WHEN** every given file fails to parse
-- **THEN** the system reports the failures and exits without opening the viewer
+- **THEN** the failures are reported and the viewer says that nothing could be read, naming the files that failed
+
+#### Scenario: Nothing to read and nothing to run
+- **WHEN** the given paths hold no candidate scan file and no scan can be started
+- **THEN** the system reports that and exits without opening the viewer
 ### Requirement: Host overview
 The system SHALL provide a view listing every host in the merged model with at
 least its address, its hostname, its operating system, and the number of services
@@ -569,6 +583,12 @@ full text of any script results and the full detail of any vulnerability records
 — identifier, title, state, severity where given, cross-reference identifiers,
 disclosure date and reference URLs.
 
+The scans that recorded the subject SHALL be listed as entries in their own
+right rather than named in a run of text, one per line, each carrying what that
+scan established about the subject — so that the record says not only which
+scans saw it but what each of them contributed, and so that each is separately
+openable as raw output.
+
 Where a host's state was asserted rather than observed, the detail SHALL say so.
 The pane SHALL be dismissible, and SHALL be dropped automatically when the
 terminal is too short to show it and a usable list at once.
@@ -584,6 +604,10 @@ terminal is too short to show it and a usable list at once.
 #### Scenario: Script output is reachable without navigating away
 - **WHEN** the cursor is on an entry carrying script results
 - **THEN** those scripts are listed with their output
+
+#### Scenario: The scans that saw the subject are listed one per line
+- **WHEN** the cursor is on a host seen by several scans
+- **THEN** each scan is a line of its own saying what it established, rather than a comma-separated list of file names
 
 #### Scenario: An asserted state is labelled in the detail
 - **WHEN** the cursor is on a host whose `up` state came from `-Pn` and which shows no evidence
@@ -757,18 +781,54 @@ value is available in the detail below. The layout SHALL follow a resize.
 #### Scenario: Widening restores detail
 - **WHEN** the terminal is made wider
 - **THEN** the columns are laid out again to use the space
-### Requirement: A long record can be scrolled
+### Requirement: A long record is navigated by a line cursor
 When the record for the selected row is taller than the space available, the user
-SHALL be able to scroll it without leaving the list or losing the selection.
-Moving to another row SHALL return the record to its top.
+SHALL be able to move through it without leaving the list or losing the selection.
+The pane SHALL be navigated by a cursor that moves one line at a time and is
+visibly distinguished from the rest of the record, rather than by scrolling with
+no indication of position: the record contains lines that can be acted on, and
+which line is current has to be answerable before one can be chosen.
 
-#### Scenario: Scrolling a long report
-- **WHEN** the selected row's record does not fit and the user scrolls it down
-- **THEN** the rest of the record is shown, and the selection is unchanged
+The pane SHALL keep the cursor in view, moving the record under it when the
+cursor reaches an edge of the visible region. Moving the list to another row
+SHALL return the cursor to the top of the new record.
+
+Most lines of a record cannot be acted on, so the system SHALL also let the user
+move the cursor directly to the next and to the previous line that can be, and
+SHALL make clear which lines those are. Reaching the end SHALL stop there rather
+than wrapping.
+
+The keys that move this cursor SHALL be distinct from those that move the list,
+so that neither moves the other, and SHALL keep working when the record contains
+no line that can be acted on — moving through it is how a long record is read.
+
+#### Scenario: Moving through a long report
+- **WHEN** the selected row's record does not fit and the user moves the pane cursor down
+- **THEN** the cursor moves down a line, the record scrolls once the cursor reaches the edge, and the list selection is unchanged
+
+#### Scenario: The current line is visible
+- **WHEN** the pane cursor is on a line
+- **THEN** that line is distinguished from the rest of the record
 
 #### Scenario: A new selection starts at the top
-- **WHEN** the user scrolls a record and then selects a different row
-- **THEN** the new record is shown from its beginning
+- **WHEN** the user moves the pane cursor down a record and then selects a different row
+- **THEN** the new record is shown from its beginning with the cursor on its first line
+
+#### Scenario: Jumping to the next line that can be opened
+- **WHEN** the record's openable entries are far below the cursor and the user presses the jump-to-next key
+- **THEN** the cursor moves to the next such line rather than a line at a time
+
+#### Scenario: Jumping past the last one
+- **WHEN** the cursor is on the last line that can be opened and the user jumps forward again
+- **THEN** the cursor stays where it is rather than wrapping to the first
+
+#### Scenario: A record with nothing to open
+- **WHEN** the record contains no line that can be opened
+- **THEN** the cursor still moves through it a line at a time and the record can still be read to its end
+
+#### Scenario: The two cursors are independent
+- **WHEN** the user moves the pane cursor
+- **THEN** the list selection does not move, and the keys that move the list do not move the pane cursor
 ### Requirement: An empty list explains itself
 A list with no rows SHALL say why it is empty and how to leave that state. It
 SHALL keep the column headers, which say what would be there, and place the
@@ -778,6 +838,12 @@ The wording SHALL follow the cause: a filter that matched nothing SHALL name the
 filter text and say that it can be cleared, and SHALL say how many rows are
 behind it; a list emptied by an option SHALL name the option that widens it; a
 scan with no hosts SHALL say that rather than appearing to have failed.
+
+A list that is empty only because the work behind it has not finished SHALL be
+distinguished from one that has settled with nothing in it, so that the user is
+never given a premature negative: while scans are still being read, or an
+overview is still being projected, the message SHALL say that the work is still
+running and SHALL say how far it has got.
 
 While a list is empty the record pane SHALL be hidden, since there is no record
 to report, and the message SHALL sit inside the same region the rows occupy.
@@ -793,6 +859,10 @@ to report, and the message SHALL sit inside the same region the rows occupy.
 #### Scenario: An option emptied the list
 - **WHEN** the reachable-only host list has no hosts with evidence
 - **THEN** the message says so and names the key that lists every host
+
+#### Scenario: Empty because the work is not finished
+- **WHEN** the host list has no rows because the scans are still being read
+- **THEN** the message says the reading is still going and how far it has got, and is distinct from the settled no-hosts message
 
 #### Scenario: The empty state ends
 - **WHEN** the filter is cleared and rows return
@@ -969,8 +1039,10 @@ The record shown for the selected row SHALL be openable in a full-screen reader
 that uses the whole height, for records too tall for the inline pane — a host
 with many services, a vulnerability write-up, and above all a scan's raw output.
 The reader SHALL show the same content the inline pane shows for that row,
-including a scan's report in its current mode, so it is reachable from every
-tab. It SHALL scroll like a pager and SHALL be dismissed back to the list.
+including a scan's report in its current mode and, where the pane is showing a
+record's scoped raw output, that output — so that reading the raw text
+full-screen, searching it and paging through it need no separate way in. It
+SHALL scroll like a pager and SHALL be dismissed back to the list.
 
 The reader SHALL let the user search its content: entering a term SHALL
 highlight every occurrence in place, and the user SHALL be able to move to the
@@ -996,6 +1068,10 @@ act on the reader, never on the list underneath it.
 #### Scenario: Opening the detail full-screen
 - **WHEN** the user opens the detail of a selected row
 - **THEN** its record is shown using the full height and can be scrolled and dismissed
+
+#### Scenario: Reading scoped raw output full-screen
+- **WHEN** the pane is showing a record's scoped raw output and the user opens the detail full-screen
+- **THEN** that same output is shown full-screen and can be searched and paged
 
 #### Scenario: Searching the output
 - **WHEN** the user searches the full-screen detail for a term that occurs several times
@@ -1028,3 +1104,198 @@ act on the reader, never on the list underneath it.
 #### Scenario: Jumping to the reader's own ends
 - **WHEN** the user presses the jump-to-first or jump-to-last key while the reader is open
 - **THEN** the reader scrolls to its own top or bottom and the list selection does not move
+### Requirement: Reading an engagement does not block the viewer
+An engagement of a hundred or more scan files takes seconds to read, and a
+terminal application that shows nothing for that long is indistinguishable from
+one that has hung. The system SHALL open the viewer before the scans have been
+read and SHALL fill the model as they are read, so that the hosts already read
+can be listed, filtered, sorted and drilled into while the rest is still
+arriving.
+
+The model SHALL grow only by addition during a read: a host or a service that
+has been shown SHALL NOT disappear again, and the same file SHALL NOT be folded
+in twice. What is shown SHALL always be a consolidated model of whole files, so
+that a host is never displayed half-merged.
+
+Additions SHALL be published on a throttled cadence rather than once per file,
+on the same principle the search engine applies to its result snapshots: the
+system SHALL leave a minimum interval between publications and SHALL publish
+only when something new has been read. Re-projecting the overviews costs more
+than reading one file, so publishing per file would spend the time it is trying
+to save.
+
+While a read is in progress the system SHALL say so and SHALL say how far it has
+got, in files read out of files found, and the count of hosts known SHALL be
+visible as it grows.
+
+#### Scenario: The viewer opens before the reading finishes
+- **WHEN** the viewer is opened on a directory of 120 scan files
+- **THEN** the interface is on screen and answering input before all 120 have been read
+
+#### Scenario: The list fills as scans are read
+- **WHEN** 30 of 120 files have been read
+- **THEN** the host list shows the hosts those 30 files recorded, and says that 30 of 120 have been read
+
+#### Scenario: Additions are published on a cadence
+- **WHEN** a hundred small files are read in under a second
+- **THEN** the model is published on the throttled cadence rather than a hundred times
+
+#### Scenario: What was shown stays shown
+- **WHEN** a later scan file is folded into a model already on screen
+- **THEN** every host already listed is still listed, with its services at least as complete as before
+
+#### Scenario: The read finishes
+- **WHEN** the last file has been read
+- **THEN** the progress report is gone and the model is the same one a blocking read would have produced
+### Requirement: Long work reports its progress and can be abandoned
+Any work that keeps the user waiting SHALL say what it is doing, and SHALL say
+how far it has got whenever the work can count itself — reading files, folding
+them together, building the scan history, and projecting an overview all can.
+Work that cannot count itself SHALL show that it is running rather than counting
+nothing.
+
+A determinate report SHALL name the units it counts, so that the figure can be
+related to the work: files for a read, scans for the scan history, hosts for a
+projection. The report SHALL appear in the region the awaited content will
+occupy, under that content's own headings, so it is clear which part of the
+interface is waiting.
+
+Work that has kept the user waiting for longer than a moment SHALL be
+abandonable from the keyboard, and abandoning it SHALL leave the interface in a
+state that says what was given up and how to ask for it again. Abandoning SHALL
+NOT discard anything already read.
+
+Where the awaited content would replace content that is already on screen and
+still true — a re-read after a scan finishes — the system SHALL leave that
+content in place and report the progress outside the list, rather than replacing
+a true list with a progress report.
+
+#### Scenario: A countable wait shows a bar
+- **WHEN** the scan history is being built from 120 scan files
+- **THEN** the Scans tab shows a bar with the scans done out of the total
+
+#### Scenario: Every overview reports, not just one
+- **WHEN** an overview over 24 000 hosts is being projected
+- **THEN** that tab reports its progress in hosts, under its own column headings
+
+#### Scenario: An uncountable wait still says it is working
+- **WHEN** work is running that cannot report a total
+- **THEN** the interface shows that it is running, and does not show a bar at zero
+
+#### Scenario: A wait is abandoned
+- **WHEN** the user presses the key that leaves a state while an overview is being projected
+- **THEN** the wait ends at once, the interface says what was abandoned and how to ask for it again, and nothing already read is lost
+
+#### Scenario: A re-read keeps the list it is replacing
+- **WHEN** a scan finishes and the whole engagement is re-read to fold it in
+- **THEN** the rows already on screen stay, and the progress is reported outside the list
+### Requirement: The interface stays responsive while work runs
+Moving work off the interface's own thread is not enough on its own: the work
+still competes for the interpreter, and a memory-management pause during it
+stops everything. The system SHALL keep answering input while reading,
+consolidating or projecting, and SHALL NOT pause the interface for longer than
+a fifth of a second at a time on account of that work.
+
+An overview SHALL be projected once for a given model. A sort, a filter
+keystroke, a resize, or a return from a drill-down SHALL be answered from work
+already done rather than by projecting the model again — the model has not
+changed, so the projection cannot have.
+
+A list too long to hand to the terminal at once SHALL be given to it in
+instalments, so that the part the user can see is there immediately and the
+remainder follows without blocking input. While a list is still being handed
+over the system SHALL say how much of it has arrived.
+
+#### Scenario: Keys are answered during a projection
+- **WHEN** an overview over 24 000 hosts is being projected
+- **THEN** keystrokes continue to be answered, with no pause longer than a fifth of a second
+
+#### Scenario: A filter keystroke does not re-project
+- **WHEN** the user types in the filter box over an overview that has already been projected
+- **THEN** the list narrows without the overview being projected again
+
+#### Scenario: A long list arrives in instalments
+- **WHEN** a projection yields 24 000 rows
+- **THEN** the first screenful is displayed at once, the rest follows without blocking input, and the interface says how many have arrived
+
+#### Scenario: Returning from a drill-down
+- **WHEN** the user opens a host's record and goes back to the overview
+- **THEN** the overview is shown again without being projected a second time
+### Requirement: A record can show the raw scan output for its own subject
+Everything the viewer shows is derived from the XML, and a derived value can
+only be trusted as far as the derivation is. The system SHALL therefore make
+nmap's own text reachable from the record it describes, so that what was parsed
+can be checked against what was written, and so that the things nmap reports
+only in its text — the ports it did not list and why, the reason a port was
+called open, the timing of the scan — are readable where they are relevant.
+
+The output SHALL be scoped to the subject of the record. For a host, that is
+what the scan wrote about that host; for a service, what it wrote about that
+port on that host, together with the host line the port belongs to, so the
+block says which host it is describing. The whole file SHALL NOT be shown: an
+engagement's output runs to tens of thousands of lines and the record's subject
+is a handful of them.
+
+A record SHALL list every scan that recorded its subject, one entry per line,
+each naming the scan and saying what it contributed, so that a subject seen by
+three scans offers three separate pieces of output rather than a merged one.
+The order SHALL be the order the scans ran.
+
+When a scan's own output file is not present — an engagement handed over as XML
+alone leaves none — the entry SHALL still be offered, showing a report
+reconstructed from what was parsed and labelled as reconstructed, so that it is
+never mistaken for what nmap wrote. When a file is present but cannot be read,
+the entry SHALL say so rather than appearing empty.
+
+Reading raw output SHALL NOT change the model: it is text to be read, never a
+second source the parsed record is reconciled against.
+
+#### Scenario: A host's record offers the scans that saw it
+- **WHEN** the cursor is on a host recorded by three scans
+- **THEN** its record lists three entries, one per scan, each naming the scan and what it found
+
+#### Scenario: Raw output is scoped to the host
+- **WHEN** the user opens the raw output of a scan from a host's record
+- **THEN** what that scan wrote about that host is shown, and the rest of the file is not
+
+#### Scenario: Raw output is scoped to the port
+- **WHEN** the user opens the raw output of a scan from a service's record
+- **THEN** what that scan wrote about that port is shown, together with the host line it belongs to
+
+#### Scenario: Output nmap reports only in its text
+- **WHEN** a scan's text records ports that were not listed individually, and the reason a port was called open
+- **THEN** those lines are present in the scoped output, although no column or parsed field carries them
+
+#### Scenario: A scan that left no output file
+- **WHEN** the scan behind an entry has no output file beside its XML
+- **THEN** the entry shows a report reconstructed from the parsed record, labelled as reconstructed
+
+#### Scenario: A scan whose output file cannot be read
+- **WHEN** the output file exists but cannot be read
+- **THEN** the entry says so, rather than showing an empty report
+### Requirement: The record pane shows either the record or one raw entry
+The pane SHALL have two states for the row the cursor is on: the parsed record,
+and the raw output of one scan of that record's subject. Opening an entry SHALL
+replace the record with that entry's output in the same region, so that reading
+it does not cost the list, the selection or the surrounding context.
+
+While raw output is shown the pane SHALL say which scan it came from and what
+it is scoped to, since the text itself does not identify either. The key that
+leaves a state SHALL return from the raw output to the record it was opened
+from, and the record SHALL be shown at the entry that was opened rather than
+back at its top.
+
+Moving the list cursor to another row SHALL return the pane to the record
+state, because the raw output on screen belongs to the row that was left.
+
+#### Scenario: Following an entry
+- **WHEN** the user opens a scan entry from a record
+- **THEN** the pane shows that scan's output for the record's subject, with a heading naming the scan and the subject
+
+#### Scenario: Coming back
+- **WHEN** the user leaves the raw output
+- **THEN** the record is shown again, positioned at the entry that was opened
+
+#### Scenario: Moving the list while raw output is shown
+- **WHEN** the user moves the list cursor to another row while raw output is on screen
+- **THEN** the pane shows the new row's record rather than output belonging to the row that was left
