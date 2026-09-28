@@ -28,3 +28,11 @@
 - [x] 5.1 README: the `seek nmap` usage with several directories, and how scans are named then
 - [x] 5.2 AGENTS.md: the naming rule in the nmap invariants (labels are unique per run; provenance is per file, never per file name)
 - [x] 5.3 `uv run ruff check`, `uv run pytest -q`, `openspec validate nmap-multiple-directories --strict`
+
+## 6. Captures found anywhere (added on request)
+
+- [x] 6.1 `gowitness/locate.py`: `find_databases(paths)` walks like the scan search and keeps SQLite files with gowitness's `results` table, under any name; a database named directly is taken
+- [x] 6.2 `ShotFinder` resolves a stored file name: the database's `screenshots/`, its directory, below it, then below the directories given (`ShotIndex`, built once, shared); `read_database` takes a directory or a locator
+- [x] 6.3 `Paths.db_name` so a capture found on disk keeps its file name; the viewer reads the output capture plus every database found, deduplicated
+- [x] 6.4 The command finds databases beside the scans, hands them over in `Pending`, and drops a named database from the scan candidates
+- [x] 6.5 Tests: depth and naming, foreign SQLite skipped, dot directories, dedupe, every screenshot fallback incl. nearest-wins, the viewer end to end, the command hand-over

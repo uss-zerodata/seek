@@ -264,8 +264,19 @@ stdout, `cd`) cannot run while Textual owns the screen. They set
   both read as seen once. The naming rides on `Pending` and the viewer keeps it
   (`NmapApp._name`) so a re-read after a finished scan names every file exactly
   as the first read did. Anything that shows a scan uses `ScanFile.name` /
-  `.stem`, never `path.name`. Captures are read from every directory given;
-  output goes to the first, and the status line says so when there are several.
+  `.stem`, never `path.name`. Output goes to the first directory, and the
+  status line says so when there are several.
+- **A capture is found, not assumed.** `gowitness/locate.py` walks the sources
+  for results databases by the scan search's rules, at any depth and under any
+  name, and accepts a file only if it is SQLite *with gowitness's `results`
+  table* - other databases are passed over silently. The stored screenshot is a
+  bare file name, so `ShotFinder` resolves it nearest-first (the database's
+  `screenshots/`, its directory, below it, then a `ShotIndex` over the sources,
+  walked once and shared); never rebuild `db.parent / "screenshots" / name` by
+  hand, which is the assumption this replaced. `Paths.db_name` exists because a
+  found database keeps its own name. The capture *this* app writes still goes
+  to `<scan_dir>/gowitness/gowitness.sqlite3`, and the report server serves
+  only that one.
 - **The filter has two paths, chosen by the text.** `filtering.parse_filter`
   builds today's `FilterSpec` - fuzzy query, range union, negated ranges -
   whenever the text has no field term (`open:`/`closed:`/`service:`/

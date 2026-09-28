@@ -75,6 +75,9 @@ class Paths:
     """Where a capture's artefacts live, from the host's point of view."""
 
     root: Path
+    # A capture this app runs always writes `gowitness.sqlite3`; one found on
+    # disk may have been written under any name (`--write-db-uri`).
+    db_name: str = DB_NAME
 
     @property
     def urls(self) -> Path:
@@ -82,7 +85,7 @@ class Paths:
 
     @property
     def db(self) -> Path:
-        return self.root / DB_NAME
+        return self.root / self.db_name
 
     @property
     def jsonl(self) -> Path:

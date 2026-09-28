@@ -35,7 +35,12 @@ them (a directory and one of its subdirectories, say) is read once. Their scans
 are then named by where they sit below the directories' common parent —
 `site-a/scan.xml`, `site-b/scan.xml` — everywhere a scan is named, because tools
 write the same file names into every directory and a bare `scan.xml` could be
-either. Screenshot captures are read from every directory's `gowitness/`. Scans
+either. gowitness captures are found the same way as the scans — any results
+database at any depth, under any name (a database named on the command line is
+read as a capture) — and each screenshot is looked up from where its database
+is: its `screenshots/`, its own directory, anywhere below it, then anywhere
+below the directories given, so a database copied away from its images still
+opens them. Scans
 and captures started in the viewer write into the **first** directory; the
 status line, the scan review and the capture entry say so before anything runs.
 

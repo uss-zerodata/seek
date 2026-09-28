@@ -2173,3 +2173,20 @@ async def test_each_alternative_is_highlighted_under_or():
         styled = {pos for pos in range(len(cell.plain))
                   if any(sp.start <= pos < sp.end for sp in cell.spans)}
         assert styled and styled <= set(range(len("alpha")))
+
+
+async def test_a_capture_anywhere_below_is_read_with_its_screenshots(tmp_path):
+    """Not only `<dir>/gowitness/`: any depth, any name, images found by name."""
+    from seek.nmap.models import ScanSet
+
+    deep = tmp_path / "targets" / "web"
+    deep.mkdir(parents=True)
+    (deep / "shots.sqlite3").write_bytes(GW_DB.read_bytes())
+    image = tmp_path / "images" / "https---hektor.cc-443.jpeg"
+    image.parent.mkdir()
+    image.write_bytes(b"\xff\xd8\xff")
+    app = NmapApp(ScanSet(), Config(nmap_path="/nonexistent/nmap"),
+                  sources=[tmp_path], scan_dir=tmp_path)
+    assert len(app.shots) == 7
+    assert app.shots.get("https://hektor.cc:443").shot == image
+    assert [run.paths.db for run in app.captures.runs] == [(deep / "shots.sqlite3").resolve()]

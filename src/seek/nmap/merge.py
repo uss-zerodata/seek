@@ -177,6 +177,9 @@ class Pending:
     paths: list[Path] = field(default_factory=list)
     # How to name what is read - decided by the command, which has the roots.
     name: Naming = bare
+    # gowitness results databases found below the same paths; `None` means
+    # "not searched", and the viewer searches itself.
+    databases: list[Path] | None = None
 
     def __len__(self) -> int:
         return len(self.paths)

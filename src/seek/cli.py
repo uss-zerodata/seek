@@ -111,6 +111,7 @@ def nmap(
     Stateless: the files found are read straight into memory for this run, with
     no import step and nothing written.
     """
+    from seek.gowitness.locate import find_databases
     from seek.nmap.merge import Pending, discover, naming
 
     # The working directory is the engagement directory often enough that
@@ -135,6 +136,11 @@ def nmap(
     # knowable without reading them, and the viewer says so if none of them do.
     with _search_progress() as report:
         candidates = discover(paths, report)
+        # gowitness captures, found the same way and read alongside. A results
+        # database named directly is a capture, not a scan that failed to parse.
+        databases = find_databases(paths)
+        taken = {d.resolve() for d in databases}
+        candidates = [c for c in candidates if c.resolve() not in taken]
 
     # A directory with nothing in it yet is the case for *starting* a scan, so
     # it is only an error when no scan can be started.
@@ -157,7 +163,7 @@ def nmap(
     scan_dir = first if first.is_dir() else Path.cwd()
     # The paths given are the sources: a directory keeps covering whatever a
     # scan writes into it, so a finished run needs no special case.
-    raise typer.Exit(code=run_viewer(Pending(candidates, naming(paths)), config,
+    raise typer.Exit(code=run_viewer(Pending(candidates, naming(paths), databases), config,
                                      sources=[Path(p) for p in paths],
                                      scan_dir=scan_dir))
 

@@ -1157,3 +1157,32 @@ async def test_opened_on_two_directories_a_scan_writes_into_the_first(tmp_path):
         assert isinstance(app.screen, ReviewScreen)
         shown = _modal_text(app).replace("\n", "")
         assert str(roots[0]) in shown and str(roots[1]) not in shown
+
+
+async def test_the_command_hands_over_captures_found_anywhere(tmp_path, monkeypatch):
+    """Found below the directory like the scans, and a database named directly
+    is a capture - not a scan that failed to parse."""
+    from typer.testing import CliRunner
+
+    from seek.cli import app as cli
+
+    shots = Path(__file__).parent / "fixtures" / "gowitness" / "capture.sqlite3"
+    (tmp_path / "scans").mkdir()
+    shutil.copy(FIX / "basic.xml", tmp_path / "scans" / "basic.xml")
+    (tmp_path / "web" / "deep").mkdir(parents=True)
+    shutil.copy(shots, tmp_path / "web" / "deep" / "capture.sqlite3")
+    shutil.copy(shots, tmp_path / "named.sqlite3")
+    monkeypatch.setattr("seek.cli._stdout_is_usable", lambda: True)
+    seen = {}
+
+    def fake_viewer(scans, config, sources, scan_dir):
+        seen.update(found=[p.name for p in scans.paths],
+                    databases=[p.relative_to(tmp_path).as_posix() for p in scans.databases])
+        return 0
+
+    monkeypatch.setattr("seek.tui.nmap.app.run_viewer", fake_viewer)
+    result = CliRunner().invoke(cli, ["nmap", str(tmp_path / "scans"), str(tmp_path / "web"),
+                                      str(tmp_path / "named.sqlite3")])
+    assert result.exit_code == 0, result.output
+    assert seen["found"] == ["basic.xml"], "the named database is not a scan candidate"
+    assert seen["databases"] == ["named.sqlite3", "web/deep/capture.sqlite3"]

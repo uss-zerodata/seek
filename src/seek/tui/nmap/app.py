@@ -30,6 +30,7 @@ from seek.config import Config
 from seek.engine.score import match_spans
 from seek.gowitness import capture as gw_capture
 from seek.gowitness import detect as gw_detect
+from seek.gowitness import locate as gw_locate
 from seek.gowitness import results as gw_results
 from seek.nmap import bulk, filtering, rawlog, timeline
 from seek.nmap import export as exporter
@@ -474,6 +475,12 @@ class NmapApp(App[int]):
         # Decided once: the status line asks on every redraw, and a `stat` per
         # source per draw is the kind of cost the record pane had to shed.
         self._several_dirs = sum(1 for p in self.sources if p.is_dir()) > 1
+        # gowitness captures anywhere below the sources - found by the command
+        # alongside the scans, or here when a model was handed in directly.
+        self._databases: list[Path] = (
+            list(pending.databases) if pending is not None and pending.databases is not None
+            else gw_locate.find_databases(self.sources))
+        self._shot_index = gw_locate.ShotIndex(p for p in self.sources if p.is_dir())
         self.scan_dir = Path(self.config.scan_output_dir or scan_dir or Path.cwd())
         self.nmap = presets_mod.probe(self.config.nmap_path)
         self.gowitness = gw_detect.probe(self.config.gowitness_mode,
@@ -1926,37 +1933,40 @@ class NmapApp(App[int]):
                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
 
     def _capture_dirs(self) -> list[gw_capture.Paths]:
-        """Where captures can be: the one output goes to, then the one under
-        each directory the viewer was opened on. Several directories are one
-        engagement, and a capture in the second is as much its result as one
-        in the first."""
-        roots = [self.scan_dir] + [p for p in self.sources if p.is_dir()]
-        out: list[gw_capture.Paths] = []
-        for root in roots:
-            paths = gw_capture.capture_dir(root)
-            if paths not in out:
-                out.append(paths)
-        return out
+        """Where captures are: the one output goes to, then every results
+        database found below the paths the viewer was opened on - at any depth
+        and under any name, since a capture run by hand lands wherever
+        gowitness was started, not only in `gowitness/` beside the scans."""
+        own = gw_capture.capture_dir(self.scan_dir)
+        found = [gw_capture.Paths(db.parent.resolve(), db.name) for db in self._databases]
+        out: dict[Path, gw_capture.Paths] = {}
+        for paths in [own, *found]:
+            out.setdefault(paths.db, paths)
+        return list(out.values())
 
     def _load_captures(self) -> None:
-        """Read every capture directory. Absence is the ordinary case, not an error.
+        """Read every capture database. Absence is the ordinary case, not an error.
 
-        Read one by one rather than through `Captures.load`, so each directory's
+        Read one by one rather than through `Captures.load`, so each database's
         own URLs are known: a run listed for it counts those, not everyone's.
+        Each resolves its screenshots from where it is (`locate.ShotFinder`),
+        with one image index shared between them.
         """
         dirs = self._capture_dirs()
         for paths in dirs:
-            captures, problems = gw_results.read_database(paths.db, paths.shots)
+            finder = gw_locate.ShotFinder(paths.db, self._shot_index)
+            captures, problems = gw_results.read_database(paths.db, finder)
             self.shots.add(captures)
             self.shots.problems.extend(problems)
             where = ""
             if len(dirs) > 1:
-                # Named like the scans beside it; a run whose scans keep bare
-                # names (one directory plus a configured output directory)
-                # would call both "gowitness", so that case shows the path.
+                # Named like the scans beside it; two captures in directories
+                # of the same name ("gowitness" twice) show where they are.
                 where = self._name(paths.root)
                 if where == paths.root.name:
-                    where = str(paths.root)
+                    where = _short(paths.root)
+                if paths.db_name != gw_capture.DB_NAME:
+                    where = f"{where}/{paths.db_name}"
             self._register_disk_capture(paths, [c.url for c in captures], where)
 
     def _register_disk_capture(self, paths: gw_capture.Paths, urls: list[str],

@@ -28,7 +28,7 @@ The absence of a URL in a database is therefore not evidence that it succeeded.
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -233,9 +233,19 @@ def _tls_line(row: sqlite3.Row) -> str:
     return " · ".join(bits)
 
 
-def read_database(path: Path, shots: Path | None = None
+def _shot(shots, name: str) -> Path | None:
+    if not name or shots is None:
+        return None
+    return shots(name) if callable(shots) else shots / name
+
+
+def read_database(path: Path, shots: Path | Callable[[str], Path | None] | None = None
                   ) -> tuple[list[Capture], list[str]]:
     """Every capture in a results database, and a note for what could not be read.
+
+    `shots` is the screenshot directory, or a function from the stored file
+    name to where that image actually is (`locate.ShotFinder`) - a capture found
+    on disk keeps its images wherever gowitness was run from.
 
     A missing file is simply no captures: a project that has never been captured
     is the ordinary case, not an error.
@@ -332,7 +342,7 @@ def read_database(path: Path, shots: Path | None = None
                 network=network.get(rid, []),
                 tls=tls_line.get(rid, ""),
                 sans=tls_sans.get(rid, []),
-                shot=(shots / name) if (name and shots is not None) else None,
+                shot=_shot(shots, name),
                 failure=str(get("failed_reason") or "") if get("failed") else "",
             ))
         return captures, problems
@@ -393,7 +403,8 @@ class Captures:
                 out.append(found)
         return out
 
-    def load(self, path: Path, shots: Path | None = None) -> None:
+    def load(self, path: Path,
+             shots: Path | Callable[[str], Path | None] | None = None) -> None:
         captures, problems = read_database(path, shots)
         self.add(captures)
         self.problems.extend(problems)
