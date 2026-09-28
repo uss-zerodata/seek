@@ -2114,3 +2114,62 @@ async def test_no_capture_anywhere_is_silent(tmp_path):
     app = _opened_on(tmp_path)
     assert len(app.shots) == 0 and app.shots.problems == []
     assert app.captures.runs == []
+
+
+# --- structured queries -----------------------------------------------------
+
+
+async def _filter(pilot, app, text):
+    """Set the filter box as a paste would; parentheses do not survive `press`."""
+    app.query_one("#filter", Input).value = text
+    await pilot.pause(0.4)
+
+
+async def test_open_on_the_host_list_is_the_port_state_not_the_text():
+    app = _app("basic")
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.2)
+        await _filter(pilot, app, "open:22")
+        assert _cells(app) == ["192.0.2.1"], ".2 has 22 filtered"
+        assert "where open:22" in _render(app.query_one("#status"))
+
+
+async def test_a_port_list_is_filtered_port_by_port():
+    app = _app("basic")
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.2)
+        await pilot.press("enter")                      # 192.0.2.1's ports
+        await pilot.pause(0.3)
+        await _filter(pilot, app, "service:ssh OR open:80")
+        assert [r.cells[0] for r in app._rows] == ["22/tcp", "80/tcp"]
+
+
+async def test_an_unclosed_group_still_lists_rows():
+    app = _app("basic")
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.2)
+        await _filter(pilot, app, "service:telnet OR (open:80 product:nginx")
+        assert _cells(app) == ["192.0.2.1", "192.0.2.2"]
+        assert "(open:80 AND product:nginx)" in _render(app.query_one("#status"))
+
+
+async def test_an_empty_field_keeps_the_list_and_says_so():
+    app = _app("basic")
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.2)
+        await _filter(pilot, app, "service:")
+        assert len(app._rows) == 3
+        assert "ignored: service:" in _render(app.query_one("#status"))
+
+
+async def test_each_alternative_is_highlighted_under_or():
+    app = _app("basic")
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.2)
+        await _filter(pilot, app, "alpha OR nosuchthing")
+        assert _cells(app) == ["192.0.2.1"]
+        cell = app.query_one(DataTable).get_cell_at((0, 2))
+        assert cell.plain == "alpha.example"
+        styled = {pos for pos in range(len(cell.plain))
+                  if any(sp.start <= pos < sp.end for sp in cell.spans)}
+        assert styled and styled <= set(range(len("alpha")))

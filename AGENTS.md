@@ -266,6 +266,22 @@ stdout, `cd`) cannot run while Textual owns the screen. They set
   as the first read did. Anything that shows a scan uses `ScanFile.name` /
   `.stem`, never `path.name`. Captures are read from every directory given;
   output goes to the first, and the status line says so when there are several.
+- **The filter has two paths, chosen by the text.** `filtering.parse_filter`
+  builds today's `FilterSpec` - fuzzy query, range union, negated ranges -
+  whenever the text has no field term (`open:`/`closed:`/`service:`/
+  `product:`), no uppercase `AND`/`OR`/`NOT`, no `|` and no parenthesis. Only
+  then does it build an expression tree (`FilterSpec.expr`). Keep it that way:
+  the plain path is the tuned one, and `test_nmap_query` runs a corpus of plain
+  queries through both and requires the same rows. Two semantic rules live in
+  `_Row.eval`: field terms directly under one AND are **one clause satisfied by
+  a single port**, and `NOT` negates the child evaluated on the whole row, so
+  it reads as "none of the ports". A multi-record row (a service group, a
+  bucket) is reduced to one sample port per distinct
+  `(port, protocol, state, name, product)`, cached by the records tuple's
+  identity - a field term reads nothing else, and walking 20 000 pairs a
+  keystroke was 200 ms. Add a field by teaching `Field.test` *and* that sample
+  key, or the samples will answer it wrongly. Port-state keys are
+  `open:`/`closed:`, never `up:`/`down:` - "up" is the host rule.
 - **`line_no`-style split, again:** a host's *recorded* state (`state`/`reason`)
   and whether it is `up` are different things. `-Pn` makes nmap report `up`
   with reason `user-set` for every target — 255 of 256 in the real sample, 9 of

@@ -59,6 +59,17 @@ _GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("10.0.0.5", "a bare address means that host alone"),
         ("!10.0.0.0/8", "a negated range subtracts from the rest"),
     ]),
+    ("Query the scan", [
+        ("open:22", "port 22 found open; open:80/tcp names the protocol"),
+        ("closed:443", "port 443 recorded, and not open (closed or filtered)"),
+        ("service:ssh", "the service name contains ssh; ^ssh$ is exactly ssh"),
+        ("product:nginx", "the detected product contains nginx"),
+        ("AND OR NOT", "uppercase; also | and !; ( ) groups; a space is AND"),
+        ("", "terms joined by AND describe the same port:"),
+        ("", "service:http product:nginx is an http port served by nginx"),
+        ("", "NOT means none of the ports: NOT service:ssh has no ssh"),
+        ("", "plain words and ranges mix in: 10.0.0.0/24 open:445 !printer"),
+    ]),
     ("Collect and take away", [
         ("m", "mark the row (a bucket row marks every host in it)"),
         ("M", "clear every mark; marks survive filtering, sorting and tabs"),

@@ -768,7 +768,8 @@ class NmapApp(App[int]):
         self._unfiltered = sum(1 for r in rows if not r.heading)
         if not self._spec.is_empty:
             rows = [r for r in rows
-                    if r.heading or filtering.matches(self._spec, r.text, r.addresses)]
+                    if r.heading or filtering.matches(self._spec, r.text, r.addresses,
+                                                      r.records)]
             rows = _drop_empty_sections(rows)
         col = min(self._sort_col, max(0, len(self.view.columns) - 1))
         # Two stable passes rather than one compound key: `reverse` belongs to
@@ -989,7 +990,7 @@ class NmapApp(App[int]):
         except NoMatches:
             return
         rows = self._rows
-        query = self._spec.query
+        query = self._spec.highlights or self._spec.query
         # A screenful without asking the clock, then as much more as the budget
         # allows - and far enough to reach the row the reader was on, when that
         # is close enough to be worth one longer turn. Leaving it to arrive with
@@ -1141,10 +1142,16 @@ class NmapApp(App[int]):
             # A styled row is a section heading: it carries no filter text, so
             # there is nothing on it for the filter to have matched.
             return cell
-        found = match_spans(query, shown)
-        if found is not None:
+        # A structured filter hands a tuple, one query per term: each is
+        # highlighted wherever it matches, since under OR a cell matches one.
+        spans: set[int] = set()
+        for each in (query if isinstance(query, tuple) else (query,)):
+            found = match_spans(each, shown)
+            if found is not None:
+                spans.update(found[1])
+        if spans:
             style = self.config.theme.get("match", "bold bright_yellow")
-            for pos in found[1]:
+            for pos in spans:
                 if 0 <= pos < len(shown):
                     cell.stylize(style, pos, pos + 1)
         return cell
@@ -1220,6 +1227,12 @@ class NmapApp(App[int]):
         if self._spec.exclude:
             right.append("  ·  not in " + ", ".join(str(n) for n in self._spec.exclude),
                          style="bold")
+        if self._spec.expr is not None or self._spec.ignored:
+            # How a structured filter was read, grouping spelled out, and what
+            # it had to leave aside - a half-typed query is the normal case.
+            right.append("  ·  where " if self._spec.expr is not None else "  ·  ",
+                         style="dim")
+            right.append(filtering.describe(self._spec), style="bold")
         # Last, because the line is clipped from the right on a narrow terminal
         # and which tools exist matters less than what the list is currently
         # showing. The two tool tokens sit adjacent with no separator between

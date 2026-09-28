@@ -43,13 +43,23 @@ def _as_network(token: str) -> Network | None:
 
 @dataclass(slots=True)
 class FilterSpec:
+    # For highlighting, always; for matching only on the plain path.
     query: ParsedQuery | None = None
     include: list[Network] = field(default_factory=list)
     exclude: list[Network] = field(default_factory=list)
+    # Set only when the filter uses field terms, operators or parentheses; the
+    # plain path above is then not consulted for matching (see `parse_filter`).
+    expr: Node | None = None
+    ignored: list[str] = field(default_factory=list)
+    # One query per positive fuzzy term, for a structured filter: under OR a
+    # cell matches one alternative, and highlighting with all of them ANDed
+    # would mark nothing at all.
+    highlights: tuple[ParsedQuery, ...] = ()
 
     @property
     def is_empty(self) -> bool:
-        return self.query is None and not self.include and not self.exclude
+        return (self.expr is None and self.query is None
+                and not self.include and not self.exclude)
 
     @property
     def networks(self) -> list[Network]:
@@ -57,7 +67,17 @@ class FilterSpec:
 
 
 def parse_filter(text: str) -> FilterSpec:
-    """Split a filter into its network terms and its fuzzy remainder."""
+    """Split a filter into its network terms and its fuzzy remainder.
+
+    Two paths, chosen by the text. A filter with no field term, no operator and
+    no parenthesis is built exactly as it always was - that path is tuned for
+    tens of thousands of rows a keystroke, and its "several ranges are a union"
+    rule is behaviour people rely on, so it is kept rather than re-derived. Any
+    of the new syntax builds an expression tree instead (`_parse_expr`).
+    """
+    tokens = _tokens(text)
+    if any(_is_structured(t) for t in tokens):
+        return _parse_expr(tokens)
     include: list[Network] = []
     exclude: list[Network] = []
     rest: list[str] = []
@@ -88,10 +108,17 @@ def _in(network: Network, addresses: tuple[str, ...]) -> bool:
     return False
 
 
-def matches(spec: FilterSpec, text: str, addresses: tuple[str, ...] = ()) -> bool:
-    """Does a row pass? Network terms gate; the fuzzy query scores."""
+def matches(spec: FilterSpec, text: str, addresses: tuple[str, ...] = (),
+            records: tuple = ()) -> bool:
+    """Does a row pass? Network terms gate; the fuzzy query scores.
+
+    `records` are the row's `(host, service)` records, which field terms are
+    tested against; the plain path never looks at them.
+    """
     if spec.is_empty:
         return True
+    if spec.expr is not None:
+        return _Row(text, addresses, records).eval(spec.expr)
     # Several positive ranges are a *union*: `10.0.0.0/8 192.168.0.0/16` is the
     # two networks people actually mean, the way a target list reads. Requiring
     # every one of them, as this used to, asks for an address in both at once -
@@ -109,8 +136,380 @@ def matches(spec: FilterSpec, text: str, addresses: tuple[str, ...] = ()) -> boo
 
 def describe(spec: FilterSpec) -> str:
     """Short human summary, for the status line."""
+    if spec.expr is not None or spec.ignored:
+        shown = _show(spec.expr) if spec.expr is not None else ""
+        if spec.ignored:
+            shown += ("  ·  " if shown else "") + "ignored: " + ", ".join(spec.ignored)
+        return shown
     bits = [" or ".join(str(n) for n in spec.include)] if spec.include else []
     bits += [f"!{n}" for n in spec.exclude]
     if spec.query is not None:
         bits.append(spec.query.raw.strip())
     return " ".join(b for b in bits if b)
+
+
+# --- structured filters -------------------------------------------------------
+#
+# Field terms (`open:22`, `closed:443/tcp`, `service:ssh`, `product:nginx`),
+# uppercase AND / OR / NOT, `|`, `!` and parentheses. Grammar, lowest first:
+#
+#     or      := and ( ("OR" | "|") and )*
+#     and     := unary ( ["AND"] unary )*        adjacency is AND
+#     unary   := ("NOT" | "!") unary | primary
+#     primary := "(" or ")" | field | range | fuzzy
+#
+# Two semantic rules make it read the way a review asks its questions: field
+# terms joined by AND describe *one* port (`service:http product:nginx` is an
+# http port served by nginx, not http here and nginx there), and NOT is "none
+# of the row's ports" (`NOT service:ssh` is a host without ssh - negating per
+# port would match any host that has some other service).
+#
+# It is evaluated on every keystroke, so a half-typed query is the normal case:
+# a missing `)` is implied, a dangling operator or an empty field is dropped
+# and named in `FilterSpec.ignored`, and nothing half-typed empties the list.
+
+FIELDS = frozenset({"open", "closed", "service", "product"})
+_OPERATORS = frozenset({"AND", "OR", "NOT", "|", "!", "(", ")"})
+
+
+@dataclass(frozen=True, slots=True)
+class Fuzzy:
+    """One term of the search grammar (`'x`, `^x`, `x$`, `!x`), against the row text."""
+    query: ParsedQuery
+    token: str
+
+
+@dataclass(frozen=True, slots=True)
+class Range:
+    """Address ranges; several side by side in one AND are a union, as always."""
+    networks: tuple[Network, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Field:
+    """A fact about one port: its state, its service name or its product."""
+    key: str
+    value: str
+    port: int | None = None
+    proto: str | None = None
+    text: str = ""
+    start: bool = False                 # `^value`
+    end: bool = False                   # `value$`
+
+    def test(self, svc) -> bool:
+        if self.key in ("open", "closed"):
+            if svc.port != self.port or (self.proto and svc.protocol != self.proto):
+                return False
+            if self.key == "open":
+                return svc.state == "open"
+            # Recorded, and not open: closed, filtered, open|filtered. A port no
+            # scan recorded is not here at all, so it matches neither key.
+            return bool(svc.state) and svc.state != "open"
+        have = ((svc.name if self.key == "service" else svc.product) or "").lower()
+        if self.start and self.end:
+            return have == self.text
+        if self.start:
+            return have.startswith(self.text)
+        if self.end:
+            return have.endswith(self.text)
+        return self.text in have
+
+
+@dataclass(frozen=True, slots=True)
+class Not:
+    child: Node
+
+
+@dataclass(frozen=True, slots=True)
+class And:
+    children: tuple[Node, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Or:
+    children: tuple[Node, ...]
+
+
+Node = Fuzzy | Range | Field | Not | And | Or
+
+
+def _tokens(text: str) -> list[str]:
+    """Whitespace-separated, with parentheses always tokens of their own.
+
+    `!(` is therefore NOT and a group, while `!ssh` stays one token - the fuzzy
+    grammar's own negation, which is exactly what it meant before.
+    """
+    out: list[str] = []
+    for chunk in text.split():
+        word = ""
+        for ch in chunk:
+            if ch in "()":
+                if word:
+                    out.append(word)
+                    word = ""
+                out.append(ch)
+            else:
+                word += ch
+        if word:
+            out.append(word)
+    return out
+
+
+def _field_key(body: str) -> str | None:
+    key, sep, _ = body.partition(":")
+    key = key.lower()
+    return key if sep and key in FIELDS else None
+
+
+def _is_structured(token: str) -> bool:
+    if token in _OPERATORS:
+        return True
+    return _field_key(token[1:] if token.startswith("!") else token) is not None
+
+
+def _field(key: str, value: str) -> Field | None:
+    """A field term, or None when its value cannot be used (yet)."""
+    if not value:
+        return None
+    if key in ("open", "closed"):
+        port, _, proto = value.partition("/")
+        if not port.isdigit():
+            return None
+        return Field(key, value, port=int(port), proto=proto.lower() or None)
+    folded = value.lower()
+    start = folded.startswith("^")
+    end = folded.endswith("$")
+    text = folded[1 if start else 0:len(folded) - 1 if end else len(folded)]
+    if not text:
+        return None
+    return Field(key, value, text=text, start=start, end=end)
+
+
+def _and(parts: list[Node]) -> Node | None:
+    """Join as AND, folding the positive ranges among them into one union."""
+    ranges = [p for p in parts if isinstance(p, Range)]
+    if len(ranges) > 1:
+        first = parts.index(ranges[0])
+        rest = [p for p in parts if not isinstance(p, Range)]
+        rest.insert(first, Range(tuple(n for r in ranges for n in r.networks)))
+        parts = rest
+    if not parts:
+        return None
+    return parts[0] if len(parts) == 1 else And(tuple(parts))
+
+
+def _or(parts: list[Node]) -> Node | None:
+    if not parts:
+        return None
+    return parts[0] if len(parts) == 1 else Or(tuple(parts))
+
+
+class _Parser:
+    def __init__(self, tokens: list[str]) -> None:
+        self.tokens = tokens
+        self.at = 0
+        self.ignored: list[str] = []
+
+    def peek(self) -> str | None:
+        return self.tokens[self.at] if self.at < len(self.tokens) else None
+
+    def take(self) -> str | None:
+        token = self.peek()
+        self.at += 1
+        return token
+
+    def parse(self) -> Node | None:
+        node = self.or_()
+        while self.peek() is not None:          # a `)` with nothing to close
+            self.ignored.append(self.take())
+            node = _and([n for n in (node, self.or_()) if n is not None])
+        return node
+
+    def or_(self) -> Node | None:
+        parts: list[Node] = []
+        first = self.and_()
+        if first is not None:
+            parts.append(first)
+        while self.peek() in ("OR", "|"):
+            op = self.take()
+            right = self.and_()
+            if right is None or not parts:
+                self.ignored.append(op)         # `ssh OR`, `OR ssh`
+            if right is not None:
+                parts.append(right)
+        return _or(parts)
+
+    def and_(self) -> Node | None:
+        parts: list[Node] = []
+        while True:
+            token = self.peek()
+            if token is None or token in (")", "OR", "|"):
+                break
+            if token == "AND":
+                self.take()
+                if self.peek() in (None, ")", "OR", "|", "AND") or not parts:
+                    self.ignored.append(token)
+                continue
+            node = self.unary()
+            if node is not None:
+                parts.append(node)
+        return _and(parts)
+
+    def unary(self) -> Node | None:
+        token = self.peek()
+        if token in ("NOT", "!"):
+            self.take()
+            if self.peek() in (None, ")", "OR", "|", "AND"):
+                self.ignored.append(token)
+                return None
+            child = self.unary()
+            return Not(child) if child is not None else None
+        return self.primary()
+
+    def primary(self) -> Node | None:
+        token = self.take()
+        if token == "(":
+            node = self.or_()
+            if self.peek() == ")":
+                self.take()
+            # else: implied at the end - the query is still being typed
+            if node is None:
+                self.ignored.append("()")
+            return node
+        return self.term(token)
+
+    def term(self, token: str) -> Node | None:
+        negated = token.startswith("!") and len(token) > 1
+        body = token[1:] if negated else token
+        key = _field_key(body)
+        if key is not None:
+            node: Node | None = _field(key, body.partition(":")[2])
+            if node is None:
+                self.ignored.append(token)
+                return None
+            return Not(node) if negated else node
+        network = _as_network(body)
+        if network is not None:
+            node = Range((network,))
+            return Not(node) if negated else node
+        query = parse_query(token)
+        if query.is_empty:
+            return None
+        return Fuzzy(query, token)
+
+
+def _positive_fuzzy(node: Node | None, negated: bool = False) -> list[str]:
+    """The fuzzy terms a match can be highlighted by: those not under a NOT."""
+    if node is None:
+        return []
+    if isinstance(node, Fuzzy):
+        return [] if negated else [node.token]
+    if isinstance(node, Not):
+        return _positive_fuzzy(node.child, not negated)
+    if isinstance(node, (And, Or)):
+        return [t for c in node.children for t in _positive_fuzzy(c, negated)]
+    return []
+
+
+def _parse_expr(tokens: list[str]) -> FilterSpec:
+    parser = _Parser(tokens)
+    expr = parser.parse()
+    highlight = " ".join(_positive_fuzzy(expr))
+    query = parse_query(highlight) if highlight else None
+    if query is not None and query.is_empty:
+        query = None
+    highlights = tuple(q for q in (parse_query(t) for t in _positive_fuzzy(expr))
+                       if not q.is_empty)
+    return FilterSpec(query=query, expr=expr, ignored=parser.ignored,
+                      highlights=highlights)
+
+
+# A service overview row stands for every host running that service - twenty
+# thousand pairs at engagement scale, 342 557 across the tab - and walking them
+# all on every keystroke was 150-250 ms of a 36-row list. A field term reads
+# only a port's number, protocol, state, name and product, which within one
+# such row repeat almost entirely, so one port per distinct combination answers
+# every term exactly. Kept per records tuple (rows are cached with the model,
+# so the tuple is the same object keystroke after keystroke); the tuple is held
+# beside its answer so a recycled `id` can never be mistaken for it.
+_SAMPLES: dict[int, tuple[tuple, list]] = {}
+_SAMPLES_MAX = 4096
+
+
+def _representatives(records: tuple) -> list:
+    hit = _SAMPLES.get(id(records))
+    if hit is not None and hit[0] is records:
+        return hit[1]
+    seen: dict[tuple, object] = {}
+    for record in records:
+        svc = getattr(record, "service", None)
+        for each in ([svc] if svc is not None else record.host.services):
+            seen.setdefault((each.port, each.protocol, each.state, each.name, each.product),
+                            each)
+    if len(_SAMPLES) >= _SAMPLES_MAX:
+        _SAMPLES.clear()                    # a new model; the old rows are gone
+    found = list(seen.values())
+    _SAMPLES[id(records)] = (records, found)
+    return found
+
+
+class _Row:
+    """One row under evaluation; its ports are gathered once, when first asked."""
+
+    __slots__ = ("text", "addresses", "records", "_services")
+
+    def __init__(self, text: str, addresses: tuple[str, ...], records: tuple) -> None:
+        self.text = text
+        self.addresses = addresses
+        self.records = records
+        self._services: list | None = None
+
+    def services(self) -> list:
+        """A record's own service, or every port of its host - closed and
+        filtered included, or `closed:` could never match a host row."""
+        if self._services is None:
+            records = self.records
+            if len(records) == 1:
+                svc = getattr(records[0], "service", None)
+                self._services = [svc] if svc is not None else records[0].host.services
+            else:
+                self._services = _representatives(records)
+        return self._services
+
+    def eval(self, node: Node) -> bool:
+        if isinstance(node, Fuzzy):
+            return match_score(node.query, self.text) is not None
+        if isinstance(node, Range):
+            return any(_in(n, self.addresses) for n in node.networks)
+        if isinstance(node, Field):
+            return any(node.test(s) for s in self.services())
+        if isinstance(node, Not):
+            return not self.eval(node.child)            # "none of the ports"
+        if isinstance(node, Or):
+            return any(self.eval(c) for c in node.children)
+        # AND: the field terms directly under it are one clause, satisfied by
+        # a single port; everything else is a condition on the row.
+        fields = [c for c in node.children if isinstance(c, Field)]
+        if fields and not any(all(f.test(s) for f in fields) for s in self.services()):
+            return False
+        return all(self.eval(c) for c in node.children if not isinstance(c, Field))
+
+
+def _show(node: Node, inside: type | None = None) -> str:
+    """The tree back as text, every operator and grouping spelled out."""
+    if isinstance(node, Fuzzy):
+        return node.token
+    if isinstance(node, Field):
+        return f"{node.key}:{node.value}"
+    if isinstance(node, Range):
+        if len(node.networks) == 1:
+            return str(node.networks[0])
+        return "(" + " OR ".join(str(n) for n in node.networks) + ")"
+    if isinstance(node, Not):
+        child = _show(node.child, Not)
+        return f"NOT {child}"
+    joiner = " AND " if isinstance(node, And) else " OR "
+    text = joiner.join(_show(c, type(node)) for c in node.children)
+    # Parenthesised wherever the reading depends on precedence: a group under
+    # a NOT, and an OR inside an AND (or the reverse, for clarity).
+    return f"({text})" if inside is not None and inside is not type(node) else text

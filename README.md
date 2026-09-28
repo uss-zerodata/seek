@@ -282,6 +282,34 @@ A prefix is resolved to the network containing it (`10.10.10.32/26` →
 address means that host alone; while you are still typing one (`10.10.10.`) it
 stays an ordinary fuzzy term and matches everything under it.
 
+**Querying the scan.** Field terms ask the model rather than the row's text,
+and combine with uppercase `AND` / `OR` / `NOT` (also `|` and `!`) and
+parentheses; a space is still AND:
+
+```
+open:22                                  port 22 found open (not "22" anywhere in the row)
+open:80/tcp                              with the protocol
+closed:443                               443 recorded and not open: closed, filtered, open|filtered
+service:ssh OR service:telnet            either service
+service:http product:nginx               an http port served by nginx - the same port
+service:^http$                           exactly http, not https or http-proxy
+NOT service:ssh                          no ssh on the host at all
+service:http AND NOT (product:apache | product:iis)
+10.0.0.0/24 open:445 !printer            ranges and plain words mix in
+```
+
+Terms joined by AND describe **one port**, and NOT means **none of the ports**,
+so a host with Apache serving http on 80 and nginx serving `https` on 8443 does not match
+`service:^http$ product:nginx`. A port no scan recorded is neither `open:` nor
+`closed:`. The keys say `open`/`closed` rather than `up`/`down` on purpose: "up"
+is the host rule behind `u`. Lowercase `and`/`or`/`not`, and any `key:` that is
+not one of the four fields (a pasted `http://…`), stay ordinary search words.
+The filter is applied as you type, so a half-finished query never empties the
+list: a missing `)` is implied, and a dangling operator or an empty field is
+left aside. The status line shows how the query was read, grouping spelled out,
+and names anything it left aside. A filter that uses none of this works exactly
+as before.
+
 Rows are clipped to fit the terminal rather than overflowing — the full value is
 in the detail pane, which scrolls with `←`/`→` when a record is long.
 
