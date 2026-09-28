@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nmaprun scanner="nmap" args="nmap -sn -n -oX up-rule-discovery-late.xml 203.0.113.4-5" start="1756001200" version="7.94" xmloutputversion="1.05">
+<host><status state="down" reason="no-response" reason_ttl="0"/><address addr="203.0.113.4" addrtype="ipv4"/><hostnames></hostnames></host>
+<host><status state="up" reason="echo-reply" reason_ttl="64"/><address addr="203.0.113.5" addrtype="ipv4"/><hostnames></hostnames></host>
+<runstats><finished time="1756001210" elapsed="10.00" exit="success"/><hosts up="1" down="1" total="2"/></runstats>
+</nmaprun>

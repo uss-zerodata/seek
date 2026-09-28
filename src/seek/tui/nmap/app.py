@@ -275,7 +275,7 @@ class ScanTable(DataTable):
 
 _HINTS = {
     "hosts": [("↑↓", "select"), ("JK←→", "read record"), ("↵", "services"), ("v", "swap"),
-              ("1-9", "sort"), ("r", "reverse"), ("/", "filter"), ("u", "reachable"),
+              ("1-9", "sort"), ("r", "reverse"), ("/", "filter"), ("u", "up"),
               ("s", "stats"), ("b", "group"), ("d", "detail"), ("m", "mark"), ("n", "scan"),
               ("x", "export"), ("?", "help"), ("^P", "commands")],
     "services": [("↑↓", "select"), ("JK←→", "read record"), ("↵", "hosts"), ("v", "swap"),
@@ -392,7 +392,7 @@ class NmapApp(App[int]):
         Binding("r", "reverse", "Reverse sort", show=False),
         Binding("s", "stats", "Statistics", show=False),
         Binding("b", "group", "Group by", show=False),
-        Binding("u", "reachable", "Reachable hosts / open ports only", show=False),
+        Binding("u", "up", "Up hosts / open ports only", show=False),
         Binding("d", "open_detail", "Open detail", show=False),
         Binding("D", "toggle_detail", "Detail pane", show=False),
         # J/K move the report's own cursor, pairing with j/k moving the list
@@ -550,7 +550,7 @@ class NmapApp(App[int]):
         self._sort_desc = False
         self._group_keys = ("service", "product", "port")
         self._group_at = 0
-        self._only_reachable = False
+        self._only_up = False
         self._only_open = False                 # `u` on a host's own port list
         self._show_detail = True
         self._reader: DetailReader | None = None
@@ -1094,8 +1094,8 @@ class NmapApp(App[int]):
             # Ahead of the next branch: a host's ports inherit the Hosts tab.
             headline = "No open port on this host"
             hint = "u lists every port the scan recorded, closed and filtered too"
-        elif self._only_reachable and self._active_tab == "hosts":
-            headline = "No host shows evidence of being reachable"
+        elif self._only_up and self._active_tab == "hosts":
+            headline = "No host is up"
             hint = "u lists every host the scan named"
         elif len(self.stack) > 1:
             headline = f"{self.view.title} has nothing to show"
@@ -1327,8 +1327,8 @@ class NmapApp(App[int]):
     def action_group(self) -> None:
         self._cycle_grouping()
 
-    def action_reachable(self) -> None:
-        self._toggle_reachable()
+    def action_up(self) -> None:
+        self._toggle_up()
 
     def _toggle_stats(self) -> None:
         self._activate("hosts" if self._active_tab == "stats" else "stats")
@@ -1340,13 +1340,13 @@ class NmapApp(App[int]):
         else:
             self._activate(_GROUP_TABS[0])
 
-    def _toggle_reachable(self) -> None:
+    def _toggle_up(self) -> None:
         """A filter on the host list, not an overview of its own.
 
         On a host's port list it is the same question asked of ports - which of
         these did the scan actually find open - and it stays where it is rather
         than throwing the reader back to the host list. The two flags are
-        separate: hiding closed ports is no reason to hide unreachable hosts.
+        separate: hiding closed ports is no reason to hide hosts that are down.
         """
         if self.view.kind == "host-detail" and self.view.hosts:
             self._only_open = not self._only_open
@@ -1356,8 +1356,8 @@ class NmapApp(App[int]):
             return
         if self._active_tab != "hosts":
             self._activate("hosts")
-        self._only_reachable = not self._only_reachable
-        self.stack[-1] = vdefs.hosts_view(self._only_reachable)
+        self._only_up = not self._only_up
+        self.stack[-1] = vdefs.hosts_view(self._only_up)
         self._reset_sort()
 
     def _mark_current(self) -> _Mark:
@@ -1385,7 +1385,7 @@ class NmapApp(App[int]):
             return vdefs.statistics_view()
         if tab_id in _GROUP_TABS:
             return vdefs.grouping_view(tab_id.removeprefix("group-"))
-        return vdefs.hosts_view(self._only_reachable)
+        return vdefs.hosts_view(self._only_up)
 
     def _scans_index(self) -> rawlog.Scanned:
         """The scan index for the model on screen, rebuilt when it is replaced."""
@@ -2178,10 +2178,10 @@ class NmapApp(App[int]):
             return
         warn.display = self.scans.overstated
         if self.scans.overstated:
-            asserted, real = len(self.scans.asserted_up), len(self.scans.reachable)
+            asserted, real = len(self.scans.asserted_up), len(self.scans.up)
             warn.update(Text(
-                f"⚠  scan asserted {asserted} hosts up (-Pn) but only {real} show any "
-                f"evidence — listing by evidence", style="bold bright_yellow"))
+                f"⚠  scan asserted {asserted} hosts up (-Pn) but only {real} are up "
+                f"— an open port or host discovery", style="bold bright_yellow"))
 
     def _read_note(self) -> Text | None:
         """How far the read has got, for the status line. `None` once it has."""

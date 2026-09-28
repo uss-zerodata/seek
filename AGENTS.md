@@ -257,10 +257,16 @@ stdout, `cd`) cannot run while Textual owns the screen. They set
   run: no import, no database, nothing written but an explicit export. Parsing
   1.4 MB takes ~11 ms, so there is no performance argument for caching.
 - **`line_no`-style split, again:** a host's *recorded* state (`state`/`reason`)
-  and its *evidence-based* `reachable` are different things. `-Pn` makes nmap
-  report `up` with reason `user-set` for every target — 255 of 256 in the real
-  sample, 9 of which had any evidence. Never present the asserted count as
-  observed; `Host.reachable` is the one to list and filter by.
+  and whether it is `up` are different things. `-Pn` makes nmap report `up`
+  with reason `user-set` for every target — 255 of 256 in the real sample, 9 of
+  which had any evidence. Never present the asserted count as observed;
+  `Host.up` is the one to list, filter and export by, and it is **one rule for
+  every consumer**: an open port, or a real discovery answer (`Host.discovered`
+  - `up` for a reason other than `user-set`). Closed and filtered ports, OS
+  guesses and script output do not count: a filtered port is the absence of a
+  reply, and the rule has to agree with the "Up hosts" export. Merging lets an
+  observed `up` beat an observed `down` in either order; an asserted `up` never
+  replaces a recorded `down`.
 - **Merging prefers a probe over a guess.** A scan run without `-sV` names
   services from nmap's port table (port 3128 → `squid-http`). A `method="probed"`
   record overrides a table guess in either file order; `method`/`conf` travel

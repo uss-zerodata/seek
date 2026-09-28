@@ -116,7 +116,7 @@ FIELDS: list[tuple[str, Callable[[Record], str]]] = [
     ("names", lambda r: ",".join(names_for(r))),
     ("os", lambda r: r.host.os or ""),
     ("state", lambda r: r.host.state or ""),
-    ("reachable", lambda r: "yes" if r.host.reachable else "no"),
+    ("up", lambda r: "yes" if r.host.up else "no"),
     ("sources", lambda r: ",".join(r.host.sources)),
     ("port", lambda r: _svc(r, lambda s: s.port)),
     ("protocol", lambda r: _svc(r, lambda s: s.protocol)),
@@ -200,6 +200,11 @@ def export_hosts(records: Iterable[Record]) -> list[str]:
     return _unique(r.host.address for r in records if r.host.open_services)
 
 
+def export_up_hosts(records: Iterable[Record]) -> list[str]:
+    """The hosts `u` keeps: an open port, or a real host-discovery answer."""
+    return _unique(r.host.address for r in records if r.host.up)
+
+
 def export_all_hosts(records: Iterable[Record]) -> list[str]:
     return _unique(r.host.address for r in records)
 
@@ -251,6 +256,7 @@ def url_for(host_name: str, svc: Service) -> str:
 # a format choice would be a lie about what was written).
 EXPORTS: dict[str, tuple[str, Callable[[Iterable[Record]], list[str]], str | None]] = {
     "hosts": ("Hosts with open ports", export_hosts, "address"),
+    "up-hosts": ("Up hosts", export_up_hosts, "address"),
     "all-hosts": ("All hosts", export_all_hosts, "address"),
     "ports": ("Open ports (comma separated)", export_ports, None),
     "host-ports": ("host:port pairs", export_host_ports, "host_port"),

@@ -50,7 +50,7 @@ async def test_every_bound_action_has_a_command():
         titles = " ".join(t for t, _, _ in _commands(app)).lower()
         for expected in ("hosts", "services", "statistics", "group by service",
                          "group by product", "group by port", "next overview",
-                         "previous overview", "only reachable", "open selected",
+                         "previous overview", "only up hosts", "open selected",
                          "back", "first row", "last row", "page down", "page up",
                          "scroll detail", "detail", "reverse sort", "filter",
                          "export", "help", "quit", "sort by"):

@@ -182,11 +182,15 @@ def _fmt(value: object) -> str:
 
 
 def _reach(host: Host) -> str:
-    if host.state == "down":
-        return "down"
-    if host.reachable:
-        return "up" if not host.state_asserted else "up*"
-    return "no evidence"
+    """Which part of the up rule applies: discovery, only an open port
+    (`up*`), a `-Pn` assertion nothing confirmed, or a recorded `down`."""
+    if host.discovered:
+        return "up"
+    if host.up:
+        return "up*"
+    if host.state_asserted:
+        return "unconfirmed"
+    return _fmt(host.state)
 
 
 HOST_COLUMNS = ("Address", "Hostname", "OS", "State", "Svcs", "Scans")
@@ -217,13 +221,13 @@ def _host_row(h: Host) -> Row:
     )
 
 
-def hosts_view(only_reachable: bool = False) -> View:
+def hosts_view(only_up: bool = False) -> View:
     def build(scans: ScanSet, report: Report | None = None) -> list[Row]:
-        hosts = scans.reachable if only_reachable else scans.hosts
+        hosts = scans.up if only_up else scans.hosts
         return [_host_row(h) for h in counted(hosts, report, HOSTS)]
 
     return View(
-        title="Hosts" + (" (reachable)" if only_reachable else ""),
+        title="Hosts" + (" (up)" if only_up else ""),
         columns=HOST_COLUMNS, build=build, kind="hosts", tab="hosts",
         reports=True,
     )
@@ -269,7 +273,7 @@ def services_view() -> View:
 
 
 def host_detail(host: Host, only_open: bool = False) -> View:
-    """One host's ports. `only_open` is `u` here, as reachable-only is on the
+    """One host's ports. `only_open` is `u` here, as up-only is on the
     host list: the overviews count open ports only, this is the one list that
     shows closed and filtered ones too."""
     def build(_: ScanSet) -> list[Row]:
@@ -489,11 +493,10 @@ def statistics_view() -> View:
                      host_list("Targets", scans.hosts), scans.hosts),
             coverage("Asserted up", st.asserted_up, "reported by the scan" + pn,
                      host_list("Asserted up", scans.asserted_up), scans.asserted_up),
-            coverage("Reachable (evidence)", st.reachable,
-                     "responded, or was identified" if not st.overstated
+            coverage("Up", st.up,
+                     "open port, or answered host discovery" if not st.overstated
                      else "FAR FEWER than asserted",
-                     host_list("Reachable (evidence)", scans.reachable),
-                     scans.reachable),
+                     host_list("Up", scans.up), scans.up),
             coverage("With open ports", st.with_open_ports, "",
                      host_list("With open ports", with_ports), with_ports),
             coverage("Distinct services", st.distinct_services, "",

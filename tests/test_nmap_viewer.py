@@ -107,18 +107,48 @@ async def test_tab_swaps_to_the_service_view_and_groups_hosts():
 # --- the -Pn case -----------------------------------------------------------
 
 
-async def test_pn_scan_warns_and_lists_by_evidence():
+async def test_pn_scan_warns_and_lists_by_the_up_rule():
     app = _app("pn-asserted")
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause(0.1)
         warn = _render(app.query_one("#warn"))
         assert "asserted 10" in warn and "only 2" in warn
         states = [r.cells[3] for r in app._rows]
-        assert states.count("no evidence") == 8
+        assert states.count("unconfirmed") == 8
         assert states.count("up*") == 2
 
 
-async def test_reachable_toggle_filters_by_evidence():
+async def test_the_state_column_says_which_part_of_the_rule_applies():
+    app = _app("up-rule-pn", "up-rule-discovery")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause(0.2)
+        state = {r.cells[0]: r.cells[3] for r in app._rows}
+        assert state == {
+            "203.0.113.1": "up*",           # -Pn, open port
+            "203.0.113.2": "unconfirmed",   # -Pn, closed/filtered/OS/scripts only
+            "203.0.113.3": "unconfirmed",   # -Pn, nothing
+            "203.0.113.4": "up",            # answered discovery
+            "203.0.113.5": "down",
+            "203.0.113.6": "up*",           # recorded down, open port elsewhere
+        }
+
+
+async def test_u_lists_exactly_the_up_hosts_and_agrees_with_the_export():
+    from seek.nmap.export import Record, export_all_hosts, export_up_hosts
+
+    app = _app("up-rule-pn", "up-rule-discovery")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause(0.2)
+        everything = [rec for r in app._rows for rec in r.records]
+        await pilot.press("u")
+        await pilot.pause(0.2)
+        assert _cells(app) == ["203.0.113.1", "203.0.113.4", "203.0.113.6"]
+        filtered = [rec for r in app._rows for rec in r.records]
+        assert export_all_hosts(filtered) == export_up_hosts(everything)
+        assert all(isinstance(rec, Record) for rec in filtered)
+
+
+async def test_up_toggle_filters_by_the_rule():
     app = _app("pn-asserted")
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause(0.1)
@@ -222,7 +252,7 @@ async def test_u_on_a_hosts_ports_keeps_only_the_open_ones():
         await pilot.pause(0.1)
         assert app.view.kind == "host-detail", "it stays on the host"
         assert [r.cells[0] for r in app._rows] == ["22/tcp", "80/tcp"]
-        assert not app._only_reachable, "hiding closed ports hides no hosts"
+        assert not app._only_up, "hiding closed ports hides no hosts"
         await pilot.press("escape")
         await pilot.pause(0.1)
         assert len(app._rows) == 3, "the host list is unfiltered"
@@ -301,7 +331,7 @@ async def test_breadcrumb_shows_the_path_and_esc_unwinds_one_level():
 # --- statistics and grouping ------------------------------------------------
 
 
-async def test_statistics_view_separates_asserted_from_evidenced():
+async def test_statistics_view_separates_asserted_from_up():
     app = _app("pn-asserted")
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.press("s")
@@ -309,7 +339,7 @@ async def test_statistics_view_separates_asserted_from_evidenced():
         assert app.view.kind == "stats"
         text = {r.cells[0]: r.cells[1] for r in app._rows}
         assert text["Asserted up"] == "10"
-        assert text["Reachable (evidence)"] == "2"
+        assert text["Up"] == "2"
 
 
 async def test_grouping_cycles_through_service_product_and_port():
@@ -1374,13 +1404,13 @@ async def test_going_back_from_a_statistic_keeps_the_line_selected():
     app = _app("basic")
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.2)
-        await _open_stat(pilot, app, "Reachable (evidence)")
-        assert app.view.title == "Reachable (evidence)"
+        await _open_stat(pilot, app, "Up")
+        assert app.view.title == "Up"
         await pilot.press("escape")
         await pilot.pause(0.3)
         assert app.view.kind == "stats"
         selected = app._rows[app.query_one(DataTable).cursor_row]
-        assert selected.cells[0] == "Reachable (evidence)"
+        assert selected.cells[0] == "Up"
 
 
 async def test_clicking_a_column_heading_sorts_by_it():
@@ -1729,15 +1759,21 @@ async def test_the_headers_stay_when_the_list_is_empty():
             "the region is still fenced, with the message inside it"
 
 
-async def test_the_empty_message_follows_the_reason():
-    app = _app("discovery")
+async def test_the_empty_message_follows_the_reason(tmp_path):
+    scan = tmp_path / "pn.xml"                       # asserted up, nothing found
+    scan.write_text(
+        '<?xml version="1.0"?>\n<nmaprun scanner="nmap" args="nmap -Pn -oX pn.xml '
+        '203.0.113.9" start="1756000000" version="7.94" xmloutputversion="1.05">\n'
+        '<host><status state="up" reason="user-set" reason_ttl="0"/>'
+        '<address addr="203.0.113.9" addrtype="ipv4"/></host>\n</nmaprun>\n')
+    app = NmapApp(prepare(load([scan])))
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause(0.2)
-        await pilot.press("u")                       # reachable only
+        await pilot.press("u")                       # up only
         await pilot.pause(0.3)
-        if not app._rows:
-            shown = _empty_text(app)
-            assert "reachable" in shown and "u lists every host" in shown
+        assert not app._rows
+        shown = _empty_text(app)
+        assert "No host is up" in shown and "u lists every host" in shown
 
 
 async def test_the_empty_state_clears_when_rows_come_back():

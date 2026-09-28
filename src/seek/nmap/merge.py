@@ -171,7 +171,12 @@ def _merge_host(into: Host, other: Host) -> None:
         if getattr(into, attr) in (None, "") and getattr(other, attr) not in (None, ""):
             setattr(into, attr, getattr(other, attr))
     # A recorded state beats an asserted one: `-Pn` says `up` for everything.
+    # Between two recorded ones, `up` wins in either file order - a host that
+    # answered discovery once is up, whatever an earlier or later ping missed.
+    # An asserted `up` never replaces a recorded `down`: that is the `-Pn` case.
     if into.state_asserted and not other.state_asserted and other.reason:
+        into.state, into.reason = other.state, other.reason
+    elif into.state == "down" and other.discovered:
         into.state, into.reason = other.state, other.reason
     elif into.state in (None, ""):
         into.state, into.reason = other.state, other.reason

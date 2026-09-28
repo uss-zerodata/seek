@@ -8,6 +8,10 @@ nmap output rather than only with the synthetic fixtures:
 
 Expected for `nmap_tcp_top1000_*.xml` (scanned with -Pn):
     256 hosts, 40 ports, 90 scripts (55 structured), 255 asserted up, 9 with evidence
+    (before the up rule; `up` now counts only hosts with an open port there)
+
+For a discovery scan (no -Pn), `up` should be at least `nmap_up`: every host
+nmap itself recorded up, plus any with an open port.
 """
 
 from __future__ import annotations
@@ -42,7 +46,8 @@ def main() -> int:
             f"scripts={len(scripts):<4} structured={sum(1 for s in scripts if s.data):<4} "
             f"-Pn={sf.disabled_ping!s:<5} "
             f"asserted_up={sum(1 for h in sf.hosts if h.state == 'up'):<4} "
-            f"evidenced={sum(1 for h in sf.hosts if h.reachable)}"
+            f"up={sum(1 for h in sf.hosts if h.up):<4} "
+            f"nmap_up={sum(1 for h in sf.hosts if h.discovered)}"
         )
     return 0
 

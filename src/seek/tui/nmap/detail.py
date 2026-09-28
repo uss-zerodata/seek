@@ -374,13 +374,17 @@ def _script_block(scripts) -> list[Text]:
 
 
 def _state_text(host: Host) -> tuple[str, str]:
+    """The up rule's verdict, with what nmap recorded kept beside it."""
+    if host.discovered:
+        return str(host.state), "bold green"
+    if host.up:
+        recorded = "asserted by -Pn" if host.state_asserted else f"recorded {host.state}"
+        return f"up — an open port ({recorded})", "bold"
+    if host.state_asserted:
+        return "unconfirmed — asserted up by -Pn, no open port", "bold yellow"
     if host.state == "down":
         return "down", "bold red"
-    if host.state_asserted and not host.has_evidence:
-        return "up — asserted by -Pn, no evidence", "bold yellow"
-    if host.state_asserted:
-        return "up — asserted by -Pn, but responded", "bold"
-    return str(host.state or ABSENT), "bold green"
+    return str(host.state or ABSENT), _KEY
 
 
 def host_detail(host: Host, shots: Captures | None = None, full: bool = False,

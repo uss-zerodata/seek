@@ -101,7 +101,7 @@ def group_for(hosts: list[Host], svc: Service) -> ServiceGroup | None:
 class Statistics:
     targets: int = 0
     asserted_up: int = 0
-    reachable: int = 0
+    up: int = 0
     with_open_ports: int = 0
     # (service name, how many times it occurs, the ports it was seen on)
     services: list[tuple[str, int, list[str]]] = field(default_factory=list)
@@ -116,8 +116,8 @@ class Statistics:
 
     @property
     def overstated(self) -> bool:
-        """The scan claims more hosts up than show any evidence."""
-        return self.asserted_up > self.reachable
+        """The scan claims more hosts up than the rule accepts."""
+        return self.asserted_up > self.up
 
 
 def statistics(hosts: list[Host], report: Report | None = None) -> Statistics:
@@ -151,7 +151,7 @@ def statistics(hosts: list[Host], report: Report | None = None) -> Statistics:
     return Statistics(
         targets=len(hosts),
         asserted_up=sum(1 for h in hosts if h.state == "up"),
-        reachable=sum(1 for h in hosts if h.reachable),
+        up=sum(1 for h in hosts if h.up),
         with_open_ports=sum(1 for h in hosts if h.open_services),
         services=services,
         ports=ports,

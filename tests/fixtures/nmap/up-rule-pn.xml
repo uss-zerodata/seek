@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nmaprun scanner="nmap" args="nmap -Pn -n -sS -O -sC -p 22,80,443,8080 -oX up-rule-pn.xml 203.0.113.1-3,6" start="1756001100" version="7.94" xmloutputversion="1.05">
+<host><status state="up" reason="user-set" reason_ttl="0"/><address addr="203.0.113.1" addrtype="ipv4"/><hostnames></hostnames>
+<ports><port protocol="tcp" portid="443"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="https" method="table" conf="3"/></port></ports>
+</host>
+<host><status state="up" reason="user-set" reason_ttl="0"/><address addr="203.0.113.2" addrtype="ipv4"/><hostnames></hostnames>
+<ports>
+<port protocol="tcp" portid="22"><state state="filtered" reason="no-response" reason_ttl="0"/><service name="ssh" method="table" conf="3"/></port>
+<port protocol="tcp" portid="80"><state state="closed" reason="reset" reason_ttl="64"/><service name="http" method="table" conf="3"/></port>
+</ports>
+<os><osmatch name="Linux 5.X" accuracy="90" line="1"><osclass type="general purpose" vendor="Linux" osfamily="Linux" osgen="5.X" accuracy="90"/></osmatch></os>
+<hostscript><script id="clock-skew" output="mean: 0s, deviation: 0s, median: 0s"/></hostscript>
+</host>
+<host><status state="up" reason="user-set" reason_ttl="0"/><address addr="203.0.113.3" addrtype="ipv4"/><hostnames></hostnames></host>
+<host><status state="up" reason="user-set" reason_ttl="0"/><address addr="203.0.113.6" addrtype="ipv4"/><hostnames></hostnames>
+<ports><port protocol="tcp" portid="8080"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="http-proxy" method="table" conf="3"/></port></ports>
+</host>
+<runstats><finished time="1756001120" elapsed="20.00" exit="success"/><hosts up="4" down="0" total="4"/></runstats>
+</nmaprun>

@@ -1,4 +1,4 @@
-"""Projections: evidence-based reachability, statistics, grouping."""
+"""Projections: the up rule, statistics, grouping."""
 
 from __future__ import annotations
 
@@ -14,15 +14,15 @@ def _scans(*names):
     return views.prepare(load([FIX / f"{n}.xml" for n in names]))
 
 
-# --- evidence-based reachability (-Pn) -------------------------------------
+# --- the up rule (-Pn) ------------------------------------------------------
 
 
-def test_pn_scan_reports_evidence_not_the_asserted_count():
+def test_pn_scan_reports_up_hosts_not_the_asserted_count():
     scans = _scans("pn-asserted")
     assert len(scans.hosts) == 10
     assert len(scans.asserted_up) == 10, "nmap asserted all ten up"
-    assert len(scans.reachable) == 2, "only two showed any evidence"
-    assert [h.address for h in scans.reachable] == ["198.51.100.3", "198.51.100.7"]
+    assert len(scans.up) == 2, "only two have an open port"
+    assert [h.address for h in scans.up] == ["198.51.100.3", "198.51.100.7"]
 
 
 def test_the_discrepancy_is_detectable():
@@ -34,34 +34,34 @@ def test_the_raw_state_and_reason_are_kept():
     h = _scans("pn-asserted").hosts[0]
     assert (h.state, h.reason) == ("up", "user-set")
     assert h.state_asserted is True
-    assert h.reachable is False
+    assert h.up is False
 
 
 def test_real_host_discovery_agrees_with_the_recorded_state():
     scans = _scans("discovery")
     assert len(scans.asserted_up) == 4
-    assert len(scans.reachable) == 4, "reasons other than user-set are evidence"
-    assert all(not h.state_asserted for h in scans.reachable)
+    assert len(scans.up) == 4, "a discovery answer is enough"
+    assert all(not h.state_asserted for h in scans.up)
 
 
-def test_a_host_reached_by_discovery_with_no_open_port_is_still_reachable():
+def test_a_host_reached_by_discovery_with_no_open_port_is_still_up():
     h = next(h for h in _scans("discovery").hosts if h.address == "203.0.113.1")
     assert h.services == []
-    assert h.reachable is True
+    assert h.up is True
 
 
-def test_a_down_host_is_never_reachable():
+def test_a_down_host_with_no_open_port_is_not_up():
     h = next(h for h in _scans("discovery").hosts if h.address == "203.0.113.9")
     assert h.state == "down"
-    assert h.reachable is False
+    assert h.up is False
 
 
 # --- statistics -------------------------------------------------------------
 
 
-def test_statistics_separate_asserted_from_evidenced():
+def test_statistics_separate_asserted_from_up():
     st = views.statistics(_scans("pn-asserted").hosts)
-    assert (st.targets, st.asserted_up, st.reachable, st.with_open_ports) == (10, 10, 2, 2)
+    assert (st.targets, st.asserted_up, st.up, st.with_open_ports) == (10, 10, 2, 2)
     assert st.overstated is True
 
 

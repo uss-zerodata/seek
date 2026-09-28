@@ -46,7 +46,7 @@ def test_down_host_is_parsed_with_no_services():
     h = _hosts("basic")["192.0.2.3"]
     assert h.state == "down"
     assert h.services == []
-    assert h.reachable is False
+    assert h.up is False
 
 
 def test_open_services_helper_excludes_closed_and_filtered():

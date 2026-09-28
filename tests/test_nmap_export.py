@@ -181,7 +181,7 @@ def test_host_facts_and_service_facts_are_both_available():
     assert named["address"] == "192.0.2.1"
     assert named["hostname"] == "alpha.example"
     assert named["os"] == "Linux 5.X"
-    assert named["reachable"] == "yes"
+    assert named["up"] == "yes"
     assert named["port_label"] == "22/tcp"
     assert named["service"] == "ssh"
     assert named["product"] == "OpenSSH"
@@ -217,10 +217,10 @@ def test_csv_carries_a_header_and_quotes_what_needs_it():
 
 
 def test_json_is_a_list_of_objects_keyed_by_field():
-    out = export.render(_records("basic"), ["address", "reachable"], "json")
+    out = export.render(_records("basic"), ["address", "up"], "json")
     parsed = json.loads(out)
-    assert parsed[0] == {"address": "192.0.2.1", "reachable": "yes"}
-    assert [o["reachable"] for o in parsed] == ["yes", "yes", "no"]
+    assert parsed[0] == {"address": "192.0.2.1", "up": "yes"}
+    assert [o["up"] for o in parsed] == ["yes", "yes", "no"]
 
 
 def test_a_recipe_can_be_written_in_any_format():

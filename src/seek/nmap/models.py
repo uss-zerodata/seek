@@ -139,21 +139,20 @@ class Host:
         return self.reason == "user-set"
 
     @property
-    def has_evidence(self) -> bool:
-        """Did the scan actually find anything on this host?
-
-        Any port response, service, OS match or script result counts - as does a
-        status reason other than `user-set`, which means host discovery really
-        did reach it (even if it exposed no port).
-        """
-        if self.services or self.os or self.scripts:
-            return True
-        return bool(self.reason) and not self.state_asserted
+    def discovered(self) -> bool:
+        """Host discovery really reached it: `up` for a reason other than `-Pn`."""
+        return self.state == "up" and not self.state_asserted
 
     @property
-    def reachable(self) -> bool:
-        """Evidence-based, never the asserted state."""
-        return self.state != "down" and self.has_evidence
+    def up(self) -> bool:
+        """The one rule every view and export uses.
+
+        An open port makes a host up however it was scanned; otherwise only a
+        real discovery result does. A `-Pn` host with closed or filtered ports,
+        an OS guess or script output is *not* up - a filtered port is the
+        absence of a reply, and the rule has to agree with the host export.
+        """
+        return self.discovered or any(s.is_open for s in self.services)
 
     def copy(self) -> Host:
         """A private copy, on the same terms as `Service.copy`."""
@@ -226,8 +225,8 @@ class ScanSet:
         return [h for h in self.hosts if h.state == "up"]
 
     @property
-    def reachable(self) -> list[Host]:
-        return [h for h in self.hosts if h.reachable]
+    def up(self) -> list[Host]:
+        return [h for h in self.hosts if h.up]
 
     @property
     def with_open_ports(self) -> list[Host]:
@@ -235,5 +234,5 @@ class ScanSet:
 
     @property
     def overstated(self) -> bool:
-        """True when the scan claims more hosts up than show any evidence."""
-        return len(self.asserted_up) > len(self.reachable)
+        """True when the scan claims more hosts up than the rule accepts."""
+        return len(self.asserted_up) > len(self.up)

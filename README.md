@@ -55,7 +55,7 @@ that list opens its record again — so any angle on the data is reachable by
 digging on rather than by unwinding first. Grouping rows and the per-service
 lines of the statistics view open the hosts behind them the same way. The
 statistics tab is divided into headed sections — **Coverage** (targets, asserted
-up, reachable by evidence, hosts with open ports and the two distinct totals),
+up, actually up, hosts with open ports and the two distinct totals),
 **Services** and **Ports**, one line per name and per open port with how often it
 occurs — ordered by count, and sorting reorders the lines inside each section
 rather than scrambling them together. `Esc`
@@ -78,7 +78,7 @@ yourself replaces the drill-down. The filter box uses the same fuzzy grammar (`'
 | `1`…`9` | sort by that column, ascending — or click its heading |
 | `r` | reverse the sort |
 | `d` | open the detail full-screen: searchable, `←`/`→` steps entries · `D` show / hide the pane |
-| `s` | statistics · `b` group by · `u` reachable only |
+| `s` | statistics · `b` group by · `u` up hosts only (on a host: open ports only) |
 | `m` `M` | mark the selected row · clear every mark |
 | `n` | new scan · `o` report view · `p` freeze log · `c` cancel |
 | `x` | export, or capture the URLs with gowitness · `?` help · `q` quit |
@@ -92,14 +92,14 @@ every host running it, and marks survive filtering, sorting, drilling down and
 switching tabs — the set you want is usually collected across several views.
 `x` exports the marked records when there are any and the rows on screen when
 there are none, saying which before it writes anything. Pick one of the named
-lists (hosts, ports, `host:port`, URLs) or `custom…` to choose fields — address,
-hostname, OS, state, reachability, source scans, port, protocol, service,
+lists (hosts with open ports, up hosts, all hosts, ports, `host:port`, URLs) or
+`custom…` to choose fields — address, hostname, OS, state, up, source scans, port, protocol, service,
 product, version, tunnel, vulnerability count, URL — and write it as plain text,
 CSV with a header row, or JSON. Two worked examples:
 
 ```bash
-# every reachable host, for a focused re-scan
-#   Hosts tab → u (reachable only) → x → All hosts → text → file
+# every up host, for a focused re-scan
+#   Hosts tab → x → Up hosts → text → file   (the same list as u → All hosts)
 nmap -sV -iL up-hosts.txt
 
 # every web service, for screenshots
@@ -355,17 +355,21 @@ With `-Pn` nmap marks *every* target `up`, with the status reason `user-set` —
 an assumption, not an observation. On a real /24 scan that means 255 hosts
 reported up when only 9 responded to anything.
 
-`seek` classifies each host by the evidence actually present — any responding
-port, service, OS match or script result — and lists by that, showing `up*` for
-a state that was merely asserted and `no evidence` for the rest. It says so
-rather than quietly substituting a different number:
+`seek` uses one rule everywhere — the host list, `u`, the statistics and the
+"Up hosts" export: a host is **up** when it has an open port, however it was
+scanned, or when a scan *with* host discovery recorded it up. A `-Pn` assertion
+counts for nothing on its own; closed or filtered ports, an OS guess or script
+output do not make a host up. The State column says which part applies: `up`
+(host discovery), `up*` (only an open port says so), `unconfirmed` (asserted by
+`-Pn`, no open port) or `down`. It says so rather than quietly substituting a
+different number:
 
 ```
-⚠  scan asserted 255 hosts up (-Pn) but only 9 show any evidence — listing by evidence
+⚠  scan asserted 255 hosts up (-Pn) but only 9 are up — an open port or host discovery
 ```
 
-The raw state and reason stay visible in the host detail, and a scan run *with*
-host discovery is unaffected.
+When scans disagree, a host that any discovery scan recorded up is up. The raw
+state and reason stay visible in the host detail.
 
 ## Shell integration
 
