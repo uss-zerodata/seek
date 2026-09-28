@@ -268,10 +268,13 @@ def services_view() -> View:
     )
 
 
-def host_detail(host: Host) -> View:
+def host_detail(host: Host, only_open: bool = False) -> View:
+    """One host's ports. `only_open` is `u` here, as reachable-only is on the
+    host list: the overviews count open ports only, this is the one list that
+    shows closed and filtered ones too."""
     def build(_: ScanSet) -> list[Row]:
         out = []
-        for s in host.services:
+        for s in host.open_services if only_open else host.services:
             out.append(Row(
                 cells=(f"{s.port}/{s.protocol}", _fmt(s.state), _fmt(s.name),
                        _fmt(s.product), _fmt(s.version), _fmt(s.extrainfo),
@@ -290,12 +293,12 @@ def host_detail(host: Host) -> View:
 
     names = ", ".join(host.hostnames) or ABSENT
     return View(
-        title=f"Host {host.address}",
+        title=f"Host {host.address}" + (" (open ports)" if only_open else ""),
         subtitle=(f"{names} · {_fmt(host.os)} · state {_fmt(host.state)} "
                   f"(reason {_fmt(host.reason)}) · seen in {', '.join(host.sources)}"),
         columns=("Port", "State", "Service", "Product", "Version", "Info",
                  "Vulns", "Scans"),
-        build=build, kind="host-detail",
+        build=build, kind="host-detail", hosts=[host],
     )
 
 

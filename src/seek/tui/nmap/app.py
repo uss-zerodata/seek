@@ -283,7 +283,7 @@ _HINTS = {
                  ("b", "group"), ("d", "detail"), ("m", "mark"), ("n", "scan"),
                  ("x", "export"), ("?", "help"), ("^P", "commands")],
     "host-detail": [("↑↓", "select"), ("JK←→", "read record"), ("↵", "same service everywhere"),
-                    ("1-9", "sort"), ("r", "reverse"),
+                    ("1-9", "sort"), ("r", "reverse"), ("u", "open only"),
                     ("/", "filter"), ("d", "detail"), ("D", "pane"), ("m", "mark"),
                     ("x", "export"), ("?", "help"), ("^P", "commands")],
     "group-hosts": [("↑↓", "select"), ("JK←→", "read record"), ("↵", "host"), ("1-9", "sort"),
@@ -392,7 +392,7 @@ class NmapApp(App[int]):
         Binding("r", "reverse", "Reverse sort", show=False),
         Binding("s", "stats", "Statistics", show=False),
         Binding("b", "group", "Group by", show=False),
-        Binding("u", "reachable", "Reachable only", show=False),
+        Binding("u", "reachable", "Reachable hosts / open ports only", show=False),
         Binding("d", "open_detail", "Open detail", show=False),
         Binding("D", "toggle_detail", "Detail pane", show=False),
         # J/K move the report's own cursor, pairing with j/k moving the list
@@ -551,6 +551,7 @@ class NmapApp(App[int]):
         self._group_keys = ("service", "product", "port")
         self._group_at = 0
         self._only_reachable = False
+        self._only_open = False                 # `u` on a host's own port list
         self._show_detail = True
         self._reader: DetailReader | None = None
         self._active_tab = "hosts"
@@ -1089,6 +1090,10 @@ class NmapApp(App[int]):
         elif self._active_tab == "scans":
             headline = "No scans yet"
             hint = "every scan file present shows here as a history · n runs one"
+        elif self._only_open and self.view.kind == "host-detail":
+            # Ahead of the next branch: a host's ports inherit the Hosts tab.
+            headline = "No open port on this host"
+            hint = "u lists every port the scan recorded, closed and filtered too"
         elif self._only_reachable and self._active_tab == "hosts":
             headline = "No host shows evidence of being reachable"
             hint = "u lists every host the scan named"
@@ -1336,7 +1341,19 @@ class NmapApp(App[int]):
             self._activate(_GROUP_TABS[0])
 
     def _toggle_reachable(self) -> None:
-        """A filter on the host list, not an overview of its own."""
+        """A filter on the host list, not an overview of its own.
+
+        On a host's port list it is the same question asked of ports - which of
+        these did the scan actually find open - and it stays where it is rather
+        than throwing the reader back to the host list. The two flags are
+        separate: hiding closed ports is no reason to hide unreachable hosts.
+        """
+        if self.view.kind == "host-detail" and self.view.hosts:
+            self._only_open = not self._only_open
+            restore = self._mark_current()
+            self.stack[-1] = vdefs.host_detail(self.view.hosts[0], self._only_open)
+            self._refresh_view(restore=restore)
+            return
         if self._active_tab != "hosts":
             self._activate("hosts")
         self._only_reachable = not self._only_reachable
@@ -1486,7 +1503,7 @@ class NmapApp(App[int]):
         elif isinstance(target, vdefs.Grouping):
             view = vdefs.grouping_detail(target)
         elif hasattr(target, "address"):
-            view = vdefs.host_detail(target)
+            view = vdefs.host_detail(target, self._only_open)
         elif hasattr(target, "port"):
             view = self._service_view(target)
         else:

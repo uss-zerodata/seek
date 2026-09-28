@@ -408,6 +408,13 @@ the raw nmap state available, and SHALL make the discrepancy visible rather than
 silently reporting the asserted number. Filtering by reachability SHALL operate
 on the evidence-based classification.
 
+The same key SHALL ask the same question of a single host's port list, the one
+list that shows closed and filtered ports as well as open ones: there it SHALL
+restrict the list to open ports, in place, without leaving the host. The choice
+SHALL carry to the next host opened, and SHALL be independent of the host-list
+filter. A host with no open port SHALL say so and name the key that lists every
+port.
+
 #### Scenario: A `-Pn` scan does not report every target as reachable
 - **WHEN** a scan run with `-Pn` marks 255 targets `up` with reason `user-set`, and only 9 of them have any port, service, OS or script data
 - **THEN** the viewer reports 9 hosts as showing evidence of being reachable, not 255
@@ -427,6 +434,14 @@ on the evidence-based classification.
 #### Scenario: Filtering by reachability uses evidence
 - **WHEN** the user filters the host view to reachable hosts in a `-Pn` scan
 - **THEN** only hosts with evidence are listed
+
+#### Scenario: A host's ports filtered to the open ones
+- **WHEN** a host's port list shows two open ports and one closed, and the user presses `u`
+- **THEN** only the two open ports are listed, the host stays open, and the host list is not filtered
+
+#### Scenario: A host with no open port
+- **WHEN** the port list is restricted to open ports and the host has none
+- **THEN** the list says that no port is open and that `u` lists every port
 ### Requirement: Aggregate statistics
 The system SHALL provide a statistics view over the current (filtered) model
 giving at least: the number of targets, how many were asserted up, how many show

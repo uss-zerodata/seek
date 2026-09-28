@@ -210,6 +210,52 @@ async def test_host_drill_down_lists_its_services_and_back_returns():
         assert app.view.kind == "hosts"
 
 
+async def test_u_on_a_hosts_ports_keeps_only_the_open_ones():
+    """`u` asks the port list what it asks the host list: what was found, not
+    what was merely recorded. It filters in place and carries to the next host."""
+    app = _app("basic")
+    async with app.run_test(size=(120, 30)) as pilot:
+        app.query_one(DataTable).move_cursor(row=0)
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        await pilot.press("u")
+        await pilot.pause(0.1)
+        assert app.view.kind == "host-detail", "it stays on the host"
+        assert [r.cells[0] for r in app._rows] == ["22/tcp", "80/tcp"]
+        assert not app._only_reachable, "hiding closed ports hides no hosts"
+        await pilot.press("escape")
+        await pilot.pause(0.1)
+        assert len(app._rows) == 3, "the host list is unfiltered"
+        app.query_one(DataTable).move_cursor(row=1)
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert [r.cells[0] for r in app._rows] == ["80/tcp"], "22/tcp is filtered"
+        await pilot.press("u")
+        await pilot.pause(0.1)
+        assert [r.cells[0] for r in app._rows] == ["22/tcp", "80/tcp"]
+
+
+async def test_a_host_with_no_open_port_says_so(tmp_path):
+    scan = tmp_path / "closed.xml"
+    scan.write_text(
+        '<?xml version="1.0"?>\n<nmaprun scanner="nmap" args="nmap -oX closed.xml '
+        '192.0.2.9" start="1756000000" version="7.94" xmloutputversion="1.05">\n'
+        '<host><status state="up" reason="syn-ack" reason_ttl="64"/>'
+        '<address addr="192.0.2.9" addrtype="ipv4"/><ports>'
+        '<port protocol="tcp" portid="443"><state state="closed" reason="conn-refused" '
+        'reason_ttl="64"/></port></ports></host>\n</nmaprun>\n')
+    app = NmapApp(prepare(load([scan])))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause(0.1)
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        await pilot.press("u")
+        await pilot.pause(0.2)
+        assert not app._rows
+        shown = _empty_text(app)
+        assert "No open port" in shown and "u lists every port" in shown
+
+
 async def test_service_drill_down_lists_its_hosts():
     app = _app("basic")
     async with app.run_test(size=(120, 30)) as pilot:
