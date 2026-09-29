@@ -34,10 +34,11 @@ from seek.gowitness import capture as gw_capture
 from seek.gowitness import detect as gw_detect
 from seek.gowitness import locate as gw_locate
 from seek.gowitness import results as gw_results
+from seek.gowitness.results import canonical_url
 from seek.nmap import merge as merge_mod
 from seek.nmap import presets as presets_mod
 from seek.nmap import rawlog, timeline
-from seek.nmap.export import Record, export_ports, export_urls, records_for
+from seek.nmap.export import Record, export_ports, export_urls, records_for, service_urls
 from seek.nmap.models import ScanSet
 from seek.nmap.runner import ScanRun
 from seek.runner import Run, Runner
@@ -141,6 +142,9 @@ class Session:
         # Keyed by record identity, in marking order - which is export order.
         self.marks: dict[tuple, Record] = {}
         self.owner: Owner | None = None
+        self._by_service: dict = {}
+        self._by_service_key: tuple | None = None
+        self._row_texts: dict[int, tuple] = {}
         # What each finished scan added to what was known, by run.
         self.diffs: dict[int, object] = {}
         self._history: list[timeline.Scan] = []
@@ -191,6 +195,62 @@ class Session:
             self._scanned = rawlog.Scanned(self.scans.files)
             self._scanned_for = self.scans
         return self._scanned
+
+    # --- what a row can be found by ---------------------------------------------
+
+    def captures_by_service(self) -> dict[tuple[str, str, int], list]:
+        """Every capture, by the service it shows - `(address, protocol, port)`.
+
+        Joined the way a record joins them (`export.service_urls`: the address
+        and every name the host answers to), rebuilt only when the model or the
+        captures change.
+        """
+        key = (id(self.scans), self.shots.generation)
+        if self._by_service_key != key:
+            owner: dict[str, tuple[str, str, int]] = {}
+            for host in self.scans.hosts:
+                for svc in host.services:
+                    for url in service_urls(svc, host):
+                        owner.setdefault(canonical_url(url),
+                                         (host.address, svc.protocol, svc.port))
+            index: dict[tuple[str, str, int], list] = {}
+            for capture in self.shots.all():
+                where = owner.get(canonical_url(capture.url))
+                if where is not None:
+                    index.setdefault(where, []).append(capture)
+            self._by_service, self._by_service_key = index, key
+            self._row_texts = {}
+        return self._by_service
+
+    def row_text(self, row) -> str:
+        """A row's text to filter on: what the list shows, and what its
+        screenshots say - page titles, URLs, technologies, HTTP status.
+
+        So `synology` finds the host whose web page is a Synology login, which
+        nothing in the scan itself names. Kept per row: rows are cached with the
+        model, and this is asked on every keystroke.
+        """
+        index = self.captures_by_service()
+        if not index or not row.records:
+            return row.text
+        hit = self._row_texts.get(id(row))
+        if hit is not None and hit[0] is row:
+            return hit[1]
+        words: list[str] = []
+        seen: set[int] = set()
+        for record in row.records:
+            services = ([record.service] if record.service is not None
+                        else record.host.services)
+            for svc in services:
+                for capture in index.get((record.host.address, svc.protocol, svc.port), ()):
+                    if id(capture) in seen:
+                        continue
+                    seen.add(id(capture))
+                    words += [capture.title, capture.url, capture.final_url,
+                              str(capture.status or ""), *capture.technologies]
+        text = f"{row.text} {' '.join(w for w in words if w)}" if words else row.text
+        self._row_texts[id(row)] = (row, text)
+        return text
 
     def capture_dirs(self) -> list[gw_capture.Paths]:
         """Where captures are: the one output goes to, then every results

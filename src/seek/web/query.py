@@ -13,6 +13,7 @@ from typing import TypeVar
 from urllib.parse import urlsplit
 
 from seek.nmap import filtering
+from seek.nmap.export import Record
 from seek.nmap.merge import addr_key
 from seek.nmap.models import port_key
 from seek.nmap.views import ServiceGroup, service_groups
@@ -110,7 +111,8 @@ def _capture_text(p: Placed) -> str:
     return " ".join(filter(None, [c.url, c.final_url, c.title, str(c.status or ""),
                                   p.host.address if p.host else "",
                                   " ".join(p.host.hostnames) if p.host else "",
-                                  port, str(c.database or ""), c.failure]))
+                                  port, str(c.database or ""), c.failure,
+                                  *c.technologies]))
 
 
 def _host_of(url: str) -> str:
@@ -172,7 +174,9 @@ def captures(model: WebModel, q: str = "", offset: int = 0,
     kept = [p for p in model.captures
             if _in_scope(p, address, protocol, port)
             and filtering.matches(spec, _capture_text(p),
-                                  (p.host.address,) if p.host else ())]
+                                  (p.host.address,) if p.host else (),
+                                  (Record(p.host, p.service),) if p.host and p.service else ())]
+    kept, loose = filtering.prefer_firm(spec, kept, _capture_text)
     _label, key = SORTS.get(sort, SORTS[DEFAULT_SORT])
     keyed = [(key(p), p) for p in kept]
     # Reversing must not bring the unknowns to the front: the known ones are
@@ -186,7 +190,9 @@ def captures(model: WebModel, q: str = "", offset: int = 0,
         siblings = len(model.captures_of(p.host, p.service)) if p.host and p.service else 0
         return s.out_capture(p, siblings=siblings)
 
-    return _page(ordered, convert, offset, limit)
+    page = _page(ordered, convert, offset, limit)
+    page.loose = loose
+    return page
 
 
 def capture(model: WebModel, capture_id: str) -> s.CaptureOut:

@@ -88,3 +88,13 @@
 - [x] 11.6 The first version's `/hosts`, `/services` pages redirect to the tabs; `w` opens the same places
 - [x] 11.7 The capture page links host, port and every capture of the port; long list cells are cut with the value in a tooltip
 - [x] 11.8 Tests: redirects, row thumbnails, the port record's link and single thumbnail, the host record's port links, `w`'s targets
+
+## 12. Search that finds, and says how it read you
+
+- [x] 12.1 Filter grammar: a complete address is a beginning (`=` or `/32` is one host); `:443`, `443/tcp`, `53/udp`, `port:443` are ports in any state; `host:port`; addresses side by side stay a union
+- [x] 12.2 `filtering.explain`: the filter in words, shown under every list, the gallery and the search results; `ignored while incomplete` said too
+- [x] 12.3 `Session.row_text`: a row is also found by its screenshots' titles, URLs, technologies and status - in the terminal and the browser
+- [x] 12.4 `filtering.prefer_firm`: rows containing the words win, scattered-letter matches are counted and left out; `~` includes them - terminal and browser alike
+- [x] 12.5 Header search (`Ctrl+K`): grouped hosts / services / names / screenshots as you type, arrows and Enter, a full `/search` page, "all →" to the tab with the same text
+- [x] 12.6 Syntax reference behind a `?` on every search box, examples that fill the box; terminal help updated
+- [x] 12.7 Tests: grammar, explain, prefer_firm, screenshot text, the search API and pages, the terminal's looser note

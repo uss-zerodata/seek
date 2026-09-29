@@ -187,3 +187,39 @@ tab page instead of existing beside it.
 #### Scenario: An old link
 - **WHEN** the user follows a link to the first version's page for a host
 - **THEN** the host's port list on the Hosts tab is shown
+
+### Requirement: One search finds anything, and every search says how it was read
+Every page SHALL offer a search across everything the session knows - hosts,
+services, names and screenshots - reachable from anywhere by `Ctrl+K`. As the
+user types it SHALL list the best matches grouped by what they are, each opening
+that thing's page, with how many there are in all and a way to the full list of
+each group; with the keyboard the user SHALL be able to move through the matches
+and open one. The same query SHALL mean the same thing as in every list filter,
+and a group's full list SHALL be that tab filtered by the same text. A search
+that finds nothing SHALL say so and offer the syntax.
+
+Every search box SHALL offer the syntax: a short reference with examples, each of
+which can be tried by clicking it. Under every list, the gallery and the search
+results, the query SHALL be restated in words as it was understood - a range, a
+port, an address beginning, words, what was ignored because it is incomplete -
+and how many looser matches were left out, with a way to include them.
+
+#### Scenario: Finding a login page by its title
+- **WHEN** the user presses `Ctrl+K` and types `synology`
+- **THEN** the host whose captured page says Synology, the services it runs and the screenshots themselves are listed, grouped, each opening its page
+
+#### Scenario: Keyboard only
+- **WHEN** the user types a query, presses the down arrow and Enter
+- **THEN** the first match's page opens
+
+#### Scenario: What was understood
+- **WHEN** the user filters the host list with `10.10.10.10:8080`
+- **THEN** the list says it is showing rows with host 10.10.10.10 and port 8080
+
+#### Scenario: Learning the syntax
+- **WHEN** the user opens the syntax reference beside a filter and clicks the `=10.10.10.1` example
+- **THEN** the filter holds `=10.10.10.1`, the list shows that host alone, and the list says so
+
+#### Scenario: Nothing found
+- **WHEN** the search finds nothing
+- **THEN** it says so and offers the syntax reference

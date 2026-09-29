@@ -515,6 +515,15 @@ stdout, `cd`) cannot run while Textual owns the screen. They set
   turns it into a link through `web/links.py` - the one place that says where a
   thing lives - and puts a capture's thumbnail after the last line about it.
   Never regex addresses or URLs out of rendered text to link them.
+- **Search is one grammar and one rule set, everywhere.** `filtering` parses;
+  a complete address is a *beginning* (`Range.prefixes`, or `FilterSpec.prefixes`
+  on the fast path), `=addr`/`/32` is one host, `:443`/`443/tcp` are `port:`
+  fields. After matching, both front ends call `filtering.prefer_firm` so rows
+  holding the words beat scattered-letter matches (`~` opts out), and both match
+  against `Session.row_text(row)` - the row's text plus its screenshots' titles,
+  URLs, technologies and status. `filtering.explain` is the filter in words;
+  every web list shows it. A list, the header search group and the TUI must list
+  the same rows for the same text - `test_every_overview_lists_what_the_terminal_lists`.
 - **Freezing the log is not pausing the scan.** nmap's timers run against the
   wall clock, so `SIGSTOP` can time hosts out on resume; `p` is a view state and
   the pane header says the scan is still running. `runner` only runs or cancels.

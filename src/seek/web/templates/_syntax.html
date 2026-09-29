@@ -1,0 +1,30 @@
+<dialog id="syntax" class="syntax">
+  <form method="dialog">
+    <h2>How to search</h2>
+    <p class="dim small">The same syntax works in every filter box, in the header search and in the terminal. Click an example to try it.</p>
+    <table class="pairs syntax-table">
+      <tr><th colspan="2" class="group">Words</th></tr>
+      <tr><td><button type="button" class="ex">nginx</button></td><td>anything mentioning it - hosts, names, services, products, versions, page titles, URLs, technologies</td></tr>
+      <tr><td><button type="button" class="ex">synology login</button></td><td>several words: all of them</td></tr>
+      <tr><td><button type="button" class="ex">'Apache 2.4</button></td><td>exactly this text (a leading <code>'</code>)</td></tr>
+      <tr><td><button type="button" class="ex">^admin</button> <button type="button" class="ex">.local$</button></td><td>starts with / ends with</td></tr>
+      <tr><td><button type="button" class="ex">!ssh</button></td><td>without it</td></tr>
+      <tr><td><button type="button" class="ex">synology ~</button></td><td>rows that contain the words come first and alone; <code>~</code> also lists those that only contain the letters, scattered (a typo's best friend)</td></tr>
+      <tr><th colspan="2" class="group">Addresses</th></tr>
+      <tr><td><button type="button" class="ex">10.10.10.1</button></td><td>addresses beginning with it: .1, .10-.19, .100-.199</td></tr>
+      <tr><td><button type="button" class="ex">=10.10.10.1</button></td><td>exactly this host (also <code>10.10.10.1/32</code>)</td></tr>
+      <tr><td><button type="button" class="ex">10.10.10.0/24</button></td><td>a range; several ranges or addresses side by side are either one</td></tr>
+      <tr><th colspan="2" class="group">Ports</th></tr>
+      <tr><td><button type="button" class="ex">:443</button> <button type="button" class="ex">443/tcp</button> <button type="button" class="ex">53/udp</button></td><td>a port with that number, whatever its state</td></tr>
+      <tr><td><button type="button" class="ex">open:80</button> <button type="button" class="ex">closed:22</button></td><td>a port in that state (closed means not open: closed or filtered)</td></tr>
+      <tr><td><button type="button" class="ex">10.10.10.10:8080</button></td><td>that host with that port</td></tr>
+      <tr><th colspan="2" class="group">Services</th></tr>
+      <tr><td><button type="button" class="ex">service:http</button> <button type="button" class="ex">product:nginx</button></td><td>a port running it; side by side they describe one port</td></tr>
+      <tr><th colspan="2" class="group">Combining</th></tr>
+      <tr><td><button type="button" class="ex">service:http AND NOT product:nginx</button></td><td><code>AND</code>, <code>OR</code> (or <code>|</code>), <code>NOT</code> in capitals, and <code>( )</code></td></tr>
+      <tr><td><button type="button" class="ex">:443 OR :8443</button></td><td>either</td></tr>
+    </table>
+    <p class="dim small">Under every filter a line says how your text was read - check it when a result looks wrong.</p>
+    <p><button value="close">Close</button> <span class="dim small">Esc leaves</span></p>
+  </form>
+</dialog>

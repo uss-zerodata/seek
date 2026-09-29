@@ -21,6 +21,7 @@ from seek.web.api.v1 import captures, hosts, services
 from seek.web.api.v1 import marks as marks_api
 from seek.web.api.v1 import records as records_api
 from seek.web.api.v1 import runs as runs_api
+from seek.web.api.v1 import search as search_api
 from seek.web.api.v1 import views as views_api
 from seek.web.pages import routes as pages
 from seek.web.source import ModelSource
@@ -36,6 +37,7 @@ ROUTERS = [
     records_api.router,
     marks_api.router,
     runs_api.router,
+    search_api.router,
     media.router,
     pages.router,
 ]

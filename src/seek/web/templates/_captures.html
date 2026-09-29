@@ -1,3 +1,4 @@
+{% if understood %}<p class="understood">Showing screenshots with: {{ understood | join(" · ") }}{% if page.loose %} · <a class="loose" href="?{{ dict(keep, q=q ~ " ~") | urlencode }}">+{{ page.loose }} looser - show them</a>{% endif %}</p>{% endif %}
 {% from "_macros.html" import shot_card, more %}
 {% if page.items %}
 <div class="grid">{% for c in page.items %}{{ shot_card(c) }}{% endfor %}</div>

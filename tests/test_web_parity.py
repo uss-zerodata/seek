@@ -172,9 +172,11 @@ def test_exports_are_the_terminals_text(tmp_path, which, fmt):
 def test_with_nothing_marked_an_export_follows_the_filter(tmp_path):
     client = _client(_session(tmp_path))
     got = client.get("/api/v1/export",
-                     params={"which": "all-hosts", "tab": "hosts", "q": "192.0.2.3"}).text
-    # A complete address is that one host (/32), as it is in the terminal.
-    assert got.split() == ["192.0.2.3"]
+                     params={"which": "all-hosts", "tab": "hosts", "q": "=192.0.2.3"}).text
+    assert got.split() == ["192.0.2.3"], "`=` is that host alone"
+    begins = client.get("/api/v1/export",
+                        params={"which": "all-hosts", "tab": "hosts", "q": "192.0.2.3"}).text
+    assert begins.split() == ["192.0.2.3", "192.0.2.30"], "a plain address is a beginning"
 
 
 def test_a_change_from_another_origin_is_refused(tmp_path):

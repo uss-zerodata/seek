@@ -102,6 +102,7 @@ class Listing:
     total: int                     # rows before the filter, headings excluded
     sort: int
     desc: bool
+    loose: int = 0                 # scattered-letter matches left out
 
 
 def listing(session: Session, view: vdefs.View, q: str = "",
@@ -114,14 +115,16 @@ def listing(session: Session, view: vdefs.View, q: str = "",
     col = min(max(col, 0), max(0, len(view.columns) - 1))
     spec = filtering.parse_filter(q.strip()) if q.strip() else filtering.FilterSpec()
     unfiltered = sum(1 for r in rows if not r.heading)
+    loose = 0
     if not spec.is_empty:
         rows = [r for r in rows if r.heading
-                or filtering.matches(spec, r.text, r.addresses, r.records)]
+                or filtering.matches(spec, session.row_text(r), r.addresses, r.records)]
+        rows, loose = filtering.prefer_firm(spec, rows, session.row_text)
         live = {r.section for r in rows if not r.heading}
         rows = [r for r in rows if not r.heading or r.section in live]
     rows = sorted(rows, key=lambda r: vdefs.key_at(r, col), reverse=down)
     rows.sort(key=lambda r: (r.section_rank, 0 if r.heading else 1))
-    return Listing(view.columns, rows, unfiltered, col, down)
+    return Listing(view.columns, rows, unfiltered, col, down, loose)
 
 
 def mark_state(session: Session, row: vdefs.Row) -> str:
@@ -212,6 +215,8 @@ def overview(session: Session, cache: ViewCache, tab: str, path: list[str], q: s
         columns=list(shown.columns), sort=shown.sort, desc=shown.desc,
         total=shown.total, count=sum(1 for r in shown.rows if not r.heading),
         offset=offset, limit=limit, marks=len(session.marks),
+        understood=filtering.explain(filtering.parse_filter(q)) if q.strip() else [],
+        loose=shown.loose,
         rows=[_row_out(session, model, r) for r in shown.rows[offset:offset + limit]])
 
 

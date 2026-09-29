@@ -9,8 +9,9 @@
     </nav>
     <form class="controls" method="get" data-list="list">
       {% if view.path %}<input type="hidden" name="path" value="{{ view.path }}">{% endif %}
-      <input class="filter" type="search" name="q" value="{{ here.q or '' }}" autocomplete="off"
-             placeholder="/ filter - the viewer's grammar: open:443, 10.0.0.0/24, 'nginx, AND/OR/NOT">
+      <input class="filter" id="list-q" type="search" name="q" value="{{ here.q or '' }}" autocomplete="off"
+             placeholder="Filter this list  (/)   e.g. nginx  :443  10.10.10.  service:http" aria-label="filter this list">
+      <button type="button" class="syntax-help" data-for="list-q" title="how to search" aria-label="how to search">?</button>
       {% if view.tab == "hosts" and not view.path %}
       <label><input type="checkbox" name="up" value="1" {% if here.up %}checked{% endif %}> up only</label>
       <label><input type="checkbox" name="ports" value="1" {% if here.ports %}checked{% endif %}> open ports only</label>

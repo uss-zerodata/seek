@@ -15,8 +15,10 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from seek.nmap import filtering
 from seek.tui.nmap.tabs import TABS
 from seek.web import links, pages_data, query, views
+from seek.web import search as search_mod
 from seek.web.api.v1.views import split_path
 from seek.web.deps import model, places, session
 from seek.web.source import WebModel
@@ -91,7 +93,8 @@ def gallery(request: Request, q: str = "", offset: int = 0,
     keep = {"q": q, "sort": sort, **({"desc": "1"} if desc else {}), **scope}
     return _list(request, "gallery.html", "_captures.html", fragment,
                  page=page, q=q, nav="gallery", sort=sort, desc=desc,
-                 sorts=query.SORTS, scope=scope, keep=keep)
+                 sorts=query.SORTS, scope=scope, keep=keep,
+                 understood=filtering.explain(filtering.parse_filter(q)) if q.strip() else [])
 
 
 # The first version's own host and service pages are the tabs now: one page per
@@ -176,3 +179,12 @@ def overview(request: Request, tab: str, path: str = "", q: str = "",
                    view=found, tabs=TABS, here=here, sel=step, nav=found.marked_tab,
                    record=record,
                    sort_arg=sort, desc=desc)
+
+
+@router.get("/search", response_class=HTMLResponse)
+def search_page(request: Request, q: str = "", fragment: bool = False,
+                sess=Depends(session), cache=Depends(places), m=Depends(model)):
+    """Everything matching `q`, grouped - the header box's results, in full."""
+    found = search_mod.search(sess, m, cache, q, per_group=8 if fragment else 50)
+    return _render(request, "_search.html" if fragment else "search.html",
+                   found=found, q=q, nav="")

@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="/static/app.css?v={{ V }}">
 <script src="/static/app.js?v={{ V }}" defer></script>
 <script type="module" src="/static/js/viewer.js?v={{ V }}"></script>
+<script type="module" src="/static/js/search.js?v={{ V }}"></script>
 </head>
 <body>
 <header class="bar">
@@ -16,7 +17,15 @@
     <a href="/" data-tab="gallery" {% if nav == "gallery" %}aria-current="page"{% endif %}>Screenshots</a>
   </nav>
   <span id="status" class="status" aria-live="polite"></span>
+  <form class="global-search" action="/search" method="get" role="search">
+    <input id="global-q" name="q" type="search" autocomplete="off" value="{{ q if nav == '' and q is defined else '' }}"
+           placeholder="Search everything  (Ctrl+K)" aria-label="search everything"
+           aria-controls="global-results">
+    <button type="button" class="syntax-help" data-for="global-q" title="how to search" aria-label="how to search">?</button>
+    <div id="global-results" class="global-results" hidden></div>
+  </form>
 </header>
+{% include "_syntax.html" %}
 <main>
 {% block content %}{% endblock %}
 </main>

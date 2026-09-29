@@ -558,6 +558,7 @@ class NmapApp(App[int]):
         self._spec = filtering.FilterSpec()
         self._filter_debounce: Timer | None = None
         self._unfiltered = 0
+        self._loose = 0                 # scattered-letter matches left out
         # Non-zero when candidate files were found and not one of them could be
         # read: an engagement that could not be opened is not a successful run,
         # and the shell has to be able to tell.
@@ -797,10 +798,15 @@ class NmapApp(App[int]):
         text = self.query_one("#filter", Input).value.strip()
         self._spec = filtering.parse_filter(text) if text else filtering.FilterSpec()
         self._unfiltered = sum(1 for r in rows if not r.heading)
+        self._loose = 0
         if not self._spec.is_empty:
             rows = [r for r in rows
-                    if r.heading or filtering.matches(self._spec, r.text, r.addresses,
-                                                      r.records)]
+                    if r.heading or filtering.matches(self._spec, self.session.row_text(r),
+                                                      r.addresses, r.records)]
+            # Rows containing the words, when any do; the scattered-letter
+            # matches are counted and named in the status line (`~` shows them).
+            rows, self._loose = filtering.prefer_firm(self._spec, rows,
+                                                      self.session.row_text)
             rows = _drop_empty_sections(rows)
         col = min(self._sort_col, max(0, len(self.view.columns) - 1))
         # Two stable passes rather than one compound key: `reverse` belongs to
@@ -1258,12 +1264,21 @@ class NmapApp(App[int]):
         if self._spec.exclude:
             right.append("  ·  not in " + ", ".join(str(n) for n in self._spec.exclude),
                          style="bold")
+        if self._spec.prefixes:
+            right.append("  ·  beginning " + " or ".join(self._spec.prefixes), style="bold")
+        if self._spec.exclude_prefixes:
+            right.append("  ·  not beginning " + ", ".join(self._spec.exclude_prefixes),
+                         style="bold")
         if self._spec.expr is not None or self._spec.ignored:
             # How a structured filter was read, grouping spelled out, and what
             # it had to leave aside - a half-typed query is the normal case.
             right.append("  ·  where " if self._spec.expr is not None else "  ·  ",
                          style="dim")
             right.append(filtering.describe(self._spec), style="bold")
+        if self._loose:
+            # Rows that only held the filter's letters, scattered: left out
+            # while some rows hold the words, and one `~` away.
+            right.append(f"  ·  +{self._loose} looser (add ~)", style="dim")
         # Last, because the line is clipped from the right on a narrow terminal
         # and which tools exist matters less than what the list is currently
         # showing. The two tool tokens sit adjacent with no separator between

@@ -1,3 +1,4 @@
+{% if view.understood %}<p class="understood">Showing rows with: {{ view.understood | join(" · ") }}{% if view.loose %} · <a class="loose" href="?{{ dict(here, q=here.q ~ " ~") | urlencode }}">+{{ view.loose }} looser match{{ "es" if view.loose != 1 }} (scattered letters) - show them</a>{% endif %}</p>{% endif %}
 <p class="count">{{ view.count }}{% if view.count != view.total %} of {{ view.total }}{% endif %} row(s){% if view.marks %} · <span class="marked-count">{{ view.marks }} marked</span>{% endif %}</p>
 {% if view.rows %}
 <table class="list rows" data-tab="{{ view.tab }}" data-path="{{ view.path }}">

@@ -145,3 +145,31 @@ a.everywhere { color: var(--dim); font-size: .78rem; margin-left: 4px; }
 .pane-list { overflow-x: auto; min-width: 0; }
 table.rows td { white-space: nowrap; max-width: 26ch; overflow: hidden; text-overflow: ellipsis; }
 table.rows td.shots { max-width: none; overflow: visible; }
+
+/* --- search ----------------------------------------------------------------------- */
+.global-search { position: relative; display: flex; gap: 4px; align-items: center; margin-left: 12px; }
+.global-search input { width: 22rem; max-width: 40vw; font: inherit; padding: 5px 10px; color: var(--fg);
+                       background: var(--card); border: 1px solid var(--line); border-radius: 6px; }
+.syntax-help { width: 1.9em; height: 1.9em; padding: 0; border-radius: 50%; font-weight: 700; color: var(--dim); }
+.global-results { position: absolute; top: calc(100% + 6px); right: 0; width: min(560px, 92vw);
+                  max-height: 75vh; overflow: auto; background: var(--card); border: 1px solid var(--line);
+                  border-radius: 10px; box-shadow: 0 8px 28px rgb(0 0 0 / .18); padding: 8px 12px; z-index: 5; }
+.hit-group h3 { font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: var(--dim);
+                margin: 10px 0 4px; display: flex; gap: 8px; align-items: baseline; }
+.hit-group h3 .all { margin-left: auto; text-transform: none; letter-spacing: 0; }
+ul.hits { list-style: none; margin: 0; padding: 0; }
+a.hit { display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 10px;
+        align-items: center; padding: 5px 6px; border-radius: 6px; color: var(--fg); }
+a.hit:hover, a.hit.active, a.all.active { background: var(--pill); text-decoration: none; }
+.hit-shot { grid-row: span 2; width: 64px; height: 40px; object-fit: cover; object-position: top;
+            border: 1px solid var(--line); border-radius: 4px; }
+.hit-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hit-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-page .hit-group { max-width: 900px; }
+.understood { margin: 0 0 6px; font-size: .85rem; color: var(--accent); }
+.syntax { max-width: min(760px, 94vw); }
+.syntax-table td:first-child { white-space: nowrap; padding-right: 14px; }
+.syntax-table th.group { padding-top: 10px; color: var(--fg); font-weight: 700; }
+.syntax-table button.ex { font: .82rem ui-monospace, monospace; padding: 1px 6px; margin: 1px 2px 1px 0; }
+button.linkish { border: 0; background: none; color: var(--accent); padding: 0; cursor: pointer; }
+@media (max-width: 800px) { .global-search input { width: 100%; max-width: none; } .global-search { flex: 1; } }

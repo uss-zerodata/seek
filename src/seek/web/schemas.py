@@ -25,6 +25,7 @@ class Page(BaseModel, Generic[T]):
     total: int
     offset: int
     limit: int
+    loose: int = 0                   # scattered-letter matches left out (`~` shows them)
 
 
 class CaptureSummary(BaseModel):
@@ -243,6 +244,8 @@ class ViewOut(BaseModel):
     limit: int = 0
     rows: list[RowOut] = []
     marks: int = 0
+    understood: list[str] = []       # what the filter was read as, in words
+    loose: int = 0                   # scattered-letter matches left out (`~` shows them)
 
 
 # --- records and nmap's own text -----------------------------------------------------
@@ -358,3 +361,28 @@ class CaptureIn(BaseModel):
     tab: str = ""
     path: str = ""
     q: str = ""
+
+
+# --- the search across everything -------------------------------------------------------
+
+
+class Hit(BaseModel):
+    title: str
+    subtitle: str = ""
+    href: str
+    image: str | None = None          # a screenshot, when the hit has one
+
+
+class HitGroup(BaseModel):
+    kind: str                         # hosts, services, names, screenshots
+    label: str
+    total: int
+    more: str                         # where every hit of this kind is listed
+    loose: int = 0                    # fuzzy-only matches left out for the firm ones
+    hits: list[Hit] = []
+
+
+class SearchOut(BaseModel):
+    q: str
+    understood: list[str] = []        # what the query was read as, in words
+    groups: list[HitGroup] = []

@@ -436,6 +436,25 @@ screenshot is shown as a thumbnail wherever it is named, in a list row or beside
 the line of a record, opening its capture page, which leads back to the host and
 port it shows.
 
+**Searching.** The box in the header (`Ctrl+K`) searches everything at once -
+hosts, services, names and screenshots - and lists the best matches grouped as
+you type; `↓`/`Enter` opens one. Every list has its own filter with the same
+syntax, and under each the query is said back in words, so you can see how it
+was read. The `?` beside any search box opens the syntax with examples to click:
+
+| Type | Finds |
+| --- | --- |
+| `nginx`, `synology login` | anything mentioning the words - including screenshot titles, URLs, technologies and status |
+| `10.10.10.1` / `=10.10.10.1` / `10.10.10.0/24` | addresses beginning with it / that host alone / a range |
+| `:443`, `443/tcp`, `53/udp` | a port with that number, in any state; `open:443`, `closed:22` ask for the state |
+| `10.10.10.10:8080` | that host with that port |
+| `service:http AND NOT product:nginx` | structured terms, `AND`/`OR`/`NOT`, `( )` |
+| `'exact`, `^start`, `end$`, `!not` | text as written, anchored, or excluded |
+
+Rows containing your words come first and alone; rows that only contain the
+letters, scattered, are counted as "looser" - add `~` to list them too. The
+terminal filter follows exactly the same rules.
+
 The terminal and the browser share one session: a scan started in either shows
 in both, a mark made in either is a mark in both, and quitting the terminal asks
 about a scan the browser started. Each keeps its own tab, filter, sort and
