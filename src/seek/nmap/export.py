@@ -21,6 +21,7 @@ import json
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
+from seek.nmap import names
 from seek.nmap.models import Host, Service
 
 # Services nmap names that are HTTP(S) in practice, for URL construction.
@@ -250,6 +251,21 @@ def url_for(host_name: str, svc: Service) -> str:
     if svc.port == _SCHEME_PORTS[scheme]:
         return f"{scheme}://{host_name}"
     return f"{scheme}://{host_name}:{svc.port}"
+
+
+def service_urls(svc: Service, host: Host | None) -> list[str]:
+    """Every address the service answers on - the one scanned and every name.
+
+    Virtual hosting means these can serve different things, so a list that shows
+    only the address hides half of what was found.
+    """
+    if host is None:
+        return [u for u in [url_for(n, svc) for n, _ in svc.names] if u]
+    base = service_url(host, svc)
+    if not base:
+        return []
+    known = [n for n, _ in names.host_names(host)]
+    return list(dict.fromkeys([base, *(url_for(n, svc) for n in known)]))
 
 
 # (label, recipe, the column its items are - or None when the shape is fixed and

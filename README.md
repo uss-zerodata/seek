@@ -97,7 +97,7 @@ yourself replaces the drill-down. The filter box uses the same fuzzy grammar (`'
 | `m` `M` | mark the selected row · clear every mark |
 | `n` | new scan · `o` report view · `p` freeze log · `c` cancel |
 | `x` | export, or capture the URLs with gowitness · `?` help |
-| `i` | open a capture's screenshot · `W` serve the capture gallery |
+| `i` | open a capture's screenshot · `W` serve gowitness's report · `w` open the web interface |
 | `Ctrl+P` | command palette — every action above, searchable by name |
 | `Esc` `q` | leave filter → clear it → back one level → quit · `Ctrl+Q`/`Ctrl+C` quit from anywhere |
 
@@ -393,6 +393,30 @@ gowitness records results under the port it probed, spelling the port out is
 also what lets a result be matched back to the service it came from. Captures
 are matched on `scheme://host:port` with the default port made explicit, so a
 capture made by hand under either spelling still links up.
+
+**The web interface.** gowitness's report server reads one database at a time;
+an engagement usually has several. `w` opens seek's own web interface instead:
+every capture from every database the viewer found, beside the hosts, ports and
+services they show. It runs inside the viewer, on `127.0.0.1:7272` by default
+(`web_host` / `web_port`; anything but a loopback address is refused), reads the
+same model the terminal shows - a scan or capture that finishes while it is open
+appears on the next reload - and stops when the viewer quits. `w` opens the
+browser at the selected row: a host at its page, a service at that service
+across hosts, a port with exactly one capture at that capture.
+
+| Page | What it shows |
+| --- | --- |
+| `/` | every screenshot, with URL, status, title and the database it came from; failures say why |
+| `/hosts`, `/hosts/<address>` | hosts; one host's ports with each port's screenshots beside it |
+| `/services`, `/services/<proto>/<port>` | services by port number; one service with every host's screenshot |
+| `/captures/<id>` | the screenshot full size, headers, cookies, console log, technologies, TLS names |
+
+Every filter box takes the viewer's own filter syntax (`'8443`, `open:443`,
+`10.0.0.0/24`, `AND`/`OR`/`NOT`) and filters on the server as you type. Everything
+a page shows is also JSON under `/api/v1/` (`hosts`, `services`, `captures`), with
+`q`, `offset` and `limit`; `/api/openapi.json` describes it. Nothing is loaded
+from the internet, so it works on an isolated network, and nothing is written.
+FastAPI, uvicorn and Jinja2 ship with seek; there is nothing extra to install.
 
 **Export** produces the lists you feed to the next command, from whatever the
 filter has narrowed to: host addresses, open ports comma-separated (the form

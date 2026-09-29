@@ -1,6 +1,6 @@
 [project]
 name = "seek-tui"
-version = "0.3.8"
+version = "0.4.0.dev0"
 description = "Interactive terminal search for files, directories, and file contents"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -9,6 +9,9 @@ dependencies = [
     "typer>=0.12",
     "textual>=0.79",
     "pyperclip>=1.9",
+    "fastapi>=0.141.1",
+    "uvicorn>=0.54.0",
+    "jinja2>=3.1.6",
 ]
 
 [project.scripts]
@@ -23,6 +26,7 @@ dev = [
     "pytest-asyncio>=0.24",
     "ruff>=0.6",
     "pathspec>=0.12",
+    "httpx2>=2.13.1",
 ]
 
 [build-system]
@@ -42,3 +46,7 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "W"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI declares dependencies as parameter defaults; they are not shared state.
+extend-immutable-calls = ["fastapi.Depends"]

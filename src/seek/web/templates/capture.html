@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% from "_macros.html" import status %}
+{% block title %}{{ capture.url }}{% endblock %}
+{% block content %}
+<h1>{{ status(capture) }} {{ capture.url }}</h1>
+{% if capture.title %}<p class="lead">{{ capture.title }}</p>{% endif %}
+<dl class="facts">
+  {% if capture.redirected %}<dt>final URL</dt><dd>{{ capture.final_url }}</dd>{% endif %}
+  {% if capture.address %}<dt>host</dt><dd><a href="/hosts/{{ capture.address }}#port-{{ capture.protocol }}-{{ capture.port }}">{{ capture.address }}{% if capture.port %} · {{ capture.port }}/{{ capture.protocol }}{% endif %}</a></dd>{% endif %}
+  {% if capture.failed %}<dt>failed</dt><dd>{{ capture.failure }}</dd>{% endif %}
+  {% if capture.reason %}<dt>reason</dt><dd>{{ capture.reason }}</dd>{% endif %}
+  {% if capture.http_protocol %}<dt>protocol</dt><dd>{{ capture.http_protocol }}</dd>{% endif %}
+  {% if capture.probed_at %}<dt>taken</dt><dd>{{ capture.probed_at }}</dd>{% endif %}
+  {% if capture.content_length is not none %}<dt>length</dt><dd>{{ capture.content_length }}</dd>{% endif %}
+  {% if capture.technologies %}<dt>technologies</dt><dd>{{ capture.technologies | join(", ") }}</dd>{% endif %}
+  {% if capture.tls %}<dt>TLS</dt><dd>{{ capture.tls }}</dd>{% endif %}
+  {% if capture.sans %}<dt>TLS names</dt><dd>{{ capture.sans | join(", ") }}</dd>{% endif %}
+  {% if capture.database %}<dt>database</dt><dd>{{ capture.database }}</dd>{% endif %}
+</dl>
+{% if capture.image %}<a href="{{ capture.image }}"><img class="full" src="{{ capture.image }}" alt="screenshot of {{ capture.url }}"></a>{% endif %}
+{% for label, pairs in [("Headers", capture.headers), ("Cookies", capture.cookies), ("Console", capture.console), ("Network", capture.network)] %}
+{% if pairs %}
+<h2>{{ label }} <span class="dim">{{ pairs | length }}</span></h2>
+<table class="pairs">{% for k, v in pairs %}<tr><th>{{ k }}</th><td>{{ v }}</td></tr>{% endfor %}</table>
+{% endif %}
+{% endfor %}
+{% endblock %}

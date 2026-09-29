@@ -28,7 +28,7 @@ from rich.text import Text
 from seek.gowitness.results import Capture, Captures
 from seek.nmap import names as name_mod
 from seek.nmap import rawlog, vulns
-from seek.nmap.export import service_url, url_for
+from seek.nmap.export import service_urls
 from seek.nmap.models import Host, Service, Vulnerability
 from seek.nmap.views import ServiceGroup
 from seek.tui.nmap.views import Grouping
@@ -302,7 +302,7 @@ def _member_captures(members: list, shots: Captures | None) -> list[Text]:
         return []
     urls: list[str] = []
     for host, svc in members:
-        urls += _service_urls(svc, host)
+        urls += service_urls(svc, host)
     return _capture_rows(list(dict.fromkeys(urls)), shots)
 
 
@@ -431,7 +431,7 @@ def host_detail(host: Host, shots: Captures | None = None, full: bool = False,
         for svc in host.open_services:
             parts.append(_bullet(svc.label()))
     every_url = [url for svc in host.open_services
-                 for url in _service_urls(svc, host)]
+                 for url in service_urls(svc, host)]
     captures = _capture_rows(list(dict.fromkeys(every_url)), shots)
     if captures:
         parts.append(Text(""))
@@ -482,7 +482,7 @@ def service_detail(svc: Service, host: Host | None = None,
             line.append(f"{name:<32}")
             line.append(source, style=_KEY)
             parts.append(line)
-    urls = _service_urls(svc, host)
+    urls = service_urls(svc, host)
     if urls:
         parts.append(Text(""))
         parts.append(_section("URLs", len(urls)))
@@ -503,21 +503,6 @@ def service_detail(svc: Service, host: Host | None = None,
         parts.append(_section("Scripts", len(svc.scripts)))
         parts.extend(_script_block(svc.scripts))
     return lines_of(parts)
-
-
-def _service_urls(svc: Service, host: Host | None) -> list[str]:
-    """Every address the service answers on - the one scanned and every name.
-
-    Virtual hosting means these can serve different things, so a list that shows
-    only the address hides half of what was found.
-    """
-    if host is None:
-        return [u for u in [url_for(n, svc) for n, _ in svc.names] if u]
-    base = service_url(host, svc)
-    if not base:
-        return []
-    known = [n for n, _ in name_mod.host_names(host)]
-    return list(dict.fromkeys([base, *(url_for(n, svc) for n in known)]))
 
 
 def group_detail(group: ServiceGroup,

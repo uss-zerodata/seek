@@ -1,0 +1,21 @@
+{% from "_macros.html" import more %}
+{% if page.items %}
+<table class="list">
+<thead><tr><th>Address</th><th>Names</th><th>OS</th><th>Up</th><th>Open ports</th><th>Shots</th></tr></thead>
+<tbody>
+{% for h in page.items %}
+<tr>
+  <td><a href="/hosts/{{ h.address }}">{{ h.address }}</a></td>
+  <td>{{ h.names | join(", ") or "—" }}</td>
+  <td>{{ h.os or "—" }}</td>
+  <td>{{ "up" if h.up else "—" }}</td>
+  <td class="ports">{{ h.open_ports | join(", ") or "—" }}</td>
+  <td>{{ h.captures or "" }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="empty">{% if q %}no host matches “{{ q }}”{% else %}no hosts{% endif %}</p>
+{% endif %}
+{{ more(page, q) }}

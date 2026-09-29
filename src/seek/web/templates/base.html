@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}seek{% endblock %} · seek</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="bar">
+  <a class="brand" href="/">seek</a>
+  <nav>
+    <a href="/" {% if nav == "gallery" %}aria-current="page"{% endif %}>Gallery</a>
+    <a href="/hosts" {% if nav == "hosts" %}aria-current="page"{% endif %}>Hosts</a>
+    <a href="/services" {% if nav == "services" %}aria-current="page"{% endif %}>Services</a>
+  </nav>
+</header>
+<main>
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

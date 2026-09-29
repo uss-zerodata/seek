@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% from "_macros.html" import shot_card, service_link %}
+{% block title %}{{ host.address }}{% endblock %}
+{% block content %}
+<h1>{{ host.address }}</h1>
+<dl class="facts">
+  {% if host.names %}<dt>names</dt><dd>{{ host.names | join(", ") }}</dd>{% endif %}
+  <dt>state</dt><dd>{{ "up" if host.up else (host.state or "—") }}{% if host.reason %} <span class="dim">({{ host.reason }})</span>{% endif %}</dd>
+  <dt>os</dt><dd>{{ host.os or "—" }}</dd>
+  <dt>scans</dt><dd>{{ host.sources | join(", ") or "—" }}</dd>
+</dl>
+
+<h2>Ports <span class="dim">{{ host.ports | length }}</span></h2>
+{% if not host.captures %}<p class="dim">nothing was captured for this host</p>{% endif %}
+{% for p in host.ports %}
+<section class="port" id="port-{{ p.protocol }}-{{ p.port }}">
+  <h3>
+    {% if p.state == "open" %}<a href="{{ service_link({'protocol': p.protocol, 'port': p.port, 'name': p.service, 'product': p.product, 'version': p.version}) }}">{{ p.port }}/{{ p.protocol }}</a>{% else %}{{ p.port }}/{{ p.protocol }}{% endif %}
+    <span class="pill {{ 'ok' if p.state == 'open' else '' }}">{{ p.state or "?" }}</span>
+    {{ p.service or "" }} <span class="dim">{{ p.product or "" }} {{ p.version or "" }} {{ p.extrainfo or "" }}</span>
+  </h3>
+  {% for v in p.vulnerabilities %}<p class="vuln"><span class="pill bad">{{ v.severity or v.state or "finding" }}</span> {{ v.title or v.id }}</p>{% endfor %}
+  {% if p.captures %}<div class="grid">{% for c in p.captures %}{{ shot_card(c, show_host=false) }}{% endfor %}</div>{% endif %}
+</section>
+{% endfor %}
+
+{% if host.vulnerabilities %}
+<h2>Vulnerabilities <span class="dim">{{ host.vulnerabilities | length }}</span></h2>
+<ul class="vulns">
+{% for v in host.vulnerabilities %}<li><span class="pill bad">{{ v.severity or v.state or "finding" }}</span> {{ v.title or v.id }} <span class="dim">{{ v.ids | join(", ") }}</span></li>{% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

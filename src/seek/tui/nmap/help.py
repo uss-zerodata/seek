@@ -85,6 +85,8 @@ _GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("", "d opens the same record with every header and console line"),
         ("i", "open a capture's screenshot in the system image viewer"),
         ("W", "serve the report and open it at the selected result"),
+        ("w", "the web interface: hosts, services and every screenshot from"),
+        ("", "every capture database, in a browser - opened at the selected row"),
     ]),
     ("Scan", [
         ("n", "new scan: scope, preset, command, then a review before it runs"),

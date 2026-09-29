@@ -46,8 +46,10 @@ compare against the baseline recorded in the script's docstring.
 If a stale-virtualenv warning is noisy, prefix commands with `env -u VIRTUAL_ENV`.
 
 Python **3.11+** (uses `tomllib`, `enum.StrEnum`). Runtime deps are kept minimal:
-`typer`, `textual`, `rich` (via textual), `pyperclip`; `pathspec` is an optional
-extra used only for `.gitignore` support.
+`typer`, `textual`, `rich` (via textual), `pyperclip`, and `fastapi`, `uvicorn`,
+`jinja2` for the nmap viewer's web interface (shipped in the package on purpose -
+one application, no extra install); `pathspec` is an optional extra used only
+for `.gitignore` support. Tests use `httpx2` for FastAPI's `TestClient`.
 
 ## Before you finish a change
 
@@ -112,6 +114,16 @@ src/seek/
     capture.py      one argv for both backends, output layout, the CaptureRun
     results.py      the capture database -> Capture records, indexed by URL
   runner.py         supervision shared by every tool: stream, cancel, settle
+  web/
+    source.py       ModelSource protocol; WebModel (indexes, capture ids); CachedSource
+    schemas.py      pydantic shapes - the API returns them, the templates render them
+    query.py        list/filter/sort/page over the TUI's own view projections
+    api/v1/         JSON routers: hosts, services, captures
+    pages/routes.py HTML routers (same query functions), `fragment=1` for filtering
+    media.py        screenshots by capture id - no route takes a path
+    app.py          create_app(source); ROUTERS is the one registration list
+    server.py       WebServer: loopback check, port probe, uvicorn on a thread; path_for(row)
+    templates/ static/   Jinja2 + one stylesheet + ~30 lines of JS; nothing from a CDN
 tests/              pytest; conftest.py has the `tree` / `symlink_loop` fixtures
 tests/fixtures/nmap/  synthetic scan XML (no real addresses)
 ```
@@ -445,6 +457,23 @@ stdout, `cd`) cannot run while Textual owns the screen. They set
   Names surface in the Names tab, the hostname column (`name +N`), both detail
   panes, `host_search_text` (so the filter finds them) and the URL export; the
   `url` *field* stays address-only, so both forms remain reachable.
+- **The web interface is a second consumer of the viewer's model, never a
+  second loader.** `w` starts `seek.web` in-process on a thread; it reads the
+  viewer through `ModelSource.snapshot()` (implemented by `NmapApp`) and
+  `seek.web` imports neither Textual nor the app, so a standalone server later
+  needs only another source. Lists are the TUI's own projections filtered with
+  `filtering.parse_filter`/`matches` and sorted with `vdefs.key_at` - the path
+  `_narrow` takes - so the browser and the tab cannot disagree; do not re-derive
+  a list in `seek.web`. `WebModel` is rebuilt only when the `ScanSet` identity
+  or `Captures.generation` changes (2.9 s at 24 200 hosts / 95 000 captures,
+  under `bulk.responsive()`). Three traps: FastAPI's `/docs` loads from a CDN
+  and is off; uvicorn logs to stderr, over the viewer's terminal, so its
+  loggers are silenced before it starts; and FastAPI is imported on the first
+  `w` only - `seek` and `seek nmap` must not pay for it. Screenshots are served
+  by capture id (`sha1(database, url, time)`), never by path. `Captures.all()`
+  keeps every capture (two databases, one URL, two pictures) while `get()`
+  stays newest-wins for the TUI. The browser opener is `app._open_browser`, a
+  module function, so tests can replace it without patching `subprocess`.
 - **Freezing the log is not pausing the scan.** nmap's timers run against the
   wall clock, so `SIGSTOP` can time hosts out on resume; `p` is a view state and
   the pane header says the scan is still running. `runner` only runs or cancels.

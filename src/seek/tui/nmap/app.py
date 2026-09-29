@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -280,35 +281,35 @@ _HINTS = {
     "hosts": [("↑↓", "select"), ("←→", "read record"), ("↵", "services"), ("v", "swap"),
               ("1-9", "sort"), ("/", "filter"), ("u", "up"), ("r", "open ports"),
               ("s", "stats"), ("b", "group"), ("d", "detail"), ("m", "mark"), ("n", "scan"),
-              ("x", "export"), ("?", "help"), ("^P", "commands")],
+              ("x", "export"), ("w", "web"), ("?", "help"), ("^P", "commands")],
     "services": [("↑↓", "select"), ("←→", "read record"), ("↵", "hosts"), ("v", "swap"),
                  ("1-9", "sort"), ("/", "filter"), ("s", "stats"),
                  ("b", "group"), ("d", "detail"), ("m", "mark"), ("n", "scan"),
-                 ("x", "export"), ("?", "help"), ("^P", "commands")],
+                 ("x", "export"), ("w", "web"), ("?", "help"), ("^P", "commands")],
     "host-detail": [("↑↓", "select"), ("←→", "read record"), ("↵", "same service everywhere"),
                     ("1-9", "sort"), ("u", "open only"),
                     ("/", "filter"), ("d", "detail"), ("D", "pane"), ("m", "mark"),
-                    ("x", "export"), ("?", "help"), ("^P", "commands")],
+                    ("x", "export"), ("w", "web"), ("?", "help"), ("^P", "commands")],
     "group-hosts": [("↑↓", "select"), ("←→", "read record"), ("↵", "host"),
                     ("1-9", "sort"), ("/", "filter"), ("d", "detail"), ("m", "mark"),
-                    ("x", "export"), ("?", "help"), ("^P", "commands")],
+                    ("x", "export"), ("w", "web"), ("?", "help"), ("^P", "commands")],
     "service-detail": [("↑↓", "select"), ("←→", "read record"), ("↵", "host"),
                        ("1-9", "sort"), ("/", "filter"), ("d", "detail"), ("m", "mark"),
-                       ("x", "export"), ("?", "help"), ("^P", "commands")],
+                       ("x", "export"), ("w", "web"), ("?", "help"), ("^P", "commands")],
     "grouping": [("↑↓", "select"), ("←→", "read record"), ("↵", "hosts"),
                  ("b", "next grouping"), ("1-9", "sort"), ("/", "filter"),
-                 ("d", "detail"), ("m", "mark"), ("x", "export"), ("?", "help"),
+                 ("d", "detail"), ("m", "mark"), ("x", "export"), ("w", "web"), ("?", "help"),
                  ("^P", "commands")],
     "names": [("↑↓", "select"), ("←→", "read record"), ("↵", "hosts"),
               ("1-9", "sort"), ("/", "filter"), ("d", "detail"),
-              ("m", "mark"), ("n", "scan"), ("x", "export"), ("?", "help"),
+              ("m", "mark"), ("n", "scan"), ("x", "export"), ("w", "web"), ("?", "help"),
               ("^P", "commands")],
     "scans": [("↑↓", "select"), ("d", "detail"), ("o", "report view"),
               ("p", "freeze log"), ("c", "cancel"), ("n", "new scan"), ("1-9", "sort"),
-              ("/", "filter"), ("x", "export"), ("?", "help"), ("^P", "commands")],
+              ("/", "filter"), ("x", "export"), ("w", "web"), ("?", "help"), ("^P", "commands")],
     "stats": [("↑↓", "select"), ("↵", "open the figure"), ("1-9", "sort"),
               ("/", "filter"), ("s", "back"), ("d", "detail"),
-              ("m", "mark"), ("x", "export"), ("?", "help"), ("^P", "commands")],
+              ("m", "mark"), ("x", "export"), ("w", "web"), ("?", "help"), ("^P", "commands")],
 }
 
 FILTER_HINTS = [("type", "to filter"), ("↵/Esc", "back to the list"),
@@ -415,6 +416,7 @@ class NmapApp(App[int]):
         Binding("x", "export", "Export", show=False),
         Binding("i", "open_shot", "Open the screenshot", show=False),
         Binding("W", "report_server", "Web report", show=False),
+        Binding("w", "open_web", "Web interface", show=False),
         Binding("question_mark", "help", "Help", show=False),
         Binding("up,k", "move(-1)", "Up", show=False),
         Binding("down,j", "move(1)", "Down", show=False),
@@ -497,6 +499,11 @@ class NmapApp(App[int]):
         # the workflow it exists to serve.
         self.captures = Runner()
         self._report_proc: object | None = None
+        # The viewer's own web interface: this model, every capture database,
+        # served in-process so what it shows is what the list shows. Built on
+        # the first `w`; FastAPI is not imported before then.
+        self._web = None
+        self._web_row: vdefs.Row | None = None
         # Which record the pane is currently showing, so that a re-render
         # of the same one leaves the reader's scroll position alone.
         self._detail_target: int | None = None
@@ -1257,6 +1264,8 @@ class NmapApp(App[int]):
         if self._report_proc is not None:
             right.append(f"  ◉ report :{self.config.gowitness_report_port}",
                          style="bold")
+        if self._web is not None and self._web.running:
+            right.append(f"  ◉ web {self._web.url}", style="bold")
 
         line = Text.assemble(left, "  ", right)
         try:
@@ -1878,13 +1887,13 @@ class NmapApp(App[int]):
         host = row.host
         urls: list[str] = []
         if isinstance(target, Service):
-            urls = detail_pane._service_urls(target, host)
+            urls = exporter.service_urls(target, host)
         elif isinstance(target, Host):
             urls = [u for svc in target.open_services
-                    for u in detail_pane._service_urls(svc, target)]
+                    for u in exporter.service_urls(svc, target)]
         elif host is not None:
             urls = [u for svc in host.open_services
-                    for u in detail_pane._service_urls(svc, host)]
+                    for u in exporter.service_urls(svc, host)]
         return self.shots.for_urls(list(dict.fromkeys(urls)))
 
     @work(exclusive=True, group="modal")
@@ -2025,6 +2034,47 @@ class NmapApp(App[int]):
             return
         self.captures.runs.append(
             gw_capture.from_disk(paths, urls, captured=len(urls), where=where))
+
+    def snapshot(self):
+        """`ModelSource`: what the web interface reads, as it stands now."""
+        return self._web_source().snapshot()
+
+    def _web_source(self):
+        from seek.web.source import CachedSource
+
+        if getattr(self, "_cached_source", None) is None:
+            self._cached_source = CachedSource(lambda: self.scans, lambda: self.shots)
+        return self._cached_source
+
+    def action_open_web(self) -> None:
+        """`w`: the web interface, at the page for the selected row.
+
+        Started on first use and reused after that. The start - importing
+        FastAPI, binding, waiting for uvicorn - and the model it indexes are
+        both worth keeping off the event loop, so the work is a thread; the row
+        is taken here, where the cursor is, and handed over by attribute
+        because Textual reprs a worker's arguments.
+        """
+        self._web_row = self._current_row()
+        self._open_web()
+
+    @work(thread=True, exclusive=True, group="web")
+    def _open_web(self) -> None:
+        from seek.web.server import WebError, WebServer
+
+        if self._web is None:
+            self._web = WebServer(self, self.config.web_host, self.config.web_port)
+        fresh = not self._web.running
+        try:
+            self._web.start()
+            url = self._web.url_for(self._web_row)
+        except WebError as exc:
+            self.call_from_thread(self.notify, str(exc), severity="error")
+            return
+        if fresh:
+            self.call_from_thread(self.notify, f"web interface on {self._web.url}")
+            self.call_from_thread(self._refresh_status)
+        _open_browser(url)
 
     def _stop_report_server(self) -> None:
         """Never leave a web server running behind a closed viewer."""
@@ -2408,6 +2458,8 @@ class NmapApp(App[int]):
         if self.captures.busy() is not None:
             self.captures.cancel()
         self._stop_report_server()
+        if self._web is not None:
+            self._web.stop()
         # And never leave the model pinned behind one either: the permanent
         # generation is process-wide, so a viewer that closes has to hand it
         # back - which matters to a test suite opening a hundred of them, not
@@ -3181,29 +3233,15 @@ def _drop_empty_sections(rows: list[vdefs.Row]) -> list[vdefs.Row]:
     return [r for r in rows if not r.heading or r.section in live]
 
 
-def _key_at(row: vdefs.Row, col: int) -> tuple:
-    """Sort on the column's own key.
+# Shared with the web interface, which sorts the same rows the same way.
+_key_at = vdefs.key_at
 
-    Keys are pre-normalised by the view (an address becomes its octets, a count
-    stays an int), so they must be compared *as they are* - stringifying them is
-    what made `10.10.10.11` sort before `10.10.10.2`. Numbers, tuples and strings
-    are kept in separate buckets so a mixed column still has a total order.
-    """
-    if col < len(row.sort_key):
-        value = row.sort_key[col]
-    else:
-        value = row.cells[col] if col < len(row.cells) else ""
-    if isinstance(value, bool):
-        return (0, (int(value),), "")
-    if isinstance(value, int | float):
-        return (0, (value,), "")
-    if isinstance(value, tuple):
-        # an address key: (0, (10, 10, 10, 2), "") - compare the octets
-        flat = value[1] if len(value) > 1 and isinstance(value[1], tuple) else value
-        if flat and all(isinstance(x, int | float) for x in flat):
-            return (0, tuple(flat), "")
-        return (1, (), " ".join(str(x) for x in value))
-    return (1, (), str(value).lower())
+
+def _open_browser(url: str) -> None:
+    """Hand a URL to the system's opener, detached - from a worker thread."""
+    with contextlib.suppress(OSError):
+        subprocess.Popen(actions.opener_argv(url), stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
 
 
 def run_viewer(scans: ScanSet | Pending, config: Config | None = None,

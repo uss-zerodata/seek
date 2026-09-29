@@ -177,6 +177,31 @@ class View:
         return self.measure()
 
 
+def key_at(row: Row, col: int) -> tuple:
+    """Sort on the column's own key.
+
+    Keys are pre-normalised by the view (an address becomes its octets, a count
+    stays an int), so they must be compared *as they are* - stringifying them is
+    what made `10.10.10.11` sort before `10.10.10.2`. Numbers, tuples and strings
+    are kept in separate buckets so a mixed column still has a total order.
+    """
+    if col < len(row.sort_key):
+        value = row.sort_key[col]
+    else:
+        value = row.cells[col] if col < len(row.cells) else ""
+    if isinstance(value, bool):
+        return (0, (int(value),), "")
+    if isinstance(value, int | float):
+        return (0, (value,), "")
+    if isinstance(value, tuple):
+        # an address key: (0, (10, 10, 10, 2), "") - compare the octets
+        flat = value[1] if len(value) > 1 and isinstance(value[1], tuple) else value
+        if flat and all(isinstance(x, int | float) for x in flat):
+            return (0, tuple(flat), "")
+        return (1, (), " ".join(str(x) for x in value))
+    return (1, (), str(value).lower())
+
+
 def _fmt(value: object) -> str:
     return ABSENT if value in (None, "") else str(value)
 

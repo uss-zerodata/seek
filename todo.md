@@ -21,6 +21,7 @@
 - [x] allow the user to specify multiple directories for the nmap subcommand. `seek nmap dir1 dir2 dir3` should scan all three directories and merge the results into a single view.
 - [x] please make sure the nmap subcommand does not only search recursively for nmap XML files, but also for gowhitness databases. currently gowhitness data is only being parsed if it is in a very strict location relative to the nmap XML file. please make sure this works indipendently of the location of the nmap file and can still resolve the image path correctly.
 - [ ] every identified smb share could be opened and browsed using the "smb browse" command. for this the user would have to provide some smb credentials or use anonymous access, if available.
+- [x] to view the gowhitness images from multiple sources, the gowhitness server cannot be used as it cannot handle multiple database files at the same time. please implement a webinterface based on fastapi which can be used to view the gowhitness images from multiple sources together with the hosts and ports from the nmap scan results. the user should be able to launch this interface from within the seek nmap subcommand and it should be accessible on localhost. make sure this initial webinterface version is modular enough to support further extensions. in the future this may be a full fledged alternative to the seek nmap tui.
 
 ## bugs
 

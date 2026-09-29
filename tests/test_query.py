@@ -61,3 +61,13 @@ def test_content_query_len():
     assert parse_query("a").content_query_len == 1
     assert parse_query("abc de").content_query_len == 3
     assert parse_query("!ab").content_query_len == 0
+
+
+def test_an_exact_term_never_falls_back_to_a_subsequence():
+    """`'8080` is the substring or nothing - "80 … 80" used to match."""
+    from seek.engine.score import match_score, match_spans
+
+    q = parse_query("'8080")
+    assert match_score(q, "port 80 80/tcp") is None
+    assert match_spans(q, "port 80 80/tcp") is None
+    assert match_score(q, "http://192.0.2.30:8080") is not None

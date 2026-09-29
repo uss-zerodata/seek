@@ -27,7 +27,9 @@ The absence of a URL in a database is therefore not evidence that it succeeded.
 
 from __future__ import annotations
 
+import re
 import sqlite3
+import threading
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -51,6 +53,9 @@ def canonical_url(url: str) -> str:
     """
     if not url:
         return url
+    fast = _canonical_plain(url)
+    if fast is not None:
+        return fast
     split = urlsplit(url)
     if not split.scheme or not split.hostname:
         return url.rstrip("/")
@@ -59,6 +64,32 @@ def canonical_url(url: str) -> str:
     if port is None:
         return f"{split.scheme}://{host}".rstrip("/")
     return f"{split.scheme}://{host}:{port}"
+
+_PLAIN_URL = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*)://([^/?#@\[\]\\\s:]+)(?::(\d+))?\Z")
+
+
+def _canonical_plain(url: str) -> str | None:
+    """`canonical_url` for the plain `scheme://host[:port]` it is mostly given.
+
+    Every service URL the viewer builds has this shape, and joining an
+    engagement's captures to its services canonicalises some four hundred
+    thousand of them - through `urlsplit`, seconds of work. Anything with a
+    path, credentials, a query, an IPv6 literal or an odd port is left to
+    `urlsplit` (`None`); for the rest the answer is the same string.
+    """
+    plain = _PLAIN_URL.match(url)
+    if plain is None:
+        return None
+    scheme, host, port = plain.groups()
+    scheme = scheme.lower()
+    number = int(port) if port else _DEFAULT_PORT.get(scheme)
+    if number is not None and not 0 <= number <= 65535:
+        return None
+    host = host.lower()
+    if number is None:
+        return f"{scheme}://{host}"
+    return f"{scheme}://{host}:{number}"
+
 
 # Looked for by name so that their *absence* can be reported. A missing
 # security header cannot be noticed by reading the headers that are present,
@@ -101,6 +132,10 @@ class Capture:
     sans: list[str] = field(default_factory=list)
     shot: Path | None = None
     failure: str = ""
+    # The database this was read from - `None` for a failure recovered from a
+    # run's log. Two databases can hold the same URL; this is what tells the
+    # two captures apart when both are shown.
+    database: Path | None = None
 
     @property
     def failed(self) -> bool:
@@ -344,6 +379,7 @@ def read_database(path: Path, shots: Path | Callable[[str], Path | None] | None 
                 sans=tls_sans.get(rid, []),
                 shot=_shot(shots, name),
                 failure=str(get("failed_reason") or "") if get("failed") else "",
+                database=path,
             ))
         return captures, problems
     except sqlite3.DatabaseError as exc:
@@ -361,6 +397,17 @@ class Captures:
 
     def __init__(self, captures: Iterable[Capture] = ()) -> None:
         self._by_url: dict[str, Capture] = {}
+        # Every capture, not only the newest per URL: the same URL captured
+        # from two databases is two pictures, and a gallery shows both. Keyed
+        # by what makes one capture itself, so reading a database again
+        # replaces its entries rather than doubling them.
+        self._every: dict[tuple, Capture] = {}
+        # Bumped on every change, so a reader on another thread can tell the
+        # set it indexed is stale without comparing contents.
+        self.generation = 0
+        # `add` runs on the event loop while the web interface reads `all()`
+        # from its own thread.
+        self._lock = threading.Lock()
         self.problems: list[str] = []
         self.add(captures)
 
@@ -371,13 +418,20 @@ class Captures:
         return bool(self._by_url)
 
     def add(self, captures: Iterable[Capture]) -> None:
-        for capture in captures:
-            self._by_url[canonical_url(capture.url)] = capture
+        with self._lock:
+            for capture in captures:
+                self._by_url[canonical_url(capture.url)] = capture
+                self._every[_identity(capture)] = capture
+            self.generation += 1
 
     def add_failures(self, failures: dict[str, str]) -> None:
         """Record what a run could not capture - the only source there is."""
-        for url, reason in failures.items():
-            self._by_url[canonical_url(url)] = Capture(url=url, failure=reason)
+        self.add(Capture(url=url, failure=reason) for url, reason in failures.items())
+
+    def all(self) -> list[Capture]:
+        """Every capture from every database, in the order they were read."""
+        with self._lock:
+            return list(self._every.values())
 
     def get(self, url: str) -> Capture | None:
         return self._by_url.get(canonical_url(url))
@@ -408,3 +462,8 @@ class Captures:
         captures, problems = read_database(path, shots)
         self.add(captures)
         self.problems.extend(problems)
+
+
+def _identity(capture: Capture) -> tuple:
+    """One capture: which database, which URL, taken when."""
+    return (str(capture.database or ""), canonical_url(capture.url), capture.probed_at)
