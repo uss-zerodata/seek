@@ -20,4 +20,4 @@
 {% else %}
 <p class="empty">{% if q %}no service matches “{{ q }}”{% else %}no open services{% endif %}</p>
 {% endif %}
-{{ more(page, q) }}
+{{ more(page, {"q": q}) }}

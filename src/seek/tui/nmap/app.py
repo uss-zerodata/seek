@@ -504,6 +504,7 @@ class NmapApp(App[int]):
         # the first `w`; FastAPI is not imported before then.
         self._web = None
         self._web_row: vdefs.Row | None = None
+        self._web_gallery = False
         # Which record the pane is currently showing, so that a re-render
         # of the same one leaves the reader's scroll position alone.
         self._detail_target: int | None = None
@@ -1907,7 +1908,9 @@ class NmapApp(App[int]):
         if len(found) > 1:
             # The picker *is* the selection: the pane is a rendered report, not
             # a list, so there is no "selected line" for `i` to mean.
-            choices = []
+            # Several pictures of one thing are better compared side by side
+            # than opened one at a time, so the browser comes first.
+            choices = [("web", f"All {len(found)} side by side in the web interface")]
             disabled = set()
             for index, capture in enumerate(found):
                 key = str(index)
@@ -1921,6 +1924,9 @@ class NmapApp(App[int]):
             picked = await self.push_screen_wait(
                 ChoiceScreen("Open which capture?", choices, disabled=disabled))
             if picked is None:
+                return
+            if picked == "web":
+                self._open_web_at(self._current_row(), gallery=True)
                 return
             chosen = found[int(picked)]
         if chosen.shot is None or chosen.failed:
@@ -2055,7 +2061,10 @@ class NmapApp(App[int]):
         is taken here, where the cursor is, and handed over by attribute
         because Textual reprs a worker's arguments.
         """
-        self._web_row = self._current_row()
+        self._open_web_at(self._current_row())
+
+    def _open_web_at(self, row: vdefs.Row | None, gallery: bool = False) -> None:
+        self._web_row, self._web_gallery = row, gallery
         self._open_web()
 
     @work(thread=True, exclusive=True, group="web")
@@ -2067,7 +2076,7 @@ class NmapApp(App[int]):
         fresh = not self._web.running
         try:
             self._web.start()
-            url = self._web.url_for(self._web_row)
+            url = self._web.url_for(self._web_row, gallery=self._web_gallery)
         except WebError as exc:
             self.call_from_thread(self.notify, str(exc), severity="error")
             return

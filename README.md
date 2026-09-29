@@ -402,11 +402,13 @@ services they show. It runs inside the viewer, on `127.0.0.1:7272` by default
 same model the terminal shows - a scan or capture that finishes while it is open
 appears on the next reload - and stops when the viewer quits. `w` opens the
 browser at the selected row: a host at its page, a service at that service
-across hosts, a port with exactly one capture at that capture.
+across hosts, a port with exactly one capture at that capture. When `i` finds
+several captures for a row, its first choice opens them side by side in the
+gallery instead of one at a time in an image viewer.
 
 | Page | What it shows |
 | --- | --- |
-| `/` | every screenshot, with URL, status, title and the database it came from; failures say why |
+| `/` | every screenshot, with URL, status, title and the database it came from; failures say why. Sortable by address, host name, port, HTTP status, URL, title, time taken or database, either way; a card whose service was captured more than once links to all of them together |
 | `/hosts`, `/hosts/<address>` | hosts; one host's ports with each port's screenshots beside it |
 | `/services`, `/services/<proto>/<port>` | services by port number; one service with every host's screenshot |
 | `/captures/<id>` | the screenshot full size, headers, cookies, console log, technologies, TLS names |

@@ -13,6 +13,10 @@ While the interface is running, the status bar SHALL say so and give its
 address. Quitting the viewer SHALL stop it. The existing way of starting
 gowitness's own report server SHALL remain available alongside it.
 
+Where the user asks to look at the screenshot of a row that has several
+captures, the choice SHALL offer to open all of them together in the web
+interface - narrowed to that row - before offering each one alone.
+
 #### Scenario: Opening at the selected host
 - **WHEN** the cursor is on host `192.0.2.1` and the user opens the web interface
 - **THEN** the interface is started and the browser is opened at that host's page
@@ -36,6 +40,10 @@ gowitness's own report server SHALL remain available alongside it.
 #### Scenario: Quitting stops it
 - **WHEN** the user quits the viewer while the interface is running
 - **THEN** the interface stops and its port is free again
+
+#### Scenario: Several captures of the selected row
+- **WHEN** the user asks to open the screenshot of a row with three captures
+- **THEN** the choice offers all three side by side in the web interface first, and each one alone after it
 
 #### Scenario: Both servers
 - **WHEN** the user has opened the web interface and then starts gowitness's report server

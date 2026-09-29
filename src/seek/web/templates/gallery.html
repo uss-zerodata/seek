@@ -1,8 +1,24 @@
 {% extends "base.html" %}
-{% from "_macros.html" import filter %}
 {% block title %}Gallery{% endblock %}
 {% block content %}
 <h1>Screenshots</h1>
-{{ filter("list", q, "filter: url, title, host, port, database - the viewer's grammar") }}
+<form class="controls" method="get" action="/" data-list="list">
+  <input class="filter" type="search" name="q" value="{{ q }}" autocomplete="off" autofocus
+         placeholder="filter: url, title, host, port, database - the viewer's grammar">
+  <label>sort
+    <select name="sort">
+      {% for key, (label, _) in sorts.items() %}<option value="{{ key }}" {% if key == sort %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </label>
+  <label><input type="checkbox" name="desc" value="1" {% if desc %}checked{% endif %}> descending</label>
+  {% for key, value in scope.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+  <noscript><button type="submit">apply</button></noscript>
+</form>
+{% if scope %}
+<p class="scope">only
+  {% if scope.address %}<a href="/hosts/{{ scope.address }}">{{ scope.address }}</a>{% endif %}
+  {% if scope.port %}{{ scope.port }}/{{ scope.protocol or "" }}{% endif %}
+  · <a href="/?{{ {"q": q, "sort": sort} | urlencode }}">show every capture</a></p>
+{% endif %}
 <div id="list">{% include "_captures.html" %}</div>
 {% endblock %}

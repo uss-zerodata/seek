@@ -128,3 +128,32 @@ async def test_a_service_row_opens_that_service(tmp_path, opened):
         await _press_w(pilot, app)
         assert f"/services/{target.protocol}/{target.port}?" in opened[-1]
         app._web.stop()
+
+
+async def test_i_offers_every_capture_of_a_service_in_the_browser(tmp_path, opened):
+    from seek.tui.menu import ChoiceScreen
+
+    port = _free_port()
+    app = _app(tmp_path, port)
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.3)
+        assert app._current_row().target.address == "192.0.2.1"
+        await pilot.press("enter")                     # its ports
+        await pilot.pause(0.3)
+        table = app.query_one(DataTable)
+        table.move_cursor(row=next(i for i, r in enumerate(app._rows)
+                                   if r.target.port == 80))
+        await pilot.pause(0.1)
+        await pilot.press("i")
+        await pilot.pause(0.3)
+        picker = app.screen
+        assert isinstance(picker, ChoiceScreen)
+        assert "All 2 side by side" in str(picker._choices[0][1])
+        picker.choose("web")
+        for _ in range(50):
+            await pilot.pause(0.1)
+            if opened:
+                break
+        assert opened[-1] == (f"http://127.0.0.1:{port}/"
+                              "?address=192.0.2.1&protocol=tcp&port=80")
+        app._web.stop()

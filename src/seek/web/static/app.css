@@ -56,3 +56,10 @@ td.ports { font-variant-numeric: tabular-nums; }
 .count { color: var(--dim); font-size: .85rem; }
 .empty { color: var(--dim); padding: 24px 0; }
 @media (max-width: 640px) { .bar { gap: 12px; } .grid { grid-template-columns: 1fr; } table.list { font-size: .85rem; } }
+.controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin: 0 0 12px; }
+.controls .filter { margin: 0; flex: 1 1 320px; }
+.controls label { color: var(--dim); font-size: .9rem; display: flex; gap: 6px; align-items: center; }
+.controls select { font: inherit; color: var(--fg); background: var(--card);
+                   border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+.scope { margin: -4px 0 12px; }
+.siblings { font-size: .85rem; }

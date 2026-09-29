@@ -368,3 +368,87 @@ def test_a_port_in_use_is_reported_with_its_setting():
         port = busy.getsockname()[1]
         with pytest.raises(WebError, match=f"port {port} is in use.*web_port"):
             WebServer(CachedSource(_scans, gw.Captures), "127.0.0.1", port).start()
+
+
+# --- sorting and narrowing the gallery ------------------------------------------------------
+
+
+def _urls(page) -> list[str]:
+    return [c.url for c in page.items]
+
+
+def test_every_sort_is_offered_and_orders_the_gallery(world):
+    _scans_, shots, source, _client = world
+    shots.add_failures({"http://192.0.2.2": "refused"})
+    model = source.snapshot()
+    for sort in query.SORTS:
+        for desc in (False, True):
+            assert query.captures(model, sort=sort, desc=desc).total == 8, sort
+
+
+def test_sorting_by_status_keeps_failures_last_both_ways(world):
+    _scans_, shots, source, _client = world
+    shots.add_failures({"http://192.0.2.2": "refused"})
+    model = source.snapshot()
+    for desc in (False, True):
+        page = query.captures(model, sort="status", desc=desc)
+        statuses = [c.status for c in page.items]
+        known = [x for x in statuses if x]
+        assert known == sorted(known, reverse=desc)
+        assert page.items[-1].failed, "a failure has no status; it goes last"
+
+
+def test_sorting_by_address_and_port_is_numeric(world):
+    _scans_, _shots, source, _client = world
+    model = source.snapshot()
+    by_address = [c.address for c in query.captures(model, sort="address").items if c.address]
+    assert by_address == sorted(by_address, key=lambda a: tuple(map(int, a.split("."))))
+    ports = [c.port for c in query.captures(model, sort="port").items if c.port]
+    assert ports == sorted(ports)
+
+
+def test_the_gallery_narrows_to_one_service(world):
+    _scans_, _shots, source, _client = world
+    page = query.captures(source.snapshot(), address="192.0.2.1", protocol="tcp", port=80)
+    assert sorted(_urls(page)) == ["http://192.0.2.1", "http://alpha.example"]
+    everywhere = query.captures(source.snapshot(), protocol="tcp", port=443)
+    assert _urls(everywhere) == ["https://192.0.2.30"]
+
+
+def test_a_card_offers_the_other_captures_of_its_service(world):
+    _scans_, _shots, _source, client = world
+    html = client.get("/?sort=url").text
+    assert html.count("all 2 for this service") == 2, "both captures of 192.0.2.1:80"
+    link = re.search(r'href="(/\?[^"]*address=192.0.2.1[^"]*)"', html).group(1)
+    narrowed = client.get(link.replace("&amp;", "&")).text
+    assert narrowed.count('class="card"') == 2
+    assert "show every capture" in narrowed
+
+
+def test_the_next_page_keeps_the_sort_and_the_scope(world):
+    _scans_, _shots, _source, client = world
+    html = client.get("/?sort=status&desc=1&limit=2").text
+    link = re.search(r'class="more" href="\?([^"]+)"', html).group(1).replace("&amp;", "&")
+    assert "sort=status" in link and "desc=1" in link and "offset=2" in link
+
+
+def test_an_unknown_sort_is_refused_by_the_api_and_ignored_by_the_page(world):
+    _scans_, _shots, _source, client = world
+    assert client.get("/api/v1/captures?sort=colour").status_code == 422
+    assert client.get("/?sort=colour").status_code == 200
+    body = client.get("/api/v1/captures?sort=status&desc=true&address=192.0.2.30").json()
+    assert body["total"] == 2
+
+
+def test_gallery_path_for_rows(tmp_path):
+    from seek.web.server import gallery_path_for
+
+    scans = _scans()
+    hosts = {r.target.address: r for r in vdefs.hosts_view().rows(scans)}
+    assert gallery_path_for(hosts["192.0.2.30"]) == "/?address=192.0.2.30"
+    alpha = scans.hosts[0]
+    port80 = next(r for r in vdefs.host_detail(alpha).rows(scans) if r.target.port == 80)
+    assert gallery_path_for(port80) == "/?address=192.0.2.1&protocol=tcp&port=80"
+    group = next(r for r in vdefs.services_view().rows(scans)
+                 if r.target.port == 80 and r.target.host_count > 1)
+    assert gallery_path_for(group) == "/?protocol=tcp&port=80", "one port, several hosts"

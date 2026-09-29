@@ -18,15 +18,16 @@
     {% if c.title %}<div class="line dim">{{ c.title }}</div>{% endif %}
     {% if c.redirected %}<div class="line dim">→ {{ c.final_url }}</div>{% endif %}
     {% if show_host and c.address %}<div class="line"><a href="/hosts/{{ c.address }}">{{ c.address }}</a>{% if c.port %} · <a href="/hosts/{{ c.address }}#port-{{ c.protocol }}-{{ c.port }}">{{ c.port }}/{{ c.protocol }}</a>{% endif %}</div>{% endif %}
+    {% if show_host and c.siblings > 1 %}<div class="line"><a class="siblings" href="/?{{ {"address": c.address, "protocol": c.protocol, "port": c.port} | urlencode }}">all {{ c.siblings }} for this service →</a></div>{% endif %}
     {% if c.database %}<div class="line dim small" title="{{ c.database }}">{{ c.database.rsplit('/', 2)[-2:] | join('/') }}</div>{% endif %}
   </figcaption>
 </figure>
 {%- endmacro %}
 
-{% macro more(page, q) -%}
+{% macro more(page, keep) -%}
 <p class="count">{{ page.total }} total{% if page.total > page.items|length %} · showing {{ page.offset + 1 }}–{{ page.offset + page.items|length }}{% endif %}</p>
 {% if page.offset + page.items|length < page.total %}
-<p><a class="more" href="?{{ {"q": q, "offset": page.offset + page.limit, "limit": page.limit} | urlencode }}">next {{ page.limit }} →</a></p>
+<p><a class="more" href="?{{ dict(keep, offset=page.offset + page.limit, limit=page.limit) | urlencode }}">next {{ page.limit }} →</a></p>
 {% endif %}
 {%- endmacro %}
 

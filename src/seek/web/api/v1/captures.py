@@ -14,8 +14,13 @@ router = APIRouter(prefix="/api/v1/captures", tags=["captures"])
 
 @router.get("", response_model=s.Page[s.CaptureSummary])
 def list_captures(q: str = "", offset: int = 0, limit: int = query.DEFAULT_LIMIT,
-                  m: WebModel = Depends(model)):
-    return query.captures(m, q, offset, limit)
+                  sort: str = query.DEFAULT_SORT, desc: bool = False,
+                  address: str | None = None, protocol: str | None = None,
+                  port: int | None = None, m: WebModel = Depends(model)):
+    """Every capture; `sort` is one of the keys of `query.SORTS`."""
+    if sort not in query.SORTS:
+        raise HTTPException(422, f"sort must be one of {', '.join(query.SORTS)}")
+    return query.captures(m, q, offset, limit, sort, desc, address, protocol, port)
 
 
 @router.get("/{capture_id}", response_model=s.CaptureOut,

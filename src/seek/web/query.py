@@ -10,8 +10,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from typing import TypeVar
+from urllib.parse import urlsplit
 
 from seek.nmap import filtering
+from seek.nmap.merge import addr_key
+from seek.nmap.models import port_key
 from seek.nmap.views import ServiceGroup, service_groups
 from seek.tui.nmap import views as vdefs
 from seek.web import schemas as s
@@ -110,13 +113,80 @@ def _capture_text(p: Placed) -> str:
                                   port, str(c.database or ""), c.failure]))
 
 
+def _host_of(url: str) -> str:
+    return (urlsplit(url).hostname or "") if url else ""
+
+
+def _port_of(p: Placed) -> tuple | None:
+    if p.service is not None:
+        return port_key(p.service.port, p.service.protocol)
+    port = urlsplit(p.capture.url).port if p.capture.url else None
+    return (port, 0) if port else None
+
+
+def _by(value: Callable[[Placed], object]) -> Callable[[Placed], tuple]:
+    """`(known, value)`: a capture with nothing to sort on says so, and goes last."""
+    def key(p: Placed) -> tuple:
+        v = value(p)
+        return (False, ()) if v in (None, "", ()) else (True, v)
+    return key
+
+
+# name -> (label, key). Unknowns - a failure with no status, a page with no
+# title - go after every known value in either direction, so a list sorted by
+# status does not open on a page of failures.
+SORTS: dict[str, tuple[str, Callable[[Placed], tuple]]] = {
+    "address": ("address", _by(lambda p: (addr_key(p.host.address), _port_of(p) or ())
+                               if p.host else None)),
+    "host": ("host name", _by(lambda p: (_host_of(p.capture.url), _port_of(p) or ())
+                              if _host_of(p.capture.url) else None)),
+    "port": ("port", _by(lambda p: (_port_of(p), addr_key(p.host.address) if p.host else ())
+                         if _port_of(p) else None)),
+    "status": ("HTTP status", _by(lambda p: (p.capture.status, _host_of(p.capture.url))
+                                  if p.capture.status else None)),
+    "url": ("URL", _by(lambda p: p.capture.url.lower())),
+    "title": ("page title", _by(lambda p: p.capture.title.lower())),
+    "taken": ("time taken", _by(lambda p: p.capture.probed_at)),
+    "database": ("database", _by(lambda p: str(p.capture.database or ""))),
+}
+DEFAULT_SORT = "address"
+
+
+def _in_scope(p: Placed, address: str | None, protocol: str | None,
+              port: int | None) -> bool:
+    """The structured narrowing `w` and a card's "all for this service" use."""
+    if address is not None and (p.host is None or p.host.address != address):
+        return False
+    if port is not None and (p.service is None or p.service.port != port):
+        return False
+    if protocol is not None and (p.service is None or p.service.protocol != protocol):
+        return False
+    return True
+
+
 def captures(model: WebModel, q: str = "", offset: int = 0,
-             limit: int = DEFAULT_LIMIT) -> s.Page[s.CaptureSummary]:
+             limit: int = DEFAULT_LIMIT, sort: str = DEFAULT_SORT, desc: bool = False,
+             address: str | None = None, protocol: str | None = None,
+             port: int | None = None) -> s.Page[s.CaptureSummary]:
     spec = filtering.parse_filter(q.strip()) if q.strip() else filtering.FilterSpec()
     kept = [p for p in model.captures
-            if filtering.matches(spec, _capture_text(p),
-                                 (p.host.address,) if p.host else ())]
-    return _page(kept, s.out_capture, offset, limit)
+            if _in_scope(p, address, protocol, port)
+            and filtering.matches(spec, _capture_text(p),
+                                  (p.host.address,) if p.host else ())]
+    _label, key = SORTS.get(sort, SORTS[DEFAULT_SORT])
+    keyed = [(key(p), p) for p in kept]
+    # Reversing must not bring the unknowns to the front: the known ones are
+    # sorted in the asked direction and the rest stay behind them.
+    known = [(k[1], p) for k, p in keyed if k[0]]
+    known.sort(key=lambda kp: kp[0], reverse=desc)
+    rest = sorted((p for k, p in keyed if not k[0]), key=lambda p: p.capture.url)
+    ordered = [p for _k, p in known] + rest
+
+    def convert(p: Placed) -> s.CaptureSummary:
+        siblings = len(model.captures_of(p.host, p.service)) if p.host and p.service else 0
+        return s.out_capture(p, siblings=siblings)
+
+    return _page(ordered, convert, offset, limit)
 
 
 def capture(model: WebModel, capture_id: str) -> s.CaptureOut:

@@ -18,4 +18,4 @@
 {% else %}
 <p class="empty">{% if q %}no host matches “{{ q }}”{% else %}no hosts{% endif %}</p>
 {% endif %}
-{{ more(page, q) }}
+{{ more(page, {"q": q}) }}

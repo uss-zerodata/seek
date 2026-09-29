@@ -120,8 +120,14 @@ class WebServer:
         if thread is not None:
             thread.join(timeout)
 
-    def url_for(self, row) -> str:
-        """The page for what a viewer row stands for; the gallery otherwise."""
+    def url_for(self, row, gallery: bool = False) -> str:
+        """The page for what a viewer row stands for; the gallery otherwise.
+
+        `gallery` asks for the screenshots of the row instead - every capture
+        of it side by side, which is what `i` offers when there are several.
+        """
+        if gallery:
+            return self.url + gallery_path_for(row)
         return self.url + path_for(row, self.source.snapshot())
 
 
@@ -151,3 +157,24 @@ def path_for(row, model: WebModel) -> str:
         return (f"/hosts/{quote(row.host.address)}"
                 f"#port-{target.protocol}-{target.port}")
     return "/"
+
+
+def gallery_path_for(row) -> str:
+    """The gallery narrowed to what a row stands for.
+
+    One service on one host, one port across hosts, or one host - whichever the
+    row's records have in common. Structured parameters rather than a filter
+    string, so the narrowing is exact and the filter box stays the user's.
+    """
+    if row is None:
+        return "/"
+    services = [r for r in row.records if r.service is not None]
+    addresses = {r.host.address for r in row.records}
+    ports = {(r.service.protocol, r.service.port) for r in services}
+    query: dict[str, object] = {}
+    if len(addresses) == 1:
+        query["address"] = next(iter(addresses))
+    if services and len(ports) == 1:
+        protocol, port = next(iter(ports))
+        query.update(protocol=protocol, port=port)
+    return "/?" + urlencode(query) if query else "/"

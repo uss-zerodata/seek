@@ -38,10 +38,19 @@ def _missing(request: Request, what: str) -> HTMLResponse:
 @router.get("/", response_class=HTMLResponse)
 def gallery(request: Request, q: str = "", offset: int = 0,
             limit: int = query.DEFAULT_LIMIT, fragment: bool = False,
-            m: WebModel = Depends(model)):
-    page = query.captures(m, q, offset, limit)
+            sort: str = query.DEFAULT_SORT, desc: bool = False,
+            address: str | None = None, protocol: str | None = None,
+            port: int | None = None, m: WebModel = Depends(model)):
+    sort = sort if sort in query.SORTS else query.DEFAULT_SORT
+    page = query.captures(m, q, offset, limit, sort, desc, address, protocol, port)
+    # What the list is narrowed to, and the parameters that keep it narrowed
+    # when paging - the "next" link must not drop the sort or the scope.
+    scope = {k: v for k, v in (("address", address), ("protocol", protocol),
+                               ("port", port)) if v is not None}
+    keep = {"q": q, "sort": sort, **({"desc": "1"} if desc else {}), **scope}
     return _list(request, "gallery.html", "_captures.html", fragment,
-                 page=page, q=q, nav="gallery")
+                 page=page, q=q, nav="gallery", sort=sort, desc=desc,
+                 sorts=query.SORTS, scope=scope, keep=keep)
 
 
 @router.get("/hosts", response_class=HTMLResponse)

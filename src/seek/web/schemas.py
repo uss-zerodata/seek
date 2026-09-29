@@ -41,6 +41,9 @@ class CaptureSummary(BaseModel):
     protocol: str | None = None
     port: int | None = None
     image: str | None = None            # the media route, when there is a picture
+    # How many captures this one's service has - more than one is worth a link
+    # to see them together. 0 when it belongs to no service.
+    siblings: int = 0
 
 
 class CaptureOut(CaptureSummary):
@@ -129,7 +132,7 @@ def _names(host: Host) -> list[str]:
     return [name for name, _ in name_mod.host_names(host)]
 
 
-def out_capture(placed: Placed, full: bool = False) -> CaptureSummary:
+def out_capture(placed: Placed, full: bool = False, siblings: int = 0) -> CaptureSummary:
     c = placed.capture
     common = dict(
         id=placed.id, url=c.url, final_url=c.final_url, redirected=c.redirected,
@@ -139,6 +142,7 @@ def out_capture(placed: Placed, full: bool = False) -> CaptureSummary:
         protocol=placed.service.protocol if placed.service else None,
         port=placed.service.port if placed.service else None,
         image=f"/media/shot/{placed.id}" if c.shot is not None and not c.failed else None,
+        siblings=siblings,
     )
     if not full:
         return CaptureSummary(**common)

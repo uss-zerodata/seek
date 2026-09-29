@@ -68,3 +68,12 @@
 - [x] 10.2 AGENTS.md: the `seek/web` layout, the `ModelSource` seam, the reuse of TUI projections and filter grammar, id-not-path media, lazy import
 - [x] 10.3 Measure one gallery and one host-list request against the 24 200-host benchmark corpus with the TUI open; record the numbers in the design
 - [x] 10.4 `uv run ruff check`, `uv run pytest -q`, `openspec validate nmap-web-interface --strict`
+
+## 11. Several captures, and a sortable gallery
+
+- [x] 11.1 `query.SORTS`: address, host name, port, HTTP status, URL, title, time taken, database; unknown values last in both directions; `desc`
+- [x] 11.2 Gallery and `/api/v1/captures` narrow by `address`, `protocol`, `port`; the API refuses an unknown sort with 422, the page falls back to the default
+- [x] 11.3 `CaptureSummary.siblings`; a card whose service has several captures links to all of them; the "next" link keeps sort and scope
+- [x] 11.4 Gallery controls: sort select and direction, submitted as a plain GET and swapped in place by `app.js`; a line saying what the list is narrowed to, with a way back to everything
+- [x] 11.5 `i` with several captures offers "all N side by side in the web interface" first; `gallery_path_for(row)` narrows to the row's host and/or port
+- [x] 11.6 Tests for every sort, failures last, numeric order, narrowing, sibling links, paging, the 422, and the `i` choice; help and README
