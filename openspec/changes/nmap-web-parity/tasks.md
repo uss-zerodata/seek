@@ -77,3 +77,14 @@
 - [x] 10.2 README: the web front end's features, keys, `seek nmap serve`
 - [x] 10.3 AGENTS.md: the session, the loop rule, URL-carried client state, the parity rule (a viewer feature lands with its API)
 - [x] 10.4 `uv run ruff check`, `uv run pytest -q`, `openspec validate nmap-web-parity --strict`
+
+## 11. Everything linked, screenshots where they are named
+
+- [x] 11.1 `detail.Line.to`: the record says what a line is about - a host, a `(host, service)`, a capture - without the terminal changing
+- [x] 11.2 `web/links.py`: one place for where a host, a port, a service and a capture live; records, lists, gallery and capture pages link through it
+- [x] 11.3 Record lines link; a capture's thumbnail follows the lines about it, once
+- [x] 11.4 List rows carry up to three thumbnails and `+N` (to the gallery narrowed to the row)
+- [x] 11.5 On a host's port list the port selects its record; `everywhere →` keeps the drill to the service on every host
+- [x] 11.6 The first version's `/hosts`, `/services` pages redirect to the tabs; `w` opens the same places
+- [x] 11.7 The capture page links host, port and every capture of the port; long list cells are cut with the value in a tooltip
+- [x] 11.8 Tests: redirects, row thumbnails, the port record's link and single thumbnail, the host record's port links, `w`'s targets

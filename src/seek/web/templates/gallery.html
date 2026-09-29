@@ -16,7 +16,7 @@
 </form>
 {% if scope %}
 <p class="scope">only
-  {% if scope.address %}<a href="/hosts/{{ scope.address }}">{{ scope.address }}</a>{% endif %}
+  {% if scope.address %}<a href="{{ links.host(scope.address) }}">{{ scope.address }}</a>{% endif %}
   {% if scope.port %}{{ scope.port }}/{{ scope.protocol or "" }}{% endif %}
   · <a href="/?{{ {"q": q, "sort": sort} | urlencode }}">show every capture</a></p>
 {% endif %}

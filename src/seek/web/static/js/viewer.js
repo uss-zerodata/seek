@@ -26,7 +26,7 @@ function setParam(key, value) {
 
 // --- selection and the record -------------------------------------------------------
 
-export function select(i, { scroll = true } = {}) {
+export function select(i, { scroll = true, load = true } = {}) {
   const all = rows();
   if (!all.length) return;
   i = Math.max(0, Math.min(all.length - 1, i));
@@ -35,7 +35,7 @@ export function select(i, { scroll = true } = {}) {
   const tr = all[i];
   if (scroll) tr.scrollIntoView({ block: "nearest" });
   setParam("sel", tr.dataset.step);
-  loadRecord(tr.dataset.step);
+  if (load) loadRecord(tr.dataset.step);
 }
 
 export function selectedRow() { return rows()[state.index] || null; }
@@ -203,8 +203,11 @@ const HANDLERS = {
   lineUp: () => (state.raw ? stepRaw(-1) : moveCursor(-1)),
   open: () => { const tr = selectedRow(); if (tr?.dataset.open) go(tr.dataset.open); },
   follow: () => {
-    const link = lines()[state.cursor]?.querySelector("a.opens");
-    if (link) openRaw(link.dataset.raw);
+    const line = lines()[state.cursor];
+    const raw = line?.querySelector("a.opens");
+    const to = line?.querySelector("a.to");
+    if (raw) openRaw(raw.dataset.raw);
+    else if (to) go(to.href);
     else actions.cycleMode();
   },
   back,
@@ -269,7 +272,14 @@ export function escapeHtml(text) {
 }
 
 if (root) {
+  // The page arrives with the selected row's record already in it: keep it
+  // rather than fetch it again, and remember it for `Esc` out of nmap's text.
   const step = params().get("sel");
   const at = rows().findIndex((tr) => tr.dataset.step === step);
-  select(at >= 0 ? at : 0, { scroll: at >= 0 });
+  const rendered = panel.querySelector(".record");
+  if (rendered) {
+    state.lastRecord = { title: panel.querySelector(".record-head h2")?.textContent || "",
+                         html: rendered.innerHTML };
+  }
+  select(at >= 0 ? at : 0, { scroll: at >= 0, load: !rendered });
 }

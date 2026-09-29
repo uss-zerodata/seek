@@ -9,13 +9,14 @@ to lists the browser could not hold.
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from seek.tui.nmap.tabs import TABS
-from seek.web import pages_data, query, views
+from seek.web import links, pages_data, query, views
 from seek.web.api.v1.views import split_path
 from seek.web.deps import model, places, session
 from seek.web.source import WebModel
@@ -38,6 +39,27 @@ def _static_version() -> str:
 
 
 TEMPLATES.env.globals["V"] = _static_version()
+
+
+def gallery_scope(step: str) -> str:
+    """The gallery narrowed to what a list row stands for, as a query string."""
+    kind, _, rest = step.partition(":")
+    if kind == "h":
+        return urlencode({"address": rest})
+    if kind == "p":
+        address, protocol, port = rest.split("/", 2)
+        return urlencode({"address": address, "protocol": protocol, "port": port})
+    if kind == "s":
+        protocol, port = rest.split("/")[:2]
+        return urlencode({"protocol": protocol, "port": port})
+    if kind == "b" and rest.startswith("port/"):
+        port, protocol = rest.removeprefix("port/").split("/")[:2]
+        return urlencode({"protocol": protocol, "port": port})
+    return ""
+
+
+TEMPLATES.env.globals["gallery_scope"] = gallery_scope
+TEMPLATES.env.globals["links"] = links
 
 router = APIRouter(include_in_schema=False)
 
@@ -72,42 +94,45 @@ def gallery(request: Request, q: str = "", offset: int = 0,
                  sorts=query.SORTS, scope=scope, keep=keep)
 
 
-@router.get("/hosts", response_class=HTMLResponse)
-def hosts(request: Request, q: str = "", offset: int = 0,
-          limit: int = query.DEFAULT_LIMIT, fragment: bool = False,
-          m: WebModel = Depends(model)):
-    page = query.hosts(m, q, offset, limit)
-    return _list(request, "hosts.html", "_hosts.html", fragment,
-                 page=page, q=q, nav="hosts")
+# The first version's own host and service pages are the tabs now: one page per
+# thing, so an old link or bookmark lands where that thing lives.
 
 
-@router.get("/hosts/{address}", response_class=HTMLResponse)
-def host(request: Request, address: str, m: WebModel = Depends(model)):
-    try:
-        found = query.host(m, address)
-    except query.NotFound as exc:
-        return _missing(request, str(exc))
-    return _render(request, "host.html", host=found, nav="hosts")
+@router.get("/hosts")
+def hosts(q: str = ""):
+    return RedirectResponse("/v/hosts" + (f"?{urlencode({'q': q})}" if q else ""), 302)
 
 
-@router.get("/services", response_class=HTMLResponse)
-def services(request: Request, q: str = "", offset: int = 0,
-             limit: int = query.DEFAULT_LIMIT, fragment: bool = False,
-             m: WebModel = Depends(model)):
-    page = query.services(m, q, offset, limit)
-    return _list(request, "services.html", "_services.html", fragment,
-                 page=page, q=q, nav="services")
+@router.get("/hosts/{address}")
+def host(address: str):
+    return RedirectResponse(links.host(address), 302)
 
 
-@router.get("/services/{protocol}/{port}", response_class=HTMLResponse)
+@router.get("/services")
+def services(q: str = ""):
+    return RedirectResponse("/v/services" + (f"?{urlencode({'q': q})}" if q else ""), 302)
+
+
+@router.get("/services/{protocol}/{port}")
 def service(request: Request, protocol: str, port: int, name: str | None = None,
             product: str | None = None, version: str | None = None,
             m: WebModel = Depends(model)):
     try:
-        found = query.service(m, protocol, port, name, product, version)
+        group = query.service_group(m, protocol, port, name, product, version)
     except query.NotFound as exc:
         return _missing(request, str(exc))
-    return _render(request, "service.html", service=found, nav="services")
+    if name is None and product is None and version is None and len(
+            {(g.name, g.product, g.version) for g in _groups_on(m, protocol, port)}) > 1:
+        # Several products on the port: the list of them, filtered to it.
+        return RedirectResponse("/v/services?" + urlencode({"q": f"^{port}$"}), 302)
+    return RedirectResponse(links.service(group), 302)
+
+
+def _groups_on(m: WebModel, protocol: str, port: int):
+    from seek.nmap.views import service_groups
+
+    return [g for g in service_groups(m.scans.hosts)
+            if g.protocol == protocol and g.port == port]
 
 
 @router.get("/captures/{capture_id}", response_class=HTMLResponse)
@@ -127,12 +152,12 @@ def overview(request: Request, tab: str, path: str = "", q: str = "",
              sort: int | None = None, desc: bool = False, up: bool = False,
              ports: bool = False, open: bool = False, sel: str = "", offset: int = 0,
              limit: int = 500, fragment: bool = False,
-             sess=Depends(session), cache=Depends(places)):
+             sess=Depends(session), cache=Depends(places), m=Depends(model)):
     """One level of one tab. Its URL is its state: the browser's back button
     returns to the level before with its own filter, sort and selected row."""
     try:
         found = views.overview(sess, cache, tab, split_path(path), q, sort, desc, up,
-                               ports, open, offset, limit)
+                               ports, open, offset, limit, m)
     except views.Unresolved as exc:
         return _missing(request, str(exc))
     # The selected row's record is in the page itself: it shows at once, and

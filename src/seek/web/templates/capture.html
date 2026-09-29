@@ -2,11 +2,13 @@
 {% from "_macros.html" import status %}
 {% block title %}{{ capture.url }}{% endblock %}
 {% block content %}
-<h1>{{ status(capture) }} {{ capture.url }}</h1>
+<h1>{{ status(capture) }} {{ capture.url }}
+  <a class="small" href="{{ capture.url }}" target="_blank" rel="noopener noreferrer" title="opens the target itself">open ↗</a></h1>
 {% if capture.title %}<p class="lead">{{ capture.title }}</p>{% endif %}
 <dl class="facts">
-  {% if capture.redirected %}<dt>final URL</dt><dd>{{ capture.final_url }}</dd>{% endif %}
-  {% if capture.address %}<dt>host</dt><dd><a href="/hosts/{{ capture.address }}#port-{{ capture.protocol }}-{{ capture.port }}">{{ capture.address }}{% if capture.port %} · {{ capture.port }}/{{ capture.protocol }}{% endif %}</a></dd>{% endif %}
+  {% if capture.redirected %}<dt>final URL</dt><dd><a href="{{ capture.final_url }}" target="_blank" rel="noopener noreferrer">{{ capture.final_url }}</a></dd>{% endif %}
+  {% if capture.address %}<dt>host</dt><dd><a href="{{ links.host(capture.address) }}">{{ capture.address }}</a>{% if capture.port %} · <a href="{{ links.port(capture.address, capture.protocol, capture.port) }}">{{ capture.port }}/{{ capture.protocol }}</a>
+      · <a href="/?{{ {"address": capture.address, "protocol": capture.protocol, "port": capture.port} | urlencode }}">every capture of this port</a>{% endif %}</dd>{% endif %}
   {% if capture.failed %}<dt>failed</dt><dd>{{ capture.failure }}</dd>{% endif %}
   {% if capture.reason %}<dt>reason</dt><dd>{{ capture.reason }}</dd>{% endif %}
   {% if capture.http_protocol %}<dt>protocol</dt><dd>{{ capture.http_protocol }}</dd>{% endif %}

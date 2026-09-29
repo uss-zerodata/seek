@@ -206,6 +206,15 @@ class Crumb(BaseModel):
     path: str                        # the `path=` that shows this level
 
 
+class ShotRef(BaseModel):
+    """A capture, as small as a list row needs it."""
+
+    id: str
+    url: str
+    image: str | None = None         # absent for a failure: nothing to show
+    status: int | None = None
+
+
 class RowOut(BaseModel):
     step: str                        # append to `path=` to open this row
     cells: list[str]
@@ -213,10 +222,13 @@ class RowOut(BaseModel):
     section: str = ""
     mark: str = ""                   # "all", "some" or ""
     opens: bool = False              # whether opening it goes anywhere
+    shots: list[ShotRef] = []        # the row's captures, the first few
+    shots_total: int = 0             # how many it has in all
 
 
 class ViewOut(BaseModel):
     tab: str
+    kind: str = ""                   # the view's kind: hosts, host-detail, services ...
     marked_tab: str
     title: str
     subtitle: str = ""

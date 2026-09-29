@@ -430,6 +430,12 @@ format, downloaded or copied), new scans (preset, scope, editable command, the
 same review and `sudo -n` rule) and gowitness captures all work from the
 browser, and the Scans tab streams a running scan's log as nmap writes it.
 
+Everything is linked: a host leads to its ports and their state, a port to its
+full record - scripts, vulnerabilities, names, each scan's own text - and a
+screenshot is shown as a thumbnail wherever it is named, in a list row or beside
+the line of a record, opening its capture page, which leads back to the host and
+port it shows.
+
 The terminal and the browser share one session: a scan started in either shows
 in both, a mark made in either is a mark in both, and quitting the terminal asks
 about a scan the browser started. Each keeps its own tab, filter, sort and

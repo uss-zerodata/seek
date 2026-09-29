@@ -61,7 +61,7 @@ async def test_w_starts_the_interface_once_and_opens_the_selected_host(tmp_path,
         address = app._current_row().target.address
         await _press_w(pilot, app)
         assert app._web.running
-        assert opened[-1] == f"http://127.0.0.1:{port}/hosts/{address}"
+        assert opened[-1] == f"http://127.0.0.1:{port}/v/hosts?path=h%3A{address}"
         def fetch():
             # The server runs on this very loop: the request must not block it.
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/v1/hosts",
@@ -76,7 +76,7 @@ async def test_w_starts_the_interface_once_and_opens_the_selected_host(tmp_path,
         other = app._current_row().target.address
         await _press_w(pilot, app)
         assert (app._web._server, app._web._task) == (server, task), "reused"
-        assert opened[-1].endswith(f"/hosts/{other}")
+        assert opened[-1].endswith(f"/v/hosts?path=h%3A{other}")
         status = str(app.query_one("#status", Static).render())
         assert f"web http://127.0.0.1:{port}" in status
         app._web.stop()
@@ -136,7 +136,7 @@ async def test_a_service_row_opens_that_service(tmp_path, opened):
         table = app.query_one(DataTable)
         target = app._rows[table.cursor_row].target
         await _press_w(pilot, app)
-        assert f"/services/{target.protocol}/{target.port}?" in opened[-1]
+        assert f"/v/services?path=s%3A{target.protocol}%2F{target.port}%2F" in opened[-1]
         app._web.stop()
 
 

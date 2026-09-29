@@ -510,6 +510,11 @@ stdout, `cd`) cannot run while Textual owns the screen. They set
   from the terminal's. **Parity rule: a viewer feature lands with its API
   endpoint**, and `keys.js` carries every viewer binding -
   `test_every_terminal_key_has_a_browser_key` fails otherwise.
+  **Links come from the record, not from parsing it.** `detail.Line.to` says
+  what a line is about (a `Host`, a `(Host, Service)`, a `Capture`); the web
+  turns it into a link through `web/links.py` - the one place that says where a
+  thing lives - and puts a capture's thumbnail after the last line about it.
+  Never regex addresses or URLs out of rendered text to link them.
 - **Freezing the log is not pausing the scan.** nmap's timers run against the
   wall clock, so `SIGSTOP` can time hosts out on resume; `p` is a view state and
   the pane header says the scan is still running. `runner` only runs or cancels.

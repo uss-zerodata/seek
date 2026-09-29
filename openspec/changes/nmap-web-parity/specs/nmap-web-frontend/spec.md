@@ -159,3 +159,31 @@ open in the same browser cannot start a scan through it.
 #### Scenario: The interface itself
 - **WHEN** the web interface's own page starts a scan
 - **THEN** the request is accepted
+
+### Requirement: Everything known is linked, and screenshots are shown where they are named
+Every host, port, service and capture that a page mentions SHALL be a link to
+where that thing is shown: a host to its list of ports with each port's state, a
+port to that list with the port selected and its full record beside it (scripts,
+vulnerabilities, names, each scan's own text and its captures), a service across
+hosts to the hosts running it, and a capture to its own page. A capture SHALL be
+shown as a thumbnail wherever it is named - beside a row in a list and beside the
+line of a record that names it - and a thumbnail SHALL open the capture's page.
+A capture's page SHALL link back to its host, its port and every capture of that
+port. The first version's own host and service pages SHALL lead to the matching
+tab page instead of existing beside it.
+
+#### Scenario: From a host to a port to a screenshot
+- **WHEN** the user opens a host, clicks one of its ports and clicks the thumbnail in that port's record
+- **THEN** the port's full record is shown with the host's ports beside it, and then the capture's page
+
+#### Scenario: Screenshots in a list
+- **WHEN** a host's port list is shown and two of its ports were captured
+- **THEN** those two rows carry thumbnails of their captures, and the others carry none
+
+#### Scenario: A capture back to what it shows
+- **WHEN** the user is on a capture's page
+- **THEN** its host and its port are links, and so is every other capture of that port
+
+#### Scenario: An old link
+- **WHEN** the user follows a link to the first version's page for a host
+- **THEN** the host's port list on the Hosts tab is shown

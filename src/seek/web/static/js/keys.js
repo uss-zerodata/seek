@@ -12,7 +12,7 @@ export const KEYS = [
   [["l", "ArrowRight"], "lineDown", "record: next line (in nmap's text: next scan)"],
   [["h", "ArrowLeft"], "lineUp", "record: previous line (in nmap's text: previous scan)"],
   [["Enter"], "open", "open the selected row - keep pressing to keep digging"],
-  [["o"], "follow", "open the link under the record's cursor: nmap's own text"],
+  [["o"], "follow", "open what the record's cursor is on: a host, a port, a capture, nmap's own text"],
   [["Escape", "q"], "back", "leave the filter, clear it, back one level"],
   [["/"], "filter", "filter the list (the viewer's grammar)"],
   [["1", "2", "3", "4", "5", "6", "7", "8", "9"], "sort", "sort by that column; again reverses"],

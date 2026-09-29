@@ -51,6 +51,12 @@ class Line:
 
     text: RenderableType
     opens: rawlog.Request | None = None
+    # What the line is *about*, when it names something that has a record of
+    # its own: a `Host`, a `(Host, Service)` pair, or a `Capture`. The terminal
+    # has no use for it; the browser makes the line a link there, and shows a
+    # capture's picture beside it. Kept on the line, so the one renderer still
+    # decides both what a record says and what each part of it points at.
+    to: object | None = None
 
 
 def lines_of(parts: list[RenderableType | Line]) -> list[Line]:
@@ -235,7 +241,7 @@ def _capture_extra(capture: Capture, full: bool) -> list[Text]:
     return out
 
 
-def _capture_rows(urls: list[str], shots: Captures | None) -> list[Text]:
+def _capture_rows(urls: list[str], shots: Captures | None) -> list[Text | Line]:
     """The `Captures` block of a host: one aligned line per captured URL.
 
     Status first and padded, because the question this block answers is "which
@@ -258,7 +264,7 @@ def _capture_rows(urls: list[str], shots: Captures | None) -> list[Text]:
         tail = capture.failure if capture.failed else capture.title
         if tail:
             line.append(f"   {tail}", style=_KEY)
-        rows.append(line)
+        rows.append(Line(line, to=capture))
     return rows
 
 
@@ -286,7 +292,7 @@ def _more(shown: int, total: int) -> list[Text]:
                  style="dim")]
 
 
-def _member_captures(members: list, shots: Captures | None) -> list[Text]:
+def _member_captures(members: list, shots: Captures | None) -> list[Text | Line]:
     """The capture block for a bucket of (host, service) pairs.
 
     The grouping views - by service, by product, by port, and the names list -
@@ -429,7 +435,7 @@ def host_detail(host: Host, shots: Captures | None = None, full: bool = False,
         parts.append(Text(""))
         parts.append(_section("Services", len(host.open_services)))
         for svc in host.open_services:
-            parts.append(_bullet(svc.label()))
+            parts.append(Line(_bullet(svc.label()), to=(host, svc)))
     every_url = [url for svc in host.open_services
                  for url in service_urls(svc, host)]
     captures = _capture_rows(list(dict.fromkeys(every_url)), shots)
@@ -487,12 +493,12 @@ def service_detail(svc: Service, host: Host | None = None,
         parts.append(Text(""))
         parts.append(_section("URLs", len(urls)))
         for url in urls:
-            parts.append(_bullet(url))
             # Silence, not "not captured": before any capture has been run
             # every URL in the project would carry the same empty note.
             capture = shots.get(url) if shots is not None else None
+            parts.append(Line(_bullet(url), to=capture))
             if capture is not None:
-                parts.append(_capture_under(capture))
+                parts.append(Line(_capture_under(capture), to=capture))
                 parts.extend(_capture_extra(capture, full))
     if svc.vulnerabilities:
         parts.append(Text(""))
@@ -517,7 +523,7 @@ def group_detail(group: ServiceGroup,
     parts.append(_section("Running on", group.host_count))
     for host, svc in group.members[:_MEMBER_LIMIT]:
         extra = f"  {svc.version}" if svc.version else ""
-        parts.append(_bullet(f"{host.address}{extra}"))
+        parts.append(Line(_bullet(f"{host.address}{extra}"), to=(host, svc)))
     parts.extend(_more(_MEMBER_LIMIT, len(group.members)))
 
     captures = _member_captures(group.members, shots)
@@ -567,7 +573,7 @@ def grouping_detail(group: Grouping,
     for host in hosts[:_MEMBER_LIMIT]:
         ports = ", ".join(ports_of.get(id(host), ()))
         name = f" ({host.hostname})" if host.hostname else ""
-        parts.append(_bullet(f"{host.address}{name}   {ports}"))
+        parts.append(Line(_bullet(f"{host.address}{name}   {ports}"), to=host))
     parts.extend(_more(_MEMBER_LIMIT, len(hosts)))
     captures = _member_captures(group.members, shots)
     if captures:

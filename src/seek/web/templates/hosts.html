@@ -1,8 +1,0 @@
-{% extends "base.html" %}
-{% from "_macros.html" import filter %}
-{% block title %}Hosts{% endblock %}
-{% block content %}
-<h1>Hosts</h1>
-{{ filter("list", q, "filter: address, name, service - open:443, 10.0.0.0/24 …") }}
-<div id="list">{% include "_hosts.html" %}</div>
-{% endblock %}

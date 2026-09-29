@@ -20,8 +20,10 @@ from urllib.parse import urlencode
 from rich.console import Console
 from rich.style import Style
 
+from seek.gowitness.results import Capture
 from seek.nmap import rawlog
 from seek.tui.nmap import detail as detail_pane
+from seek.web import links
 
 _WIDTH = 160
 _STANDARD = {"black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"}
@@ -84,14 +86,38 @@ def raw_query(request: rawlog.Request) -> str:
     return urlencode(params)
 
 
+def thumbnail(capture: Capture) -> str:
+    """A capture's picture, small, opening its page - the gallery's thumbnail."""
+    if capture.shot is None or capture.failed:
+        return ""
+    return (f'<a class="thumb-inline" href="{links.capture(capture)}" '
+            f'title="{escape(capture.url)}"><img src="{links.image(capture)}" '
+            f'alt="screenshot of {escape(capture.url)}"></a>')
+
+
 def lines_html(lines: list[detail_pane.Line], width: int = _WIDTH) -> str:
+    """Each line as HTML; a line about something links to it.
+
+    A capture's thumbnail follows the last consecutive line about it - a URL and
+    the result under it are one capture, shown once.
+    """
     console = Console(width=width, color_system="truecolor", record=False,
                       force_terminal=True, legacy_windows=False)
     out: list[str] = []
+    shown: set[int] = set()
     for i, line in enumerate(lines):
         body = _html_of(line.text, console)
         if line.opens is not None:
             body = (f'<a class="opens" href="/raw?{escape(raw_query(line.opens))}" '
                     f'data-raw="{escape(raw_query(line.opens))}">{body}</a>')
+        elif (target := links.href(line.to)) is not None:
+            body = f'<a class="to" href="{escape(target)}">{body}</a>'
         out.append(f'<div class="ln" data-i="{i}">{body or "&nbsp;"}</div>')
+        if isinstance(line.to, Capture) and id(line.to) not in shown:
+            following = lines[i + 1].to if i + 1 < len(lines) else None
+            if following is not line.to:
+                shown.add(id(line.to))
+                picture = thumbnail(line.to)
+                if picture:
+                    out.append(f'<div class="shot">{picture}</div>')
     return "\n".join(out)

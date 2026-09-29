@@ -1,8 +1,0 @@
-{% extends "base.html" %}
-{% from "_macros.html" import filter %}
-{% block title %}Services{% endblock %}
-{% block content %}
-<h1>Services</h1>
-{{ filter("list", q, "filter: port, service, product, version …") }}
-<div id="list">{% include "_services.html" %}</div>
-{% endblock %}

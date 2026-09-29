@@ -169,10 +169,34 @@ def _opens(row: vdefs.Row) -> bool:
     return isinstance(target, (vdefs.View, ServiceGroup, vdefs.Grouping, Host, Service))
 
 
+_SHOTS_PER_ROW = 3
+
+
+def row_shots(model, row: vdefs.Row):
+    """A row's captures, by what it stands for: a port its own, a host all of
+    its ports', a bucket every member's - the first few, and how many."""
+    from seek.web import schemas as s
+
+    if model is None or not model.captures or not row.records:
+        return [], 0
+    seen: dict[str, object] = {}
+    for record in row.records:
+        found = (model.captures_of(record.host, record.service) if record.service
+                 else model.captures_of_host(record.host))
+        for placed in found:
+            seen.setdefault(placed.id, placed)
+    picked = list(seen.values())
+    refs = [s.ShotRef(id=p.id, url=p.capture.url, status=p.capture.status,
+                      image=None if p.capture.failed or p.capture.shot is None
+                      else f"/media/shot/{p.id}")
+            for p in picked[:_SHOTS_PER_ROW]]
+    return refs, len(picked)
+
+
 def overview(session: Session, cache: ViewCache, tab: str, path: list[str], q: str = "",
              sort: int | None = None, desc: bool | None = None, up: bool = False,
              ports: bool = False, only_open: bool = False, offset: int = 0,
-             limit: int = 500):
+             limit: int = 500, model=None):
     """Everything a list page or `GET /api/v1/views/{tab}` shows."""
     from seek.web import schemas as s
 
@@ -183,12 +207,18 @@ def overview(session: Session, cache: ViewCache, tab: str, path: list[str], q: s
     crumbs = [s.Crumb(title=lv.view.title, path=SEP.join(path[:i]))
               for i, lv in enumerate(place.levels)]
     return s.ViewOut(
-        tab=tab, marked_tab=place.marked_tab, title=place.view.title,
+        tab=tab, kind=place.view.kind, marked_tab=place.marked_tab, title=place.view.title,
         subtitle=place.view.subtitle, path=SEP.join(path), crumbs=crumbs,
         columns=list(shown.columns), sort=shown.sort, desc=shown.desc,
         total=shown.total, count=sum(1 for r in shown.rows if not r.heading),
         offset=offset, limit=limit, marks=len(session.marks),
-        rows=[s.RowOut(step=step_of(r) if not r.heading else "", cells=list(r.cells),
-                       heading=r.heading, section=r.section,
-                       mark=mark_state(session, r), opens=_opens(r) and not r.heading)
-              for r in shown.rows[offset:offset + limit]])
+        rows=[_row_out(session, model, r) for r in shown.rows[offset:offset + limit]])
+
+
+def _row_out(session: Session, model, r: vdefs.Row):
+    from seek.web import schemas as s
+
+    shots, total = ([], 0) if r.heading else row_shots(model, r)
+    return s.RowOut(step=step_of(r) if not r.heading else "", cells=list(r.cells),
+                    heading=r.heading, section=r.section, mark=mark_state(session, r),
+                    opens=_opens(r) and not r.heading, shots=shots, shots_total=total)

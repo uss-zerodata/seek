@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from seek.web import schemas as s
 from seek.web import views
-from seek.web.deps import places, session
+from seek.web.deps import model, places, session
 
 router = APIRouter(prefix="/api/v1/views", tags=["views"])
 
@@ -25,9 +25,9 @@ def split_path(path: str) -> list[str]:
 def get_view(tab: str, path: str = "", q: str = "", sort: int | None = None,
              desc: bool = False, up: bool = False, ports: bool = False,
              open: bool = False, offset: int = 0, limit: int = 500,
-             sess=Depends(session), cache=Depends(places)):
+             sess=Depends(session), cache=Depends(places), m=Depends(model)):
     try:
         return views.overview(sess, cache, tab, split_path(path), q, sort, desc, up,
-                              ports, open, offset, limit)
+                              ports, open, offset, limit, m)
     except views.Unresolved as exc:
         raise HTTPException(404, str(exc)) from None

@@ -22,6 +22,10 @@ FIX = Path(__file__).parent / "fixtures" / "nmap"
 
 
 def _text(renderable, width: int = 110) -> str:
+    if isinstance(renderable, list):
+        # A record's lines, as the terminal shows them - not the list's repr,
+        # which now carries what each line is about (a capture, headers and all).
+        renderable = detail.as_group(renderable)
     console = Console(width=width, record=True, file=open("/dev/null", "w"))
     console.print(renderable)
     return console.export_text()

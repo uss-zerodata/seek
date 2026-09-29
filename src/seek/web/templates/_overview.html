@@ -4,17 +4,19 @@
 <thead><tr><th class="mark"></th>
 {% for col in view.columns %}
   {% set i = loop.index0 %}
+  {% if i == 1 %}<th class="shots"></th>{% endif %}
   <th><a class="sort" href="?{{ dict(here, sort=i, desc=("1" if i == view.sort and not view.desc else "")) | urlencode }}">{{ loop.index }} {{ col }}{% if i == view.sort %} {{ "↓" if view.desc else "↑" }}{% endif %}</a></th>
 {% endfor %}</tr></thead>
 <tbody>
 {% for r in view.rows %}
 {% if r.heading %}
-<tr class="heading"><td></td><td colspan="{{ view.columns | length }}">{{ r.cells[0] }}</td></tr>
+<tr class="heading"><td></td><td colspan="{{ view.columns | length + 1 }}">{{ r.cells[0] }}</td></tr>
 {% else %}
 <tr class="row{% if sel == r.step %} selected{% endif %}" data-step="{{ r.step }}"
     {% if r.opens %}data-open="/v/{{ view.tab }}?{{ {"path": (view.path ~ "|" ~ r.step) if view.path else r.step} | urlencode }}"{% endif %}>
   <td class="mark">{{ "●" if r.mark == "all" else ("◐" if r.mark == "some" else "") }}</td>
-  {% for cell in r.cells %}<td>{% if loop.first and r.opens %}<a href="/v/{{ view.tab }}?{{ {"path": (view.path ~ "|" ~ r.step) if view.path else r.step} | urlencode }}">{{ cell }}</a>{% else %}{{ cell }}{% endif %}</td>{% endfor %}
+  {% set drill = "/v/" ~ view.tab ~ "?" ~ ({"path": (view.path ~ "|" ~ r.step) if view.path else r.step} | urlencode) %}
+  {% for cell in r.cells %}{% if loop.index0 == 1 %}<td class="shots">{% for shot in r.shots %}<a class="thumb-row" href="/captures/{{ shot.id }}" title="{{ shot.status or '' }} {{ shot.url }}">{% if shot.image %}<img src="{{ shot.image }}" alt="" loading="lazy">{% else %}<span class="noshot-sm">✗</span>{% endif %}</a>{% endfor %}{% if r.shots_total > r.shots | length %}<a class="more-shots" href="/?{{ gallery_scope(r.step) }}">+{{ r.shots_total - r.shots | length }}</a>{% endif %}</td>{% endif %}<td title="{{ cell }}">{% if loop.first and view.kind == "host-detail" %}<a href="?{{ dict(here, sel=r.step) | urlencode }}" title="everything the scans recorded about this port">{{ cell }}</a>{% if r.opens %} <a class="everywhere small" href="{{ drill }}" title="this service on every host">everywhere →</a>{% endif %}{% elif loop.first and r.opens %}<a href="{{ drill }}">{{ cell }}</a>{% else %}{{ cell }}{% endif %}</td>{% endfor %}
 </tr>
 {% endif %}
 {% endfor %}

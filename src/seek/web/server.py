@@ -24,7 +24,7 @@ import ipaddress
 import logging
 import socket
 import time
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode
 
 from seek.web.source import ModelSource, WebModel
 
@@ -157,30 +157,26 @@ class WebServer:
 
 
 def path_for(row, model: WebModel) -> str:
-    """Host → its page, service group → that service, one capture → its page.
-
-    A row of one host's port list is a service *on that host*, so it opens the
-    host's page at that port - or the capture, when exactly one was taken of it.
-    """
+    """Host → its port list, service group → that service, a port with exactly
+    one capture → the capture, a port otherwise → the port's record; the gallery
+    for anything else. The same places every page links to (`web.links`)."""
     from seek.nmap.models import Host, Service
     from seek.nmap.views import ServiceGroup
+    from seek.web import links
 
     if row is None:
         return "/"
     target = row.target
     if isinstance(target, Host):
-        return f"/hosts/{quote(target.address)}"
+        return links.host(target.address)
     if isinstance(target, ServiceGroup):
-        query = urlencode({"name": target.name or "", "product": target.product or "",
-                           "version": target.version or ""})
-        return f"/services/{target.protocol}/{target.port}?{query}"
+        return links.service(target)
     shots = [p for record in row.records if record.service is not None
              for p in model.captures_of(record.host, record.service)]
     if len({p.id for p in shots}) == 1:
-        return f"/captures/{shots[0].id}"
+        return links.capture(shots[0].id)
     if isinstance(target, Service) and row.host is not None:
-        return (f"/hosts/{quote(row.host.address)}"
-                f"#port-{target.protocol}-{target.port}")
+        return links.port(row.host.address, target.protocol, target.port)
     return "/"
 
 

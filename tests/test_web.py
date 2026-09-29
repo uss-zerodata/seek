@@ -65,10 +65,16 @@ def _captures(*dbs: Path) -> gw.Captures:
 
 @pytest.fixture
 def world(tmp_path):
+    from seek.config import Config
+    from seek.nmap.session import Session
+
     scans = _scans()
-    shots = _captures(_database(tmp_path))
+    session = Session(Config(nmap_path="/nonexistent/nmap"), [], tmp_path,
+                      databases=[], scans=scans)
+    shots = session.shots
+    shots.add(_captures(_database(tmp_path)).all())
     source = CachedSource(lambda: scans, lambda: shots)
-    return scans, shots, source, TestClient(create_app(source))
+    return scans, shots, source, TestClient(create_app(source, session))
 
 
 # --- the model and its indexes --------------------------------------------------
@@ -236,8 +242,8 @@ def test_a_deleted_screenshot_is_404_and_the_page_still_renders(world):
 # --- pages -------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("path", ["/", "/hosts", "/hosts/192.0.2.1", "/services",
-                                  "/services/tcp/443", "/?q=8080&fragment=1"])
+@pytest.mark.parametrize("path", ["/", "/v/hosts", "/v/hosts?path=h:192.0.2.1", "/v/services",
+                                  "/v/stats", "/?q=8080&fragment=1"])
 def test_every_page_renders(world, path):
     _scans_, _shots, _source, client = world
     response = client.get(path)
@@ -260,16 +266,44 @@ def test_the_gallery_filter_narrows_on_the_server(world):
     assert "<html" not in html, "a fragment is the list alone"
 
 
-def test_a_host_page_shows_each_ports_screenshots(world):
+@pytest.mark.parametrize("old, new", [
+    ("/hosts", "/v/hosts"),
+    ("/hosts/192.0.2.1", "/v/hosts?path=h%3A192.0.2.1"),
+    ("/services", "/v/services"),
+    ("/services/tcp/443?name=http&product=Apache+httpd&version=2.4.29",
+     "/v/services?path=s%3Atcp%2F443%2Fhttp%2FApache+httpd%2F2.4.29"),
+])
+def test_the_first_versions_pages_lead_to_the_tabs(world, old, new):
     _scans_, _shots, _source, client = world
-    html = client.get("/hosts/192.0.2.30").text
-    port443 = html.split('id="port-tcp-443"')[1].split('<section')[0]
-    assert "https://192.0.2.30" in port443 and "<img" in port443
+    response = client.get(old, follow_redirects=False)
+    assert response.status_code == 302 and response.headers["location"] == new
 
 
-def test_a_host_with_nothing_captured_says_so(world):
+def test_a_hosts_port_list_shows_each_ports_screenshots(world):
     _scans_, _shots, _source, client = world
-    assert "nothing was captured" in client.get("/hosts/192.0.2.3").text
+    html = client.get("/v/hosts?path=h:192.0.2.30").text
+    row = html.split('data-step="p:192.0.2.30/tcp/443"')[1].split("</tr>")[0]
+    assert 'class="thumb-row"' in row and "/media/shot/" in row
+    row80 = html.split('data-step="p:192.0.2.30/tcp/80"')[1].split("</tr>")[0]
+    assert "thumb-row" not in row80, "nothing captured, nothing shown"
+
+
+def test_a_port_record_links_and_shows_its_capture(world):
+    _scans_, shots, _source, client = world
+    capture = next(c for c in shots.all() if c.url == "https://192.0.2.30")
+    html = client.get("/v/hosts?path=h:192.0.2.30&sel=p:192.0.2.30/tcp/443").text
+    record = html.split('id="record"')[1]
+    assert f'href="/captures/{capture_id(capture)}"' in record
+    assert 'class="thumb-inline"' in record
+    assert record.count('class="thumb-inline"') == 1, "one capture, one picture"
+
+
+def test_a_hosts_record_links_each_port(world):
+    _scans_, _shots, _source, client = world
+    html = client.get("/v/hosts?sel=h:192.0.2.30").text
+    record = html.split('id="record"')[1]
+    for port in (80, 443, 8080):
+        assert f"sel=p%3A192.0.2.30%2Ftcp%2F{port}" in record, port
 
 
 def test_a_capture_page_shows_everything(world):
@@ -314,14 +348,15 @@ def test_path_for_each_kind_of_row(tmp_path):
     scans = _scans()
     model = WebModel.build(scans, _captures(_database(tmp_path)).all())
     hosts = {r.target.address: r for r in vdefs.hosts_view().rows(scans)}
-    assert path_for(hosts["192.0.2.1"], model) == "/hosts/192.0.2.1"
+    assert path_for(hosts["192.0.2.1"], model) == "/v/hosts?path=h%3A192.0.2.1"
     service = next(r for r in vdefs.services_view().rows(scans) if r.target.port == 8080)
-    assert path_for(service, model).startswith("/services/tcp/8080?")
+    assert path_for(service, model).startswith("/v/services?path=s%3Atcp%2F8080%2F")
     beta = model.hosts["192.0.2.30"]
     ports = {r.target.port: r for r in vdefs.host_detail(beta).rows(scans)}
     one = model.captures_of(beta, ports[443].target)[0]
     assert path_for(ports[443], model) == f"/captures/{one.id}", "exactly one capture"
-    assert path_for(ports[80], model) == "/hosts/192.0.2.30#port-tcp-80"
+    assert path_for(ports[80], model) == ("/v/hosts?path=h%3A192.0.2.30"
+                                          "&sel=p%3A192.0.2.30%2Ftcp%2F80")
     assert path_for(None, model) == "/"
 
 
