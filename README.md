@@ -505,7 +505,7 @@ opens the full reference, including the query syntax.
 | `Tab` | mark / unmark the row |
 | `Shift+Tab` | clear all marks |
 | `Alt+↑` `Alt+↓` | recall previous / next query |
-| `Ctrl+F` `Ctrl+_` `Ctrl+T` | toggle filename / directory / content mode |
+| `Ctrl+F` `Ctrl+D` `Ctrl+C` | toggle filename / directory / content mode |
 | `Ctrl+N` | toggle re-indenting of minified files |
 | `Ctrl+R` | re-root the search at the highlighted directory |
 | `Alt+←` | pop one breadcrumb level |

@@ -410,7 +410,7 @@ class SeekApp(ActionsMixin, App[int]):
             style="dim",
         )
         if not self.modes.content:
-            tkey = pretty_key(self.config.keys.get("toggle_content", "ctrl+t"))
+            tkey = pretty_key(self.config.keys.get("toggle_content", "ctrl+c"))
             msg.append(
                 f"\n{tkey} also searches inside file contents", style="dim"
             )
@@ -701,6 +701,19 @@ class SeekApp(ActionsMixin, App[int]):
         self.exit(0)
 
     # --- mode toggles ----------------------------------------------
+
+    # The mode toggles act on the query, so they belong to the main screen.
+    # Their bindings are `priority`, which pierces every modal - and the
+    # defaults `ctrl+d` / `ctrl+c` are keys a modal wants for itself (the
+    # detail view pages down on `ctrl+d`). Declining rather than returning
+    # early from the action lets the key carry on to the modal.
+    _MAIN_SCREEN_ONLY = frozenset({"seek_toggle_file", "seek_toggle_dir",
+                                   "seek_toggle_content", "seek_toggle_format"})
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action in self._MAIN_SCREEN_ONLY and len(self.screen_stack) > 1:
+            return None
+        return True
 
     def _toggle(self, which: str) -> None:
         self.modes = self.modes.toggled(which)

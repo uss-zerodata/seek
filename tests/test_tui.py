@@ -78,7 +78,7 @@ async def test_mode_toggle_recompute(tree):
         await pilot.pause(0.2)
         rl = app.query_one(ResultsList)
         assert any(r.kind is MatchKind.CONTENT for r in rl.results)
-        await pilot.press("ctrl+t")  # toggle content off
+        await pilot.press("ctrl+c")  # toggle content off
         await pilot.pause(0.2)
         assert app.modes.content is False
         assert all(r.kind is not MatchKind.CONTENT for r in rl.results)
@@ -921,3 +921,43 @@ async def test_history_records_the_query_not_the_prefixes_typed_towards_it(tree)
         await pilot.press("enter")  # opening a result means the query was meant
         await pilot.pause(0.4)
         assert app.history.entries == ["main"]
+
+
+async def test_ctrl_d_and_ctrl_c_toggle_directory_and_content_modes(tree):
+    """`Ctrl+F` / `Ctrl+D` / `Ctrl+C`: file, directory, content."""
+    app = SeekApp(_session(tree))
+    async with app.run_test() as pilot:
+        await _settle(pilot)
+        modes = app.modes
+        await pilot.press("ctrl+d")
+        await pilot.pause(0.1)
+        assert app.modes.dir is not modes.dir
+        await pilot.press("ctrl+c")
+        await pilot.pause(0.1)
+        assert app.modes.content is not modes.content
+        assert app.is_running, "Ctrl+C toggles content search; it does not quit"
+        await pilot.press("ctrl+f")
+        await pilot.pause(0.1)
+        assert app.modes.file is not modes.file
+
+
+async def test_ctrl_d_pages_the_detail_view_rather_than_toggling(tmp_path):
+    """The toggles are priority bindings; in a modal they step aside."""
+    (tmp_path / "f.txt").write_text("\n".join(f"row {i}" for i in range(300)) + "\n")
+    app = SeekApp(_session(tmp_path, config=Config(debounce_ms=10)))
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _settle(pilot)
+        await pilot.press(*"row")
+        await pilot.pause(0.3)
+        await pilot.press("enter")
+        await pilot.pause(0.4)
+        screen = app.screen
+        modes = app.modes
+        start = screen.top_line
+        await pilot.press("ctrl+d")
+        await pilot.pause(0.1)
+        assert screen.top_line > start, "half a page down"
+        assert app.modes == modes, "and no mode changed"
+        await pilot.press("ctrl+c")
+        await pilot.pause(0.1)
+        assert app.modes == modes and app.is_running

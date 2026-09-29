@@ -4,7 +4,7 @@
 
 ## bugs
 
-- [ ] to toggle between file, directory and content search, the user has to press either `Ctrl+f`, `Ctrl+_` or `Ctrl+T`. Please change these keybindings to `Ctrl+f`, `Ctrl+d` and `Ctrl+c` respectively, as these are more intuitive and easier to remember.
+- [x] to toggle between file, directory and content search, the user has to press either `Ctrl+f`, `Ctrl+_` or `Ctrl+T`. Please change these keybindings to `Ctrl+f`, `Ctrl+d` and `Ctrl+c` respectively, as these are more intuitive and easier to remember.
 
 # seek nmap
 
