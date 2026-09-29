@@ -228,3 +228,44 @@ def test_a_groupings_ports_column_is_sorted_at_all(tmp_path):
     got = _sorted_by(rows, 3)
     keys = [views.ports_key(cell.rstrip(" …").split(", ")) for cell in got]
     assert keys == sorted(keys), got
+
+
+def test_a_hosts_ports_are_held_by_number_not_protocol_first(tmp_path):
+    """The model's own order - what the record's service list, the exports and
+    an unsorted view all read. Protocol-first put `8080/tcp` before `53/udp`."""
+    scans = _one_host_with(tmp_path, _EXAMPLE)
+    assert [f"{s.port}/{s.protocol}" for s in scans.hosts[0].services] == _SORTED
+
+
+def test_a_merged_hosts_ports_are_held_by_number(tmp_path):
+    first = _one_host_with(tmp_path, ["8080/tcp", "80/tcp"]).files[0].path
+    second = tmp_path / "more"
+    second.mkdir()
+    extra = _one_host_with(second, ["53/udp", "22/tcp"]).files[0].path
+    scans = views.prepare(load([first, extra]))
+    assert ([f"{s.port}/{s.protocol}" for s in scans.hosts[0].services]
+            == ["22/tcp", "53/udp", "80/tcp", "8080/tcp"])
+
+
+def test_the_record_lists_a_hosts_services_by_number(tmp_path):
+    from seek.tui.nmap import detail
+
+    scans = _one_host_with(tmp_path, _EXAMPLE)
+    text = "\n".join(str(line.text) for line in detail.render(scans.hosts[0]))
+    at = [text.index(f"{label} ") for label in _SORTED]
+    assert at == sorted(at), text
+
+
+def test_service_groups_come_out_by_number(tmp_path):
+    scans = _one_host_with(tmp_path, _EXAMPLE)
+    assert [f"{g.port}/{g.protocol}" for g in views.service_groups(scans.hosts)] == _SORTED
+
+
+def test_the_names_ports_column_is_sorted_at_all():
+    from seek.tui.nmap import views as vdefs
+
+    scans = views.prepare(load([FIX / "basic.xml", FIX / "vuln.xml"]))
+    rows = vdefs.names_view().rows(scans)
+    got = _sorted_by(rows, 3)
+    keys = [views.ports_key(cell.rstrip(" …").split(", ")) for cell in got]
+    assert keys == sorted(keys), got

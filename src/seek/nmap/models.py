@@ -10,6 +10,22 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# Where two ports share a number, the protocol decides - tcp, then udp, then
+# the rest - so `8080/tcp` always precedes `8080/udp` rather than whichever the
+# model happened to hold first. Keys are all integers so the sort compares them
+# as numbers, never as the text "8080/tcp" (which puts 1000 before 22).
+_PROTO_ORDER = {"tcp": 0, "udp": 1, "sctp": 2}
+
+
+def port_key(port: int, protocol: str | None = None) -> tuple[int, int]:
+    """How a port sorts: by its number, then its protocol."""
+    return (port, _PROTO_ORDER.get((protocol or "").lower(), len(_PROTO_ORDER)))
+
+
+def by_port(svc: Service) -> tuple[int, int]:
+    """`port_key` for a service - the one order a host's ports are held in."""
+    return port_key(svc.port, svc.protocol)
+
 
 @dataclass(slots=True)
 class Vulnerability:

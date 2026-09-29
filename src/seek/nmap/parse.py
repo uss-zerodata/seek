@@ -16,7 +16,7 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from seek.nmap.models import Host, ScanFile, ScriptResult, Service
+from seek.nmap.models import Host, ScanFile, ScriptResult, Service, by_port
 
 
 class NmapParseError(Exception):
@@ -87,7 +87,8 @@ def _host(el: ET.Element, source: str) -> Host:
         reason=status.get("reason") if status is not None else None,
         os=osmatch.get("name") if osmatch is not None else None,
         osclass=osclass.get("osfamily") if osclass is not None else None,
-        services=[_service(p, source) for p in el.findall("ports/port")],
+        services=sorted((_service(p, source) for p in el.findall("ports/port")),
+                        key=by_port),
         scripts=[_script(s) for s in el.findall("hostscript/script")],
         sources=[source],
     )

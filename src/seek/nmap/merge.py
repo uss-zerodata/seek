@@ -15,7 +15,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from seek.nmap.models import Host, ScanFile, ScanSet, Service
+from seek.nmap.models import Host, ScanFile, ScanSet, Service, by_port
 from seek.nmap.parse import NmapParseError, parse_file
 from seek.nmap.progress import FILES, Report
 
@@ -309,7 +309,7 @@ class Accumulator:
                 if host.address not in self._private:
                     into = into.copy()              # published; leave it alone
                 _merge_host(into, host)
-            into.services.sort(key=lambda s: (s.protocol, s.port))
+            into.services.sort(key=by_port)
             self._hosts[host.address] = into
             self._private.add(host.address)
 

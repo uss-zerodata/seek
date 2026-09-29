@@ -522,6 +522,10 @@ without knowing a key.
 - **WHEN** a grouping is sorted by its Ports column
 - **THEN** its rows are ordered by their ports compared as numbers, first port first, and the ports within each cell are in the same order
 
+#### Scenario: A host's ports are listed by number wherever they are listed
+- **WHEN** a host has `8080/tcp`, `80/tcp`, `22/tcp`, `8080/udp`, `443/tcp` and `53/udp`, from one scan or merged from several
+- **THEN** its record, its port list before any column is chosen, and an export of it all give them as `22/tcp`, `53/udp`, `80/tcp`, `443/tcp`, `8080/tcp`, `8080/udp` - never every TCP port before every UDP one
+
 #### Scenario: A view opens in its own order
 - **WHEN** the statistics view is opened
 - **THEN** its service and port lines are ordered by how often they occur, not alphabetically

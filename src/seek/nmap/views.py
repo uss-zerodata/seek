@@ -12,7 +12,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
 from seek.nmap import names, vulns
-from seek.nmap.models import Host, ScanSet, Service
+from seek.nmap.models import Host, ScanSet, Service, port_key
 from seek.nmap.progress import HOSTS, Report, counted
 
 
@@ -78,7 +78,7 @@ def service_groups(hosts: list[Host], report: Report | None = None) -> list[Serv
                 )
                 groups[key] = group
             group.members.append((host, svc))
-    return sorted(groups.values(), key=lambda g: (g.protocol, g.port, g.name or ""))
+    return sorted(groups.values(), key=lambda g: (*port_key(g.port, g.protocol), g.name or ""))
 
 
 def group_for(hosts: list[Host], svc: Service) -> ServiceGroup | None:
@@ -118,18 +118,6 @@ class Statistics:
     def overstated(self) -> bool:
         """The scan claims more hosts up than the rule accepts."""
         return self.asserted_up > self.up
-
-
-# Where two ports share a number, the protocol decides - tcp, then udp, then
-# the rest - so `8080/tcp` always precedes `8080/udp` rather than whichever the
-# model happened to hold first. Keys are all integers so the sort compares them
-# as numbers, never as the text "8080/tcp" (which puts 1000 before 22).
-_PROTO_ORDER = {"tcp": 0, "udp": 1, "sctp": 2}
-
-
-def port_key(port: int, protocol: str | None = None) -> tuple[int, int]:
-    """How a port sorts: by its number, then its protocol."""
-    return (port, _PROTO_ORDER.get((protocol or "").lower(), len(_PROTO_ORDER)))
 
 
 def label_key(label: str) -> tuple[int, int]:

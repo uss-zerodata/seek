@@ -464,7 +464,7 @@ def names_view() -> View:
                 drill=host_list(name, hosts, f"{source} · {len(hosts)} host(s)"),
                 addresses=tuple(h.address for h in hosts),
                 records=tuple(Record(h) for h in hosts),
-                sort_key=(name, source, len(hosts), ""),
+                sort_key=(name, source, len(hosts), proj.ports_key(ports)),
             ))
         return out
 
