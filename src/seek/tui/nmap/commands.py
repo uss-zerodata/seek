@@ -58,7 +58,7 @@ _STATIC: list[tuple[str, str, str, object]] = [
     ("Web report", "Serve the report at the selected capture (W)",
      "action_report_server", None),
     ("Help", "Key reference (?)", "action_help", None),
-    ("Quit", "Leave the viewer (q)", "action_quit_now", None),
+    ("Quit", "Leave the viewer (Ctrl+Q)", "_request_quit", None),
 ]
 
 

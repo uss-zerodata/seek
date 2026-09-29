@@ -96,10 +96,10 @@ yourself replaces the drill-down. The filter box uses the same fuzzy grammar (`'
 | `s` | statistics · `b` group by · `u` up hosts only (on a host: open ports only) |
 | `m` `M` | mark the selected row · clear every mark |
 | `n` | new scan · `o` report view · `p` freeze log · `c` cancel |
-| `x` | export, or capture the URLs with gowitness · `?` help · `q` quit |
+| `x` | export, or capture the URLs with gowitness · `?` help |
 | `i` | open a capture's screenshot · `W` serve the capture gallery |
 | `Ctrl+P` | command palette — every action above, searchable by name |
-| `Esc` | leave filter → clear it → back one level → quit |
+| `Esc` `q` | leave filter → clear it → back one level → quit · `Ctrl+Q`/`Ctrl+C` quit from anywhere |
 
 **Marking and export.** `m` marks the selected row and `M` clears every mark. A
 row marks what it *stands for*, so `m` on the `https` row of **By service** marks

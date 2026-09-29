@@ -14,7 +14,7 @@ from textual.widgets.selection_list import Selection
 class ActionMenuScreen(ModalScreen[str | None]):
     """Pick an action by name. Returns the action id, or None if cancelled."""
 
-    BINDINGS = [("escape", "dismiss_none", "Close")]
+    BINDINGS = [("escape,q", "dismiss_none", "Close")]
     DEFAULT_CSS = """
     ActionMenuScreen { align: center middle; }
     ActionMenuScreen > Vertical {
@@ -55,7 +55,7 @@ class ActionMenuScreen(ModalScreen[str | None]):
 class ConfirmScreen(ModalScreen[str]):
     """Returns one of: 'all', 'one', 'cancel'."""
 
-    BINDINGS = [("escape", "cancel", "Cancel")]
+    BINDINGS = [("escape,q", "cancel", "Cancel")]
     DEFAULT_CSS = """
     ConfirmScreen { align: center middle; }
     ConfirmScreen > Vertical {
@@ -129,7 +129,7 @@ class ChoiceScreen(ModalScreen[str | None]):
     asking for `Tab`.
     """
 
-    BINDINGS = [("escape", "cancel", "Cancel")]
+    BINDINGS = [("escape,q", "cancel", "Cancel")]
     DEFAULT_CSS = """
     ChoiceScreen { align: center middle; }
     ChoiceScreen > Vertical {
@@ -182,7 +182,7 @@ class MultiChoiceScreen(ModalScreen[list[str] | None]):
     exports of the same fields line up.
     """
 
-    BINDINGS = [("escape", "cancel", "Cancel")]
+    BINDINGS = [("escape,q", "cancel", "Cancel")]
     DEFAULT_CSS = """
     MultiChoiceScreen { align: center middle; }
     MultiChoiceScreen > Vertical {

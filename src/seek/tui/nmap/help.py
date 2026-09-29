@@ -32,8 +32,8 @@ _GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("↵", "open the selected row — keep pressing to keep digging"),
         ("", "host → its services → that service everywhere → a host"),
         ("", "a statistics figure opens the hosts, ports or services it counts"),
-        ("Esc", "leave the filter, then clear it, then back one level, then quit"),
-        ("q", "quit (asks first while a scan is running)"),
+        ("Esc · q", "leave the filter, then clear it, then back one level, then quit"),
+        ("Ctrl+Q · Ctrl+C", "quit from anywhere (asks first while a scan is running)"),
         ("Ctrl+P", "command palette — every action, searchable by name"),
     ]),
     ("Change the view", [

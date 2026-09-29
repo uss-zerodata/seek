@@ -665,6 +665,52 @@ async def test_every_action_key_is_bare_and_terminal_safe():
         assert expected in keys, f"missing {expected}"
 
 
+async def test_q_backs_out_like_escape_and_quits_only_from_the_top():
+    app = _app("basic")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        await pilot.press("enter")
+        await pilot.pause(0.3)
+        assert len(app.stack) == 2
+        await pilot.press("q")
+        await pilot.pause(0.3)
+        assert app.is_running and len(app.stack) == 1, "q unwinds, it does not quit"
+
+        await _type(pilot, "zzz")
+        await pilot.press("q")
+        await pilot.pause(0.3)
+        assert app.is_running and app.query_one("#filter", Input).value == ""
+
+        await pilot.press("q")
+        await pilot.pause(0.3)
+        assert not app.is_running, "nothing left to unwind: q quits"
+
+
+async def test_q_closes_a_dialog_without_quitting():
+    app = _app("basic")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        await pilot.press("x")
+        await pilot.pause(0.3)
+        assert len(app.screen_stack) > 1
+        await pilot.press("q")
+        await pilot.pause(0.3)
+        assert app.is_running and len(app.screen_stack) == 1
+
+
+async def test_ctrl_c_and_ctrl_q_quit_from_a_drill_down():
+    for key in ("ctrl+c", "ctrl+q"):
+        app = _app("basic")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.2)
+            await pilot.press("enter")
+            await pilot.pause(0.3)
+            assert len(app.stack) == 2
+            await pilot.press(key)
+            await pilot.pause(0.4)
+            assert not app.is_running, f"{key} must quit from anywhere"
+
+
 async def test_help_overlay_lists_the_keys():
     app = _app("basic")
     async with app.run_test(size=(120, 40)) as pilot:

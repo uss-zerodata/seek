@@ -118,7 +118,7 @@ class PresetScreen(ModalScreen[str | None]):
     the name line, where it cannot be torn onto a line of its own.
     """
 
-    BINDINGS = [("escape", "cancel", "Cancel")]
+    BINDINGS = [("escape,q", "cancel", "Cancel")]
     DEFAULT_CSS = """
     PresetScreen { align: center middle; }
     PresetScreen > Vertical {
@@ -230,7 +230,7 @@ class CommandScreen(ModalScreen[str | None]):
 class ReviewScreen(ModalScreen[bool]):
     """The second confirmation: the exact argv and what it will do."""
 
-    BINDINGS = [("escape", "cancel", "Back")]
+    BINDINGS = [("escape,q", "cancel", "Back")]
     DEFAULT_CSS = """
     ReviewScreen { align: center middle; }
     ReviewScreen > Vertical {

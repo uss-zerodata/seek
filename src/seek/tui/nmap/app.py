@@ -386,7 +386,10 @@ class NmapApp(App[int]):
         # All bare keys: the table holds focus, so nothing needs a modifier -
         # and terminals steal too many of them (ctrl+s is XOFF, alt+digits
         # switch tabs in most emulators, tab is focus traversal).
-        Binding("escape", "back", "Back", show=False),
+        # `q` is `Esc`: it backs out one level and quits only from the top, so
+        # a reflex `q` on a drill-down does not throw the session away.
+        # Ctrl+Q (Textual's own) and Ctrl+C leave from anywhere.
+        Binding("escape,q", "back", "Back", show=False),
         Binding("slash", "filter", "Filter", show=False),
         Binding("enter", "drill", "Open", show=False),
         Binding("v", "swap", "Next overview", show=False),
@@ -413,7 +416,6 @@ class NmapApp(App[int]):
         Binding("i", "open_shot", "Open the screenshot", show=False),
         Binding("W", "report_server", "Web report", show=False),
         Binding("question_mark", "help", "Help", show=False),
-        Binding("q", "quit_now", "Quit", show=False),
         Binding("up,k", "move(-1)", "Up", show=False),
         Binding("down,j", "move(1)", "Down", show=False),
         Binding("pageup", "page(-1)", "Page up", show=False),
@@ -2321,14 +2323,19 @@ class NmapApp(App[int]):
     async def action_help(self) -> None:
         await self.push_screen_wait(NmapHelpScreen())
 
-    def action_quit_now(self) -> None:
-        self._request_quit()
-
     async def action_quit(self) -> None:
-        """Textual's own quit - `ctrl+c` and the system palette - guarded too.
+        """Textual's own quit - `ctrl+q` and the system palette - guarded too.
 
         Overridden rather than left alone: a guard one keypress can walk around
         is not a guard.
+        """
+        self._request_quit()
+
+    def action_help_quit(self) -> None:
+        """`ctrl+c` quits too, instead of Textual's "press ctrl+q" notice.
+
+        Not a binding of our own: the filter box keeps `ctrl+c` for copy, and
+        an App binding that pierced it would take that away.
         """
         self._request_quit()
 

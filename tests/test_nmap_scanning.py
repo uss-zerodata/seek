@@ -674,7 +674,7 @@ async def test_quitting_while_a_scan_runs_asks_first(tmp_path):
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.3)
         await _start_a_slow_scan(pilot, app)
-        await pilot.press("q")
+        await pilot.press("ctrl+q")
         await pilot.pause(0.5)
         assert app.is_running, "not gone yet"
         assert any("Quitting ends it" in t for t in _labels(app))
@@ -690,7 +690,7 @@ async def test_choosing_to_keep_scanning_stays(tmp_path):
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.3)
         await _start_a_slow_scan(pilot, app)
-        await pilot.press("q")
+        await pilot.press("ctrl+q")
         await pilot.pause(0.5)
         await _choose(pilot, app, "stay")
         await pilot.pause(0.4)
@@ -704,7 +704,7 @@ async def test_choosing_to_quit_ends_the_scan_and_leaves(tmp_path):
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.3)
         await _start_a_slow_scan(pilot, app)
-        await pilot.press("q")
+        await pilot.press("ctrl+q")
         await pilot.pause(0.5)
         await _choose(pilot, app, "quit")
         await pilot.pause(0.6)

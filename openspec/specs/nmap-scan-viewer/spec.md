@@ -132,6 +132,24 @@ of each, and SHALL allow returning to the view it was opened from.
 #### Scenario: Returning from a host detail
 - **WHEN** the user goes back from a host detail
 - **THEN** the previous view is restored, including its filter and sort
+### Requirement: Going back is not quitting
+`q` SHALL do exactly what `Esc` does: leave the filter, then clear it, then go
+back one level, and quit only from the first overview with nothing left to
+unwind. A dialog or a full-screen reader SHALL close on `q` as it does on `Esc`,
+unless the reader is typing into a text box. Quitting from anywhere SHALL be
+`Ctrl+Q` or `Ctrl+C`, and SHALL go through the same guard as every other quit.
+
+#### Scenario: `q` on a drill-down
+- **WHEN** the user presses `q` on a host's record opened from the host overview
+- **THEN** the host overview is shown and the application stays open
+
+#### Scenario: `q` at the top
+- **WHEN** the user presses `q` on the first overview with no filter and nothing opened
+- **THEN** the application quits, asking first if a scan is running
+
+#### Scenario: Quitting from a drill-down
+- **WHEN** the user presses `Ctrl+Q` or `Ctrl+C` on a drill-down
+- **THEN** the application quits, asking first if a scan is running
 ### Requirement: Drill down from a service to its hosts
 Selecting a service SHALL show every host running it, with that host's specific
 details for the service — its version, extra information and any vulnerabilities
