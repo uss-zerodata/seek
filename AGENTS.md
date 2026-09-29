@@ -516,6 +516,14 @@ stdout, `cd`) cannot run while Textual owns the screen. They set
   reason the mark a growing model restores to is taken when the rows are
   actually replaced, not when the batch was published - the reader may have
   moved in between.
+- **A filter belongs to a level, not to the box.** The `#filter` Input is one
+  widget shared by every view, so a level's filter survives only by being
+  carried in its `_Mark` (`_Mark.filter`): a drill-down saves it and starts
+  the new level empty, `Esc` puts it back. Tabs do the same through
+  `_tab_marks`, filed under the tab of `stack[0]` - `_sync_tab` may have moved
+  the tab row on during a drill-down. Restoring goes through `_set_filter`,
+  which suppresses `Input.Changed`: the debounced rebuild it would schedule has
+  no mark and would put the cursor back at the top after the restore placed it.
 - **A mark finds its row by identity, then by what the row *is*, then by
   position.** The middle one is what a growing model needs: `merge` copies a
   host before a later file writes to it, so after a batch the row the cursor

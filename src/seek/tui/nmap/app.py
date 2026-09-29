@@ -240,6 +240,9 @@ class _Mark:
     sort_col: int = 0
     sort_desc: bool = False
     key: tuple = ()
+    # The filter the level was left with. The box is one widget shared by every
+    # view, so a level's filter only survives a drill-down by being kept here.
+    filter: str = ""
 
     def locate(self, rows: list[vdefs.Row]) -> int:
         if self.target is None and not self.key:
@@ -547,6 +550,9 @@ class NmapApp(App[int]):
         # One mark per level pushed onto `stack`, so unwinding restores both the
         # cursor and the sort the level below was left in.
         self._marks: list[_Mark] = []
+        # Each tab's overview as it was last left - filter, sort and cursor -
+        # so switching back to a tab, or `Esc` to the first one, returns to it.
+        self._tab_marks: dict[str, _Mark] = {}
         self._pending_mark: _Mark | None = None
         self._rows: list[vdefs.Row] = []
         # The view the rows on screen were built for. A rebuild for that same
@@ -1417,7 +1423,23 @@ class NmapApp(App[int]):
         return _Mark(target=row.target if row is not None else None,
                      key=(row.section, row.cells[0]) if row and row.cells else (),
                      index=index,
-                     sort_col=self._sort_col, sort_desc=self._sort_desc)
+                     sort_col=self._sort_col, sort_desc=self._sort_desc,
+                     filter=self.query_one("#filter", Input).value)
+
+    def _set_filter(self, text: str) -> None:
+        """Put a level's filter in the box without a keystroke's side effects.
+
+        No `Changed`, so no debounced rebuild: the caller rebuilds once, with
+        the cursor mark it is restoring, and a later rebuild without it would
+        throw the cursor to the top.
+        """
+        if self._filter_debounce is not None:
+            self._filter_debounce.stop()
+            self._filter_debounce = None
+        box = self.query_one("#filter", Input)
+        if box.value != text:
+            with box.prevent(Input.Changed):
+                box.value = text
 
     def _reset_sort(self) -> None:
         self._sort_col, self._sort_desc = self.view.default_sort
@@ -1477,7 +1499,20 @@ class NmapApp(App[int]):
 
     def _activate(self, tab_id: str) -> None:
         """Switch overview. A tab replaces the stack: drill-downs belong to the
-        overview they were opened from, not to a different one."""
+        overview they were opened from, not to a different one.
+
+        The overview being left is remembered as it stands - its filter, sort
+        and cursor, or as it was when the first drill-down left it - and the
+        one being opened comes back the same way, so a tab is somewhere to
+        return to rather than something rebuilt from scratch each visit.
+        """
+        if self.stack:
+            # Filed under the overview at the bottom of the stack: a drill-down
+            # can have moved the tab row on (`_sync_tab`), but the level these
+            # belong to is still the one the stack started from.
+            root = self.stack[0].tab or self._active_tab
+            self._tab_marks[root] = (
+                self._marks[0] if self._marks else self._mark_current())
         self._active_tab = tab_id
         self._abandoned = ""
         self.stack = [self._view_for_tab(tab_id)]
@@ -1485,7 +1520,13 @@ class NmapApp(App[int]):
         tabs = self.query_one(Tabs)
         if tabs.active != tab_id:
             tabs.active = tab_id
-        self._reset_sort()
+        mark = self._tab_marks.get(tab_id)
+        self._set_filter(mark.filter if mark is not None else "")
+        if mark is None:
+            self._reset_sort()
+        else:
+            self._sort_col, self._sort_desc = mark.sort_col, mark.sort_desc
+            self._refresh_view(restore=mark)
         self.query_one(DataTable).focus()
 
     def _sync_tab(self) -> None:
@@ -1558,6 +1599,9 @@ class NmapApp(App[int]):
         else:
             return
         self._marks.append(self._mark_current())
+        # A filter belongs to the level it was typed on: the one pushed starts
+        # unfiltered, and the one left gets its own back on `Esc`.
+        self._set_filter("")
         self.stack.append(view)
         self._sync_tab()
         self._reset_sort()
@@ -2408,6 +2452,7 @@ class NmapApp(App[int]):
             if mark is None:
                 self._reset_sort()
                 return
+            self._set_filter(mark.filter)
             self._sort_col, self._sort_desc = mark.sort_col, mark.sort_desc
             self._refresh_view(restore=mark)
             return

@@ -2224,3 +2224,117 @@ async def test_a_capture_anywhere_below_is_read_with_its_screenshots(tmp_path):
     assert len(app.shots) == 7
     assert app.shots.get("https://hektor.cc:443").shot == image
     assert [run.paths.db for run in app.captures.runs] == [(deep / "shots.sqlite3").resolve()]
+
+
+# --- a level keeps its own filter and cursor -----------------------------------
+
+
+def _filter_text(app) -> str:
+    return app.query_one("#filter", Input).value
+
+
+async def test_a_drill_down_starts_unfiltered_and_back_restores_the_filter():
+    app = _app("basic", "vuln")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        await _type(pilot, "192.0.2")
+        await pilot.press("down")
+        await pilot.pause(0.1)
+        left_on = app._current_row().cells[0]
+        before = _cells(app)
+
+        await pilot.press("enter")
+        await pilot.pause(0.3)
+        assert _filter_text(app) == "", "the host's ports are not filtered by '192.0.2'"
+        assert len(app._rows) == len(app.view.rows(app.scans)), "every port listed"
+
+        await pilot.press("escape")
+        await pilot.pause(0.3)
+        assert _filter_text(app) == "192.0.2", "the host list's filter is back"
+        assert _cells(app) == before
+        assert app._current_row().cells[0] == left_on, "and so is the cursor"
+
+
+async def test_every_level_of_a_path_keeps_its_own_filter():
+    """Hosts, then a host's ports, then the service everywhere, and back out."""
+    app = _app("basic", "vuln")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        await _type(pilot, "'alpha.example")
+        assert _cells(app) == ["192.0.2.1"]
+        await pilot.press("enter")                   # alpha's ports
+        await pilot.pause(0.3)
+        await _type(pilot, "443")
+        assert [c.split("/")[0] for c in _cells(app)] == ["443"]
+        await pilot.press("enter")                   # 443 on every host
+        await pilot.pause(0.3)
+        assert _filter_text(app) == ""
+        assert len(app.stack) == 3
+
+        await pilot.press("escape")
+        await pilot.pause(0.3)
+        assert len(app.stack) == 2
+        assert _filter_text(app) == "443" and len(app._rows) == 1
+
+        await pilot.press("escape")                  # clears this level's filter
+        await pilot.pause(0.3)
+        assert len(app.stack) == 2 and _filter_text(app) == ""
+        await pilot.press("escape")                  # then goes back
+        await pilot.pause(0.3)
+        assert len(app.stack) == 1
+        assert _filter_text(app) == "'alpha.example" and _cells(app) == ["192.0.2.1"]
+
+
+async def test_a_tab_is_returned_to_as_it_was_left():
+    app = _app("basic", "vuln")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        await _type(pilot, "192.0.2")
+        await pilot.press("2")                       # sort by hostname
+        await pilot.press("down")
+        await pilot.pause(0.1)
+        left_on = app._current_row().cells[0]
+        sort = (app._sort_col, app._sort_desc)
+
+        await pilot.press("s")                       # statistics
+        await pilot.pause(0.3)
+        assert _filter_text(app) == "", "another tab has its own filter"
+        await pilot.press("s")                       # and back
+        await pilot.pause(0.3)
+        assert _filter_text(app) == "192.0.2"
+        assert (app._sort_col, app._sort_desc) == sort
+        assert app._current_row().cells[0] == left_on
+
+
+async def test_escape_to_the_first_tab_returns_to_it_as_it_was():
+    app = _app("basic", "vuln")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        await _type(pilot, "192.0.2.3")
+        filtered = _cells(app)
+        await pilot.press("v")                       # the services tab
+        await pilot.pause(0.3)
+        await _type(pilot, "http")
+        await pilot.press("escape")                  # clear the services filter
+        await pilot.press("escape")                  # back to the first tab
+        await pilot.pause(0.3)
+        assert app._active_tab == "hosts"
+        assert _filter_text(app) == "192.0.2.3" and _cells(app) == filtered
+
+
+async def test_a_tab_left_from_a_drill_down_keeps_its_overview():
+    """The tab row moves with a drill-down; what is remembered is the overview."""
+    app = _app("basic", "vuln")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        await _type(pilot, "'alpha.example")
+        await pilot.press("enter")                   # alpha's ports
+        await pilot.pause(0.3)
+        await pilot.press("enter")                   # a service: the tab row moves
+        await pilot.pause(0.3)
+        await pilot.press("s")
+        await pilot.pause(0.3)
+        await pilot.press("s")                       # back to the host list
+        await pilot.pause(0.3)
+        assert len(app.stack) == 1 and app.view.kind == "hosts"
+        assert _filter_text(app) == "'alpha.example" and _cells(app) == ["192.0.2.1"]

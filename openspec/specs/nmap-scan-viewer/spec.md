@@ -132,6 +132,10 @@ of each, and SHALL allow returning to the view it was opened from.
 #### Scenario: Returning from a host detail
 - **WHEN** the user goes back from a host detail
 - **THEN** the previous view is restored, including its filter and sort
+
+#### Scenario: Each level has its own filter
+- **WHEN** the host list is filtered and the user opens a host, filters its ports, opens one of those services and then goes back twice
+- **THEN** the host's port list opened unfiltered and comes back with its own filter, the host list comes back with its filter, and each is shown at the row it was left on
 ### Requirement: Going back is not quitting
 `q` SHALL do exactly what `Esc` does: leave the filter, then clear it, then go
 back one level, and quit only from the first overview with nothing left to
@@ -698,7 +702,9 @@ looked at is visible rather than something the user has to know a key for. The
 active overview SHALL be marked, and a tab SHALL be selectable both by pointer
 and by keyboard. Selecting a tab SHALL replace the current overview: a
 drill-down belongs to the overview it was opened from, not to a different one.
-Detail views SHALL NOT appear as tabs.
+Detail views SHALL NOT appear as tabs. Each overview SHALL keep its own filter,
+sort and selected row, so returning to a tab - by selecting it, or by going back
+to the first one - shows it as it was left.
 
 The marked tab SHALL follow the list on screen: when a drill-down lands on the
 subject of another overview, that overview's tab SHALL be marked, without the
@@ -716,6 +722,10 @@ column currently sorted SHALL show the direction.
 #### Scenario: Selecting a tab changes the overview
 - **WHEN** the user selects the services tab
 - **THEN** the service overview is shown and the tab is marked active
+
+#### Scenario: Returning to a tab
+- **WHEN** the user filters the host list, moves to another row, switches to the statistics and back
+- **THEN** the host list shows the same filter, sort and selected row, and the statistics had their own filter
 
 #### Scenario: A tab replaces a drill-down
 - **WHEN** the user has drilled into a host and then selects another tab
