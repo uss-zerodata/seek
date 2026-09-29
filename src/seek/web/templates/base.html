@@ -4,17 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}seek{% endblock %} · seek</title>
-<link rel="stylesheet" href="/static/app.css">
-<script src="/static/app.js" defer></script>
+<link rel="stylesheet" href="/static/app.css?v={{ V }}">
+<script src="/static/app.js?v={{ V }}" defer></script>
+<script type="module" src="/static/js/viewer.js?v={{ V }}"></script>
 </head>
 <body>
 <header class="bar">
   <a class="brand" href="/">seek</a>
-  <nav>
-    <a href="/" {% if nav == "gallery" %}aria-current="page"{% endif %}>Gallery</a>
-    <a href="/hosts" {% if nav == "hosts" %}aria-current="page"{% endif %}>Hosts</a>
-    <a href="/services" {% if nav == "services" %}aria-current="page"{% endif %}>Services</a>
+  <nav id="tabs">
+    {% for id, label in TABS %}<a href="/v/{{ id }}" data-tab="{{ id }}" {% if nav == id %}aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
+    <a href="/" data-tab="gallery" {% if nav == "gallery" %}aria-current="page"{% endif %}>Screenshots</a>
   </nav>
+  <span id="status" class="status" aria-live="polite"></span>
 </header>
 <main>
 {% block content %}{% endblock %}

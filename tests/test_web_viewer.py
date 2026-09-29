@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import socket
 import urllib.request
@@ -61,15 +62,20 @@ async def test_w_starts_the_interface_once_and_opens_the_selected_host(tmp_path,
         await _press_w(pilot, app)
         assert app._web.running
         assert opened[-1] == f"http://127.0.0.1:{port}/hosts/{address}"
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/v1/hosts", timeout=5) as r:
-            assert json.load(r)["total"] == 4, "the viewer's own model"
+        def fetch():
+            # The server runs on this very loop: the request must not block it.
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/v1/hosts",
+                                        timeout=5) as r:
+                return json.load(r)
 
-        server, thread = app._web._server, app._web._thread
+        assert (await asyncio.to_thread(fetch))["total"] == 4, "the viewer's own model"
+
+        server, task = app._web._server, app._web._task
         await pilot.press("down")
         await pilot.pause(0.1)
         other = app._current_row().target.address
         await _press_w(pilot, app)
-        assert (app._web._server, app._web._thread) == (server, thread), "reused"
+        assert (app._web._server, app._web._task) == (server, task), "reused"
         assert opened[-1].endswith(f"/hosts/{other}")
         status = str(app.query_one("#status", Static).render())
         assert f"web http://127.0.0.1:{port}" in status
@@ -86,6 +92,10 @@ async def test_quitting_stops_the_interface(tmp_path, opened):
         assert web.running
         await pilot.press("ctrl+q")
         await pilot.pause(0.5)
+    for _ in range(30):                       # it finishes on the loop by itself
+        if not web.running:
+            break
+        await asyncio.sleep(0.1)
     assert not web.running
     with socket.socket() as sock:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -157,3 +167,46 @@ async def test_i_offers_every_capture_of_a_service_in_the_browser(tmp_path, open
         assert opened[-1] == (f"http://127.0.0.1:{port}/"
                               "?address=192.0.2.1&protocol=tcp&port=80")
         app._web.stop()
+
+
+# --- the session is shared with the browser ------------------------------------------
+
+
+async def test_a_mark_from_the_browser_shows_in_the_terminal(tmp_path):
+    from seek.nmap.export import Record
+
+    app = _app(tmp_path, _free_port())
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.3)
+        cursor = app.query_one(DataTable).cursor_row
+        host = next(h for h in app.scans.hosts if h.address == "192.0.2.30")
+        app.session.toggle((Record(host),), origin="web")
+        await pilot.pause(0.3)
+        row = next(r for r in app._rows if r.cells[0] == "192.0.2.30")
+        assert app._mark_glyph(row) == "●"
+        assert "1 marked" in str(app.query_one("#status", Static).render())
+        assert app.query_one(DataTable).cursor_row == cursor, "the cursor stays put"
+
+
+async def test_quitting_asks_about_a_scan_started_in_the_browser(tmp_path):
+    import sys
+
+    from seek.nmap.runner import ScanRun
+    from seek.tui.menu import ChoiceScreen
+
+    app = _app(tmp_path, _free_port())
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.3)
+        tab = app._active_tab
+        run = ScanRun(preset="from the browser",
+                      argv=[sys.executable, "-c", "import time; time.sleep(30)"],
+                      targets=["192.0.2.1"], out_base=tmp_path / "out")
+        app.session.start_scan(run, origin="web")
+        await pilot.pause(0.5)
+        assert app._active_tab == tab, "a browser-started run does not move the terminal"
+        await pilot.press("ctrl+q")
+        await pilot.pause(0.5)
+        assert isinstance(app.screen, ChoiceScreen), "the quit guard asks"
+        assert app.is_running
+        app.runner.cancel()
+        await pilot.pause(1.0)

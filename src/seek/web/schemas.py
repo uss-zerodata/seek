@@ -196,3 +196,153 @@ def out_service(model: WebModel, group: ServiceGroup) -> ServiceOut:
                              extrainfo=s.extrainfo,
                              captures=[out_capture(p) for p in model.captures_of(h, s)])
                  for h, s in group.members])
+
+
+# --- overviews and drill-downs ------------------------------------------------------
+
+
+class Crumb(BaseModel):
+    title: str
+    path: str                        # the `path=` that shows this level
+
+
+class RowOut(BaseModel):
+    step: str                        # append to `path=` to open this row
+    cells: list[str]
+    heading: bool = False
+    section: str = ""
+    mark: str = ""                   # "all", "some" or ""
+    opens: bool = False              # whether opening it goes anywhere
+
+
+class ViewOut(BaseModel):
+    tab: str
+    marked_tab: str
+    title: str
+    subtitle: str = ""
+    path: str = ""
+    crumbs: list[Crumb] = []
+    columns: list[str]
+    sort: int
+    desc: bool
+    total: int                       # before the filter
+    count: int                       # after it
+    offset: int = 0
+    limit: int = 0
+    rows: list[RowOut] = []
+    marks: int = 0
+
+
+# --- records and nmap's own text -----------------------------------------------------
+
+
+class RecordOut(BaseModel):
+    title: str
+    html: str                        # the terminal's record, as HTML lines
+    text: str                        # the same, plain
+
+
+class RawOut(BaseModel):
+    title: str
+    subject: str
+    scan: str
+    position: int                    # 1-based, of `total` scans of this subject
+    total: int
+    previous: str = ""               # query string of the previous scan's text
+    next: str = ""
+    reconstructed: bool = False
+    problem: str = ""
+    html: str
+    text: str
+
+
+# --- marks and export ----------------------------------------------------------------
+
+
+class RowRef(BaseModel):
+    """A row of a view, by the same names the page uses."""
+
+    tab: str
+    path: str = ""
+    step: str
+
+
+class MarkOut(BaseModel):
+    address: str
+    protocol: str | None = None
+    port: int | None = None
+    label: str
+
+
+class MarksOut(BaseModel):
+    count: int
+    marked: bool | None = None       # the toggled row, after a toggle
+    marks: list[MarkOut] = []
+
+
+class Choice(BaseModel):
+    key: str
+    label: str
+    disabled: str = ""               # the reason, when it cannot be chosen
+
+
+class ExportOptions(BaseModel):
+    source: str                      # "3 marked record(s)" / "the 12 record(s) listed"
+    count: int
+    recipes: list[Choice]
+    fields: list[str]
+    formats: list[Choice]
+    fixed_format: list[str]          # recipes whose format is always text
+    capture: str = ""                # why a capture cannot run; empty when it can
+    scan: str = ""                   # why a scan cannot run; empty when it can
+
+
+# --- runs, scans and captures -----------------------------------------------------
+
+
+class RunOut(BaseModel):
+    id: str
+    tool: str                        # "nmap" or "gowitness"
+    label: str
+    scope: str = ""
+    state: str
+    running: bool
+    elapsed: float
+    result: str = ""
+    lines: int = 0                   # how many log lines there are, for `since`
+
+
+class LogOut(BaseModel):
+    run: RunOut
+    since: int
+    lines: list[str]
+
+
+class PresetOut(BaseModel):
+    name: str
+    args: str
+    needs_root: bool
+
+
+class ScanPlanIn(BaseModel):
+    preset: str
+    targets: list[str] = []
+    command: str | None = None       # the edited command; the preset's when absent
+
+
+class ScanPlanOut(BaseModel):
+    preset: str
+    command: str                     # what the user may edit
+    note: str
+    argv: list[str] = []
+    targets: list[str] = []
+    out_base: str = ""
+    elevated: bool = False
+    privilege: str = ""               # what needs root, as the terminal says it
+    error: str = ""                  # why this command would not be run
+
+
+class CaptureIn(BaseModel):
+    tab: str = ""
+    path: str = ""
+    q: str = ""

@@ -1,6 +1,6 @@
 [project]
 name = "seek-tui"
-version = "0.4.0.dev0"
+version = "0.4.0.dev1"
 description = "Interactive terminal search for files, directories, and file contents"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -49,4 +49,4 @@ select = ["E", "F", "I", "UP", "B", "W"]
 
 [tool.ruff.lint.flake8-bugbear]
 # FastAPI declares dependencies as parameter defaults; they are not shared state.
-extend-immutable-calls = ["fastapi.Depends"]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import os
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -30,26 +29,27 @@ from seek import actions
 from seek.config import Config
 from seek.engine.score import match_spans
 from seek.gowitness import capture as gw_capture
-from seek.gowitness import detect as gw_detect
-from seek.gowitness import locate as gw_locate
-from seek.gowitness import results as gw_results
 from seek.nmap import bulk, filtering, rawlog, timeline
 from seek.nmap import export as exporter
-from seek.nmap import merge as merge_mod
 from seek.nmap import presets as presets_mod
 from seek.nmap import views as proj
-from seek.nmap.diff import ScanDiff, diff_from, snapshot
+from seek.nmap.diff import diff_from, snapshot
 from seek.nmap.merge import Accumulator, Pending
 from seek.nmap.models import Host, ScanSet, Service
 from seek.nmap.parse import NmapParseError, parse_file
 from seek.nmap.progress import FILES, Report
-from seek.nmap.runner import Runner, ScanRun, State, elevation_help
+from seek.nmap.runner import ScanRun, State, elevation_help
+from seek.nmap.session import Busy as SessionBusy
+from seek.nmap.session import Event as SessionEvent
+from seek.nmap.session import ScanError, Session
 from seek.runner import Run
 from seek.tui.cells import cell_len, clip_cells, width_of
 from seek.tui.menu import ChoiceScreen, MultiChoiceScreen, PromptScreen
 from seek.tui.nmap import detail as detail_pane
 from seek.tui.nmap import reader as reader_mod
+from seek.tui.nmap import record as record_mod
 from seek.tui.nmap import scans as scan_views
+from seek.tui.nmap import tabs as tabs_mod
 from seek.tui.nmap import views as vdefs
 from seek.tui.nmap.commands import ScanCommands
 from seek.tui.nmap.help import NmapHelpScreen
@@ -68,17 +68,8 @@ from seek.tui.nmap.scope import (
 # stack above whichever overview they were opened from. The tab row still
 # *follows* them - a drill-down that lands on another overview's subject marks
 # that tab (see `_sync_tab`) - but only selecting a tab replaces the stack.
-_TABS: list[tuple[str, str]] = [
-    ("hosts", "Hosts"),
-    ("services", "Services"),
-    ("stats", "Statistics"),
-    ("group-service", "By service"),
-    ("group-product", "By product"),
-    ("group-port", "By port"),
-    ("names", "Names"),
-    ("scans", "Scans"),
-]
-_GROUP_TABS = ("group-service", "group-product", "group-port")
+_TABS = tabs_mod.TABS
+_GROUP_TABS = tabs_mod.GROUP_TABS
 # The marker column: one glyph and a space, in the search session's mark colour.
 _MARK_W = 2
 _MARK_STYLE = "bold bright_magenta"
@@ -444,7 +435,7 @@ class NmapApp(App[int]):
         """
         super().__init__()
         pending = scans if isinstance(scans, Pending) else None
-        self.scans = ScanSet() if pending is not None else scans
+        initial = ScanSet() if pending is not None else scans
         # Whatever was handed in is a published model like any other: freezing
         # it here is what keeps the first collection after mount from walking
         # the whole engagement.
@@ -468,36 +459,20 @@ class NmapApp(App[int]):
         # the wall-clock moment the next one may be taken.
         self._absorb_began = 0.0
         self.config = config or Config()
-        # Where a scan writes, and what to re-read when one finishes. Both are
-        # the launch directory unless the config says otherwise.
-        self.sources: list[Path] = list(sources or [])
-        # How scans are named for the whole run - the reading worker's and a
-        # re-read after a finished scan's - so a file never changes its name
-        # between the two. Built from the sources when a model was handed in.
-        self._name: merge_mod.Naming = (
-            pending.name if pending is not None else merge_mod.naming(self.sources))
+        # The engagement itself - model, captures, both runners, marks - lives
+        # in the session, which the web interface shares. What stays here is
+        # where this viewer is: its tab, filter, sort, path and cursor.
+        self.session = Session(
+            self.config, sources, scan_dir,
+            naming=pending.name if pending is not None else None,
+            databases=(list(pending.databases) if pending is not None
+                       and pending.databases is not None else None),
+            scans=initial)
+        self.session.owner = self
+        self.session.listen(self._on_session_event)
         # Decided once: the status line asks on every redraw, and a `stat` per
         # source per draw is the kind of cost the record pane had to shed.
         self._several_dirs = sum(1 for p in self.sources if p.is_dir()) > 1
-        # gowitness captures anywhere below the sources - found by the command
-        # alongside the scans, or here when a model was handed in directly.
-        self._databases: list[Path] = (
-            list(pending.databases) if pending is not None and pending.databases is not None
-            else gw_locate.find_databases(self.sources))
-        self._shot_index = gw_locate.ShotIndex(p for p in self.sources if p.is_dir())
-        self.scan_dir = Path(self.config.scan_output_dir or scan_dir or Path.cwd())
-        self.nmap = presets_mod.probe(self.config.nmap_path)
-        self.gowitness = gw_detect.probe(self.config.gowitness_mode,
-                                         self.config.gowitness_path,
-                                         self.config.gowitness_image)
-        self.runner = Runner()
-        # A second slot, not a second scheduler: one `Runner` allows one run,
-        # so a slot per tool is exactly "serial within a tool, concurrent
-        # across them" with no new concurrency logic to get wrong. nmap and a
-        # capture do not contend - one is raw packets, the other is HTTP - and
-        # a capture that had to wait out a long port scan would be useless in
-        # the workflow it exists to serve.
-        self.captures = Runner()
         self._report_proc: object | None = None
         # The viewer's own web interface: this model, every capture database,
         # served in-process so what it shows is what the list shows. Built on
@@ -533,19 +508,9 @@ class NmapApp(App[int]):
         # the scan history reads scan files it did not produce. The database is
         # what an external run leaves - the documented workflow writes it and no
         # JSON Lines file at all.
-        self.shots = gw_results.Captures()
         self._load_captures()
-        self._diffs: dict[int, ScanDiff] = {}
-        # The file history is expensive to build (it re-parses), so cache it and
-        # rebuild only when the model changes - which `self.scans` identity marks,
-        # since a finished scan is absorbed by replacing it.
-        self._history: list[timeline.Scan] = []
-        self._history_for: object = None
-        # Which scans recorded which address. Derived from the model and kept
-        # with it for the same reason the history is: the record pane redraws
-        # on every movement of the list cursor.
-        self._scanned: rawlog.Scanned | None = None
-        self._scanned_for: object = None
+        # The file history and the scan index are the session's: both derived
+        # from the model and cached with it (`Session.scan_history`, `.scanned`).
         # A build running off the event loop, and what it has got through.
         self._busy: _Busy | None = None
         self._build_token = 0
@@ -592,17 +557,64 @@ class NmapApp(App[int]):
         self._last_width = 0
         self._spec = filtering.FilterSpec()
         self._filter_debounce: Timer | None = None
-        # Marks are keyed by record identity, never by row: every view is rebuilt
-        # from the model on every filter keystroke, sort, resize and tab switch,
-        # so a mark held as an index or a row object would be stale at once. A
-        # dict keeps the record itself (nothing to look up again at export time)
-        # and its insertion order (which becomes the export order).
-        self._marked: dict[tuple, exporter.Record] = {}
         self._unfiltered = 0
         # Non-zero when candidate files were found and not one of them could be
         # read: an engagement that could not be opened is not a successful run,
         # and the shell has to be able to tell.
         self._exit_code = 0
+
+    # --- the session's state, under the names the viewer has always used ----
+
+    # Marks are keyed by record identity, never by row: every view is rebuilt
+    # from the model on every filter keystroke, sort, resize and tab switch, so
+    # a mark held as an index or a row object would be stale at once. They are
+    # the session's, so a mark made in the browser is a mark here.
+    scans = property(lambda self: self.session.scans,
+                     lambda self, v: setattr(self.session, "scans", v))
+    shots = property(lambda self: self.session.shots)
+    runner = property(lambda self: self.session.runner)
+    captures = property(lambda self: self.session.captures)
+    nmap = property(lambda self: self.session.nmap,
+                    lambda self, v: setattr(self.session, "nmap", v))
+    gowitness = property(lambda self: self.session.gowitness,
+                         lambda self, v: setattr(self.session, "gowitness", v))
+    sources = property(lambda self: self.session.sources)
+    scan_dir = property(lambda self: self.session.scan_dir,
+                        lambda self, v: setattr(self.session, "scan_dir", v))
+    _naming = property(lambda self: self.session.name)
+    _databases = property(lambda self: self.session.databases)
+    _marked = property(lambda self: self.session.marks,
+                       lambda self, v: setattr(self.session, "marks", v))
+
+    def _on_session_event(self, event: SessionEvent) -> None:
+        """What another front end did, or a run did, reflected here.
+
+        A run this viewer started switches to the Scans tab as it always has;
+        one started in a browser is listed without moving anything - where this
+        viewer is belongs to this viewer.
+        """
+        if not self.is_running:
+            return
+        if event.type == "line":
+            self._on_scan_line(event.text)
+        elif event.type == "run" and event.run is not None and event.run.running:
+            if event.origin == "tui":
+                self._on_run_started(event.run)
+            else:
+                if self.view.kind == "scans":
+                    self._reload_rows(preserve=True)
+                self._refresh_status()
+        elif event.type == "marks" and event.origin != "tui":
+            self._reload_rows(preserve=True)
+            self._refresh_status()
+
+    # `Owner`: a finished run is folded back into the model by this viewer's
+    # own reading pipeline, whichever front end started it.
+    def scan_done(self, run: ScanRun) -> None:
+        self._on_scan_done(run)
+
+    def capture_done(self, run) -> None:
+        self._on_capture_done(run)
 
     # --- layout ------------------------------------------------------------
 
@@ -847,7 +859,7 @@ class NmapApp(App[int]):
         that tab slow. So the question is about the history, not the rows.
         """
         if view.kind == "scans":
-            return self._history_for is not self.scans
+            return self.session._history_for is not self.scans
         return not view.cached_for(self.scans)
 
     def _building_label(self, view: vdefs.View) -> str:
@@ -1456,56 +1468,18 @@ class NmapApp(App[int]):
         self._refresh_view()
 
     def _view_for_tab(self, tab_id: str) -> vdefs.View:
-        if tab_id == "scans":
-            return self._scans_view()
-        if tab_id == "names":
-            return vdefs.names_view()
-        if tab_id == "services":
-            return vdefs.services_view()
-        if tab_id == "stats":
-            return vdefs.statistics_view()
-        if tab_id in _GROUP_TABS:
-            return vdefs.grouping_view(tab_id.removeprefix("group-"))
-        return vdefs.hosts_view(self._only_up, self._only_ports)
+        return tabs_mod.tab_view(tab_id, self.session, self._only_up, self._only_ports)
 
     def _scans_index(self) -> rawlog.Scanned:
         """The scan index for the model on screen, rebuilt when it is replaced."""
-        if self._scanned_for is not self.scans or self._scanned is None:
-            self._scanned = rawlog.Scanned(self.scans.files)
-            self._scanned_for = self.scans
-        return self._scanned
+        return self.session.scanned()
 
     def _scan_history(self, report: Report | None = None) -> list[timeline.Scan]:
         """The file history, rebuilt only when the model actually changes."""
-        if self._history_for is not self.scans:
-            # A report only when a background build handed one down: this is
-            # the expensive half of the tab, and the only part of it worth
-            # counting.
-            self._history = timeline.build(self.scans.files, report)
-            self._history_for = self.scans
-        return self._history
+        return self.session.scan_history(report)
 
     def _scans_view(self) -> vdefs.View:
-        def build(_scans, report: Report | None = None) -> list[vdefs.Row]:
-            history = self._scan_history(report)
-            done = {str(s.path) for s in history if s.path}
-            # A finished run is already in the history as its file; only runs
-            # with no file yet (running, failed, cancelled) get their own row.
-            live = [r for r in self.runner.runs
-                    if r.state is not State.DONE or str(r.xml_path) not in done]
-            # A capture leaves no scan file, so every one of them keeps its row
-            # rather than being replaced by an entry in the file history.
-            live += list(self.captures.runs)
-            return scan_views.history_rows(history, live)
-
-        return vdefs.View(
-            title="Scans", columns=scan_views.SCANS_COLUMNS, build=build,
-            kind="scans", tab="scans", default_sort=scan_views.SCANS_DEFAULT_SORT,
-            # A live run's elapsed time and its log move without the model
-            # changing, so these rows are rebuilt every refresh. The expensive
-            # half - the file history - is cached in `_scan_history`.
-            cacheable=False, reports=True,
-        )
+        return tabs_mod.scans_view(self.session)
 
     def _activate(self, tab_id: str) -> None:
         """Switch overview. A tab replaces the stack: drill-downs belong to the
@@ -1590,23 +1564,8 @@ class NmapApp(App[int]):
         row = self._rows[table.cursor_row]
         # `drill` is what this row *opens*, when that is not the record the
         # detail pane below is reporting on.
-        target = row.drill if row.drill is not None else row.target
-        if target is None:
-            return
-        if isinstance(target, vdefs.View):
-            # An aggregate line names its own destination - the hosts it counts,
-            # or the grouping it totals. Pushed like any drill-down, so `Esc`
-            # comes back to the figure rather than to a different tab.
-            view = target
-        elif isinstance(target, proj.ServiceGroup):
-            view = vdefs.service_detail(target)
-        elif isinstance(target, vdefs.Grouping):
-            view = vdefs.grouping_detail(target)
-        elif hasattr(target, "address"):
-            view = vdefs.host_detail(target, self._only_open)
-        elif hasattr(target, "port"):
-            view = self._service_view(target)
-        else:
+        view = vdefs.open_row(row, self.scans.hosts, self._only_open)
+        if view is None:
             return
         self._marks.append(self._mark_current())
         # A filter belongs to the level it was typed on: the one pushed starts
@@ -1618,16 +1577,7 @@ class NmapApp(App[int]):
 
     def _service_view(self, svc) -> vdefs.View:
         """One host's service, opened as that service across the whole set."""
-        group = proj.group_for(self.scans.hosts, svc)
-        if group is not None:
-            return vdefs.service_detail(group)
-        # Only a closed or filtered port gets here - it is in no overview row,
-        # so fall back to every host that reports the same port at all.
-        members = [(h, s) for h in self.scans.hosts for s in h.services
-                   if s.port == svc.port and s.protocol == svc.protocol]
-        return vdefs.grouping_detail(
-            vdefs.Grouping(key="port", label=f"{svc.port}/{svc.protocol}",
-                           members=members))
+        return vdefs.service_everywhere(svc, self.scans.hosts)
 
     def action_mark(self) -> None:
         """Mark what the row stands for - or unmark it, when it is all marked.
@@ -1639,19 +1589,13 @@ class NmapApp(App[int]):
         row = self._current_row()
         if row is None or not row.records:
             return
-        keys = [r.identity for r in row.records]
-        if all(k in self._marked for k in keys):
-            for key in keys:
-                self._marked.pop(key, None)
-        else:
-            for record in row.records:
-                self._marked.setdefault(record.identity, record)
+        self.session.toggle(row.records, origin="tui")
         self._reload_rows(preserve=True)
 
     def action_clear_marks(self) -> None:
         if not self._marked:
             return
-        self._marked.clear()
+        self.session.clear_marks(origin="tui")
         self._reload_rows(preserve=True)
 
     def _mark_glyph(self, row: vdefs.Row) -> str:
@@ -1741,59 +1685,39 @@ class NmapApp(App[int]):
         if name is None:
             return
 
-        problem = presets_mod.writable(self.scan_dir)
-        if problem is not None:
-            self.notify(f"cannot write the scan here: {problem}", severity="error")
+        try:
+            command, note, out_base = self.session.draft_command(name, targets)
+        except ScanError as exc:
+            self.notify(str(exc), severity="error", timeout=12)
             return
-
-        out_base = presets_mod.output_base(self.scan_dir, name)
-        args = presets[name]
-        if presets_mod.PORTS_PLACEHOLDER in args:
-            # The reference workflow greps the open ports out of the previous
-            # scan's .gnmap and feeds them to -p. The model already knows them.
-            known = exporter.export_ports(exporter.records_for(self.scans.hosts))
-            if not known or not known[0]:
-                self.notify(f"{name}: no open port is known yet — run a service "
-                            "scan first, or type the ports yourself",
-                            severity="error", timeout=12)
-                return
-            args = args.replace(presets_mod.PORTS_PLACEHOLDER, known[0])
-        command = " ".join([self.config.nmap_path, args, *targets])
-        note = f"writes {out_base}.{{xml,nmap,gnmap}}"
         while True:
             edited = await self.push_screen_wait(
                 CommandScreen(f"Scan · {name}", command, note))
             if edited is None:
                 return
             try:
-                args = presets_mod.parse_command(edited, self.config.nmap_path)
+                plan = self.session.plan_scan(name, edited, targets, out_base)
             except presets_mod.CommandError as exc:
                 self.notify(str(exc), severity="error", timeout=10)
                 command = edited
                 continue
             break
 
-        # The targets are whatever survived the edit, in the order given.
-        scan_args = [a for a in args if a not in targets]
-        chosen = [a for a in args if a in targets] or targets
-        elevate = presets_mod.needs_root(scan_args) and os.geteuid() != 0
-        argv = presets_mod.build_argv(self.config.nmap_path, scan_args, chosen,
-                                      str(out_base), elevate)
         confirmed = await self.push_screen_wait(ReviewScreen(
-            argv, chosen, str(out_base), elevate,
-            presets_mod.privileged_labels(scan_args)))
+            plan.argv, plan.targets, str(plan.out_base), plan.elevated, plan.privilege))
         if not confirmed:
             return
-        self._run_scan(ScanRun(preset=name, argv=argv, targets=chosen,
-                               out_base=out_base, elevated=elevate))
+        self._run_scan(plan.run())
 
     @work(group="scan")
     async def _run_scan(self, run: ScanRun) -> None:
         self._log_frozen = False
         self._report_mode = "raw"
         self.notify(f"started {run.preset}")
-        await self.runner.run(run, self._on_scan_line, self._on_scan_done,
-                              on_start=self._on_run_started)
+        try:
+            await self.session.start_scan(run, origin="tui")
+        except SessionBusy as exc:
+            self.notify(str(exc), severity="warning")
 
     # --- captures ----------------------------------------------------------
 
@@ -1811,33 +1735,12 @@ class NmapApp(App[int]):
     @work(exclusive=True, group="capture")
     async def _start_capture(self, records: list) -> None:
         """Capture the selection, if there is anything in it to capture."""
-        if not self.gowitness.available:
-            self.notify(f"gowitness unavailable: {self.gowitness.reason}",
-                        severity="error", timeout=12)
-            return
-        if self.captures.busy() is not None:
-            self.notify("a capture is already running", severity="warning")
-            return
-        urls = self._capture_urls(records)
-        if not urls:
-            # Refused rather than started: a capture of nothing looks like a
-            # capture that found nothing, which is a different finding.
-            self.notify("nothing to capture — no HTTP or HTTPS service in this "
-                        "selection", severity="warning")
-            return
-        paths = gw_capture.capture_dir(self.scan_dir)
         try:
-            gw_capture.write_urls(paths, urls)
-        except OSError as exc:
-            self.notify(f"could not write the URL list: {exc.strerror or exc}",
-                        severity="error")
+            run = self.session.plan_capture(records)
+        except ScanError as exc:
+            self.notify(str(exc), severity="error" if "unavailable" in str(exc)
+                        or "could not" in str(exc) else "warning", timeout=12)
             return
-        argv = gw_capture.scan_argv(
-            self.gowitness, paths,
-            chrome_path=self.config.gowitness_chrome_path,
-            collect_all=self.config.gowitness_collect_all)
-        run = gw_capture.CaptureRun(argv=argv, paths=paths, urls=urls,
-                                    backend=self.gowitness.backend or "")
         await self._run_capture(run)
 
     async def _run_capture(self, run: gw_capture.CaptureRun) -> None:
@@ -1848,8 +1751,10 @@ class NmapApp(App[int]):
         # container backend pulls its image before the tool runs at all, and a
         # capture that is nowhere in the Scans tab for the first few minutes
         # looks like a capture that never started.
-        await self.captures.run(run, self._on_scan_line, self._on_capture_done,
-                                on_start=self._on_run_started)
+        try:
+            await self.session.start_capture(run, origin="tui")
+        except SessionBusy as exc:
+            self.notify(str(exc), severity="warning")
 
     def _on_run_started(self, run) -> None:
         """Put a just-started run on screen before it has produced anything."""
@@ -1863,7 +1768,8 @@ class NmapApp(App[int]):
         # already reached, and those are results the operator waited for.
         self._load_captures()
         # The only place a failed target is recorded: gowitness writes it to
-        # neither the results file nor the database.
+        # neither the results file nor the database. (The session records them
+        # too, after this; adding them twice is the same set.)
         self.shots.add_failures(run.failures)
         if run.state is State.DONE:
             self.notify(f"capture: {run.result}")
@@ -1987,59 +1893,30 @@ class NmapApp(App[int]):
                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
 
     def _capture_dirs(self) -> list[gw_capture.Paths]:
-        """Where captures are: the one output goes to, then every results
-        database found below the paths the viewer was opened on - at any depth
-        and under any name, since a capture run by hand lands wherever
-        gowitness was started, not only in `gowitness/` beside the scans."""
-        own = gw_capture.capture_dir(self.scan_dir)
-        found = [gw_capture.Paths(db.parent.resolve(), db.name) for db in self._databases]
-        out: dict[Path, gw_capture.Paths] = {}
-        for paths in [own, *found]:
-            out.setdefault(paths.db, paths)
-        return list(out.values())
+        return self.session.capture_dirs()
 
     def _load_captures(self) -> None:
-        """Read every capture database. Absence is the ordinary case, not an error.
+        """Every capture database, read into the session."""
+        self.session.load_captures(self._where_of)
 
-        Read one by one rather than through `Captures.load`, so each database's
-        own URLs are known: a run listed for it counts those, not everyone's.
-        Each resolves its screenshots from where it is (`locate.ShotFinder`),
-        with one image index shared between them.
+    def _where_of(self, paths: gw_capture.Paths, count: int) -> str:
+        """How a capture database is named in the run list when there are several.
+
+        Named like the scans beside it; two captures in directories of the same
+        name ("gowitness" twice) show where they are.
         """
-        dirs = self._capture_dirs()
-        for paths in dirs:
-            finder = gw_locate.ShotFinder(paths.db, self._shot_index)
-            captures, problems = gw_results.read_database(paths.db, finder)
-            self.shots.add(captures)
-            self.shots.problems.extend(problems)
-            where = ""
-            if len(dirs) > 1:
-                # Named like the scans beside it; two captures in directories
-                # of the same name ("gowitness" twice) show where they are.
-                where = self._name(paths.root)
-                if where == paths.root.name:
-                    where = _short(paths.root)
-                if paths.db_name != gw_capture.DB_NAME:
-                    where = f"{where}/{paths.db_name}"
-            self._register_disk_capture(paths, [c.url for c in captures], where)
+        if count <= 1:
+            return ""
+        where = self._naming(paths.root)
+        if where == paths.root.name:
+            where = _short(paths.root)
+        if paths.db_name != gw_capture.DB_NAME:
+            where = f"{where}/{paths.db_name}"
+        return where
 
     def _register_disk_capture(self, paths: gw_capture.Paths, urls: list[str],
                                where: str = "") -> None:
-        """List a capture that exists on disk but was not run in this session.
-
-        Without this the Scans tab is empty after a restart even though the
-        database and the screenshots are sitting there - the opposite of the
-        rule the scan history follows, where what is on disk is listed whoever
-        produced it.
-        """
-        if not paths.db.exists() or not urls:
-            return
-        # A run started here already stands for this directory; a second row
-        # would be the same capture listed twice.
-        if any(getattr(run, "paths", None) == paths for run in self.captures.runs):
-            return
-        self.captures.runs.append(
-            gw_capture.from_disk(paths, urls, captured=len(urls), where=where))
+        self.session.register_disk_capture(paths, urls, where)
 
     def snapshot(self):
         """`ModelSource`: what the web interface reads, as it stands now."""
@@ -2067,23 +1944,32 @@ class NmapApp(App[int]):
         self._web_row, self._web_gallery = row, gallery
         self._open_web()
 
-    @work(thread=True, exclusive=True, group="web")
-    def _open_web(self) -> None:
+    @work(exclusive=True, group="web")
+    async def _open_web(self) -> None:
+        """Start (or reuse) the server on this loop and open the browser.
+
+        On this loop because the server shares the session with the viewer -
+        a scan started in the browser runs on the same loop as one started
+        here. The page the row maps to needs the web model, which can take
+        seconds to build at engagement scale, so that part is a thread.
+        """
         from seek.web.server import WebError, WebServer
 
         if self._web is None:
-            self._web = WebServer(self, self.config.web_host, self.config.web_port)
+            self._web = WebServer(self._web_source(), self.config.web_host,
+                                  self.config.web_port, session=self.session)
         fresh = not self._web.running
         try:
-            self._web.start()
-            url = self._web.url_for(self._web_row, gallery=self._web_gallery)
+            await self._web.start()
+            url = await asyncio.to_thread(self._web.url_for, self._web_row,
+                                          self._web_gallery)
         except WebError as exc:
-            self.call_from_thread(self.notify, str(exc), severity="error")
+            self.notify(str(exc), severity="error")
             return
         if fresh:
-            self.call_from_thread(self.notify, f"web interface on {self._web.url}")
-            self.call_from_thread(self._refresh_status)
-        _open_browser(url)
+            self.notify(f"web interface on {self._web.url}")
+            self._refresh_status()
+        await asyncio.to_thread(_open_browser, url)
 
     def _stop_report_server(self) -> None:
         """Never leave a web server running behind a closed viewer."""
@@ -2165,7 +2051,7 @@ class NmapApp(App[int]):
         try:
             # The other owner of a long phase; see `_build_rows`.
             with bulk.bulk(), bulk.responsive():
-                scans = prepare(load(paths, report, self._name))
+                scans = prepare(load(paths, report, self._naming))
         except _Abandoned:
             return
         except Exception as exc:                      # noqa: BLE001 - report, never crash
@@ -2179,9 +2065,9 @@ class NmapApp(App[int]):
             return
         self._busy = None
         self._publish(scans)
-        self._diffs[id(run)] = diff_from(before, self.scans.hosts)
+        self.session.diffs[id(run)] = diff_from(before, self.scans.hosts)
         self._resolve_marks()
-        self.notify(f"{run.preset}: {self._diffs[id(run)].summary()}")
+        self.notify(f"{run.preset}: {self.session.diffs[id(run)].summary()}")
         self._refresh_view(preserve=True)
         self._refresh_detail()
         self._refresh_status()
@@ -2190,7 +2076,7 @@ class NmapApp(App[int]):
                           exc: Exception) -> None:
         if self._busy is not None and self._busy.token == token:
             self._busy = None
-        self.notify(f"{self._name(run.xml_path)} could not be read: {exc}",
+        self.notify(f"{self._naming(run.xml_path)} could not be read: {exc}",
                     severity="error")
         if not covered and self.sources and self.sources[-1] == run.xml_path:
             self.sources.pop()
@@ -2228,7 +2114,7 @@ class NmapApp(App[int]):
             for done, path in enumerate(paths, start=1):
                 if self._read_token != token:       # a re-read superseded this
                     return
-                label = self._name(path)
+                label = self._naming(path)
                 try:
                     acc.add(parse_file(path, label))
                     unread = True
@@ -2388,28 +2274,12 @@ class NmapApp(App[int]):
         are freed by reference counting as soon as the last view drops them.
         """
         bulk.unfreeze()
-        self.scans = scans
+        self.session.publish(scans, origin="tui")
         bulk.freeze()
 
     def _resolve_marks(self) -> None:
         """Marks point at records of the old model; re-find them in the new one."""
-        if not self._marked:
-            return
-        live: dict[tuple, exporter.Record] = {}
-        by_address = {h.address: h for h in self.scans.hosts}
-        for key, record in self._marked.items():
-            host = by_address.get(record.host.address)
-            if host is None:
-                continue
-            if record.service is None:
-                live[key] = exporter.Record(host)
-                continue
-            match = next((s for s in host.services
-                          if (s.protocol, s.port) == (record.service.protocol,
-                                                      record.service.port)), None)
-            if match is not None:
-                live[key] = exporter.Record(host, match)
-        self._marked = live
+        self.session.resolve_marks()
 
     def action_filter(self) -> None:
         self.query_one("#filter", Input).focus()
@@ -2553,39 +2423,9 @@ class NmapApp(App[int]):
         heading - is one line of it; nothing is lost, and the pane does not
         have to ask which kind of record it is holding.
         """
-        target = row.target if row is not None else None
-        if isinstance(target, timeline.Scan):
-            return ([detail_pane.Line(scan_views.scan_report(target, self._report_mode))],
-                    f"Scan · {target.label}")
-        if isinstance(target, gw_capture.CaptureRun):
-            # Checked before ScanRun and separately from it: a capture is a
-            # `Run`, not a `ScanRun`, so an isinstance test against the scan
-            # type alone drops it through to the record renderer, which knows
-            # nothing about runs and returns an empty pane.
-            return ([detail_pane.Line(
-                        scan_views.report(target, self._report_mode, None,
-                                          self._log_frozen, self._following))],
-                    f"Capture · {target.scope}")
-        if isinstance(target, ScanRun):
-            return ([detail_pane.Line(
-                        scan_views.report(target, self._report_mode,
-                                          self._diffs.get(id(target)),
-                                          self._log_frozen, self._following))],
-                    f"Scan · {target.preset}")
-        if row is not None and row.heading:
-            return ([detail_pane.Line(Text(
-                        f"{row.cells[0]}\n\n"
-                        "Select a line under this heading to open what it counts.",
-                        style="dim"))],
-                    row.cells[0])
-        if target is None and row is not None:
-            # views without a drill target (statistics, groupings) still explain
-            # the row rather than leaving the pane blank
-            return [detail_pane.Line(Text(row.text, style="dim"))], self.view.title
-        title = f"{self.view.title} · {row.cells[0]}" if row is not None else self.view.title
-        return (detail_pane.render(target, row.host if row else None, self.shots,
-                                   full=full, scanned=self._scans_index()),
-                title)
+        return record_mod.record_lines(row, self.view.title, self.session,
+                                       self._report_mode, self._log_frozen,
+                                       self._following, full)
 
     def _refresh_detail(self) -> None:
         """Show the full record for the highlighted row - the table only has
@@ -3142,11 +2982,9 @@ class NmapApp(App[int]):
             fmt = await self._pick_format()
             if fmt is None:
                 return
-            text = exporter.render(records, fields, fmt)
+            text, fmt = exporter.produce(records, "custom", fmt, fields)
         else:
-            _label, recipe, column = exporter.EXPORTS[which]
-            items = recipe(records)
-            if column is None:
+            if exporter.EXPORTS[which][2] is None:
                 # The port list is one comma-separated line whatever happens;
                 # offering a format here would be a lie about what is written.
                 fmt = "text"
@@ -3155,7 +2993,7 @@ class NmapApp(App[int]):
                 fmt = await self._pick_format()
                 if fmt is None:
                     return
-            text = exporter.render_items(items, column or "ports", fmt)
+            text, fmt = exporter.produce(records, which, fmt)
 
         dest = await self.push_screen_wait(ChoiceScreen(
             "Send it to:", [("clipboard", "clipboard"), ("file", "file")]))

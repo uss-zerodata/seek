@@ -278,3 +278,21 @@ EXPORTS: dict[str, tuple[str, Callable[[Iterable[Record]], list[str]], str | Non
     "host-ports": ("host:port pairs", export_host_ports, "host_port"),
     "urls": ("HTTP/HTTPS URLs", export_urls, "url"),
 }
+
+
+def produce(records: Iterable[Record], which: str, fmt: str = "text",
+            fields: Iterable[str] = ()) -> tuple[str, str]:
+    """An export as text, and the format actually used - for every front end.
+
+    `which` is a key of `EXPORTS`, or `custom` with `fields`. The port list is
+    one comma-separated line whatever format is asked for, so that recipe
+    reports `text` back rather than pretending to honour the choice.
+    """
+    records = list(records)
+    if which == "custom":
+        return render(records, fields, fmt), fmt
+    _label, recipe, column = EXPORTS[which]
+    items = recipe(records)
+    if column is None:
+        fmt = "text"
+    return render_items(items, column or "ports", fmt), fmt

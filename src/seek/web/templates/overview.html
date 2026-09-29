@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}{{ view.title }}{% endblock %}
+{% block content %}
+<div class="viewer" data-tab="{{ view.tab }}" data-path="{{ view.path }}">
+  <section class="pane-list">
+    <nav class="crumbs">
+      {% for c in view.crumbs %}{% if not loop.last %}<a href="/v/{{ view.tab }}{% if c.path %}?{{ {"path": c.path} | urlencode }}{% endif %}">{{ c.title }}</a> › {% else %}<strong>{{ c.title }}</strong>{% endif %}{% endfor %}
+      {% if view.subtitle %}<span class="dim small">{{ view.subtitle }}</span>{% endif %}
+    </nav>
+    <form class="controls" method="get" data-list="list">
+      {% if view.path %}<input type="hidden" name="path" value="{{ view.path }}">{% endif %}
+      <input class="filter" type="search" name="q" value="{{ here.q or '' }}" autocomplete="off"
+             placeholder="/ filter - the viewer's grammar: open:443, 10.0.0.0/24, 'nginx, AND/OR/NOT">
+      {% if view.tab == "hosts" and not view.path %}
+      <label><input type="checkbox" name="up" value="1" {% if here.up %}checked{% endif %}> up only</label>
+      <label><input type="checkbox" name="ports" value="1" {% if here.ports %}checked{% endif %}> open ports only</label>
+      {% endif %}
+      {% if view.path.startswith("h:") and "|" not in view.path %}
+      <label><input type="checkbox" name="open" value="1" {% if here.open %}checked{% endif %}> open ports only</label>
+      {% endif %}
+      {% if sort_arg is not none %}<input type="hidden" name="sort" value="{{ sort_arg }}">{% if desc %}<input type="hidden" name="desc" value="1">{% endif %}{% endif %}
+    </form>
+    <div id="list">{% include "_overview.html" %}</div>
+  </section>
+  <aside class="pane-record" id="record" aria-live="polite">
+    {% if record %}
+    <div class="record-head"><h2>{{ record.title }}</h2></div>
+    <div class="record">{{ record.html | safe }}</div>
+    {% else %}
+    <p class="dim">Select a row - <kbd>j</kbd>/<kbd>k</kbd> or a click - to read its record.</p>
+    {% endif %}
+  </aside>
+</div>
+{% endblock %}

@@ -14,11 +14,30 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
-from seek.web import query
-from seek.web.deps import model
+from seek.tui.nmap.tabs import TABS
+from seek.web import pages_data, query, views
+from seek.web.api.v1.views import split_path
+from seek.web.deps import model, places, session
 from seek.web.source import WebModel
 
 TEMPLATES = Jinja2Templates(directory=Path(__file__).parent.parent / "templates")
+TEMPLATES.env.globals["TABS"] = TABS
+
+
+def _static_version() -> str:
+    """A tag for the static files as they are now, so an upgrade is not served
+    from a browser's cache of the old ones."""
+    import hashlib
+
+    digest = hashlib.sha1()
+    static = Path(__file__).parent.parent / "static"
+    for path in sorted(static.rglob("*")):
+        if path.is_file():
+            digest.update(path.read_bytes())
+    return digest.hexdigest()[:10]
+
+
+TEMPLATES.env.globals["V"] = _static_version()
 
 router = APIRouter(include_in_schema=False)
 
@@ -98,3 +117,37 @@ def capture(request: Request, capture_id: str, m: WebModel = Depends(model)):
     except query.NotFound as exc:
         return _missing(request, str(exc))
     return _render(request, "capture.html", capture=found, nav="gallery")
+
+
+# --- every overview, as the terminal has them --------------------------------------
+
+
+@router.get("/v/{tab}", response_class=HTMLResponse)
+def overview(request: Request, tab: str, path: str = "", q: str = "",
+             sort: int | None = None, desc: bool = False, up: bool = False,
+             ports: bool = False, open: bool = False, sel: str = "", offset: int = 0,
+             limit: int = 500, fragment: bool = False,
+             sess=Depends(session), cache=Depends(places)):
+    """One level of one tab. Its URL is its state: the browser's back button
+    returns to the level before with its own filter, sort and selected row."""
+    try:
+        found = views.overview(sess, cache, tab, split_path(path), q, sort, desc, up,
+                               ports, open, offset, limit)
+    except views.Unresolved as exc:
+        return _missing(request, str(exc))
+    # The selected row's record is in the page itself: it shows at once, and
+    # without script. The script takes over from there.
+    step = sel or next((r.step for r in found.rows if not r.heading), "")
+    record = None
+    if step and not fragment:
+        try:
+            record = pages_data.record(sess, cache, tab, split_path(path), step)
+        except views.Unresolved:
+            record = None
+    here = {k: v for k, v in (("path", path), ("q", q), ("up", "1" if up else ""),
+                              ("ports", "1" if ports else ""),
+                              ("open", "1" if open else "")) if v}
+    return _render(request, "_overview.html" if fragment else "overview.html",
+                   view=found, tabs=TABS, here=here, sel=step, nav=found.marked_tab,
+                   record=record,
+                   sort_arg=sort, desc=desc)

@@ -397,7 +397,7 @@ capture made by hand under either spelling still links up.
 **The web interface.** gowitness's report server reads one database at a time;
 an engagement usually has several. `w` opens seek's own web interface instead:
 every capture from every database the viewer found, beside the hosts, ports and
-services they show. It runs inside the viewer, on `127.0.0.1:7272` by default
+services they show. It runs inside the viewer's own process, on `127.0.0.1:7272` by default
 (`web_host` / `web_port`; anything but a loopback address is refused), reads the
 same model the terminal shows - a scan or capture that finishes while it is open
 appears on the next reload - and stops when the viewer quits. `w` opens the
@@ -417,8 +417,39 @@ Every filter box takes the viewer's own filter syntax (`'8443`, `open:443`,
 `10.0.0.0/24`, `AND`/`OR`/`NOT`) and filters on the server as you type. Everything
 a page shows is also JSON under `/api/v1/` (`hosts`, `services`, `captures`), with
 `q`, `offset` and `limit`; `/api/openapi.json` describes it. Nothing is loaded
-from the internet, so it works on an isolated network, and nothing is written.
+from the internet, so it works on an isolated network, and browsing writes nothing.
 FastAPI, uvicorn and Jinja2 ship with seek; there is nothing extra to install.
+
+**Everything the terminal viewer does, in the browser.** Every overview is a
+tab at `/v/<tab>` - hosts, services, statistics, the three groupings, names and
+scans - with the same columns, order, filter syntax and drill-down, and the
+selected row's record beside the list, rendered from the very same record the
+terminal shows. Links in a record open nmap's own text for that host or port;
+`←`/`→` step to the other scans of it. Marks, export (every recipe, field and
+format, downloaded or copied), new scans (preset, scope, editable command, the
+same review and `sudo -n` rule) and gowitness captures all work from the
+browser, and the Scans tab streams a running scan's log as nmap writes it.
+
+The terminal and the browser share one session: a scan started in either shows
+in both, a mark made in either is a mark in both, and quitting the terminal asks
+about a scan the browser started. Each keeps its own tab, filter, sort and
+cursor - the browser keeps them in the URL, so its back button returns to the
+level you left with its filter and row, and two windows are independent.
+
+The keys are the terminal's: `j`/`k` and the arrows move the list, `h`/`l` move
+through the record, `Enter` opens, `Esc` backs out, `/` filters, `1`-`9` sort,
+`v`/`V` switch tabs, `m`/`M` mark, `x` exports, `n` scans, `c` cancels, `p`
+freezes the log, `d` widens the record, `?` lists them all.
+
+`seek nmap serve PATHS…` (or `seek nmap --serve`) runs the same session and
+web interface without the terminal viewer - on a box with no terminal to spare,
+or for a browser on a second screen. `--open` opens the browser once it
+listens; Ctrl+C cancels any scan or capture still running, says which, and
+stops. A directory that happens to be called `serve` is named `./serve`.
+
+State-changing requests are accepted only from the interface's own pages, so a
+page on another site cannot drive it through your browser. There are no
+accounts: it listens on loopback only.
 
 **Export** produces the lists you feed to the next command, from whatever the
 filter has narrowed to: host addresses, open ports comma-separated (the form

@@ -6,6 +6,7 @@ nmap fixtures' hosts, so a capture has a host and a port to belong to.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import shutil
 import socket
@@ -333,18 +334,25 @@ def _free_port() -> int:
         return sock.getsockname()[1]
 
 
-def test_the_server_starts_serves_and_stops(tmp_path):
+@pytest.mark.asyncio
+async def test_the_server_starts_serves_and_stops(tmp_path):
+    import asyncio
+
     scans = _scans()
     shots = _captures(_database(tmp_path))
     server = WebServer(CachedSource(lambda: scans, lambda: shots), "127.0.0.1", _free_port())
-    server.start()
+    await server.start()
     try:
         assert server.running
-        with urllib.request.urlopen(server.url + "/api/v1/hosts", timeout=5) as response:
-            assert b"192.0.2.1" in response.read()
-        server.start()                                   # a second start is a no-op
+
+        def fetch() -> bytes:
+            with urllib.request.urlopen(server.url + "/api/v1/hosts", timeout=5) as r:
+                return r.read()
+
+        assert b"192.0.2.1" in await asyncio.to_thread(fetch)
+        await server.start()                             # a second start is a no-op
     finally:
-        server.stop()
+        await server.aclose()
     assert not server.running
     # Free again, the way a restart would take it: the closed connection leaves
     # the port in TIME_WAIT, which SO_REUSEADDR - as uvicorn sets it - allows.
@@ -358,7 +366,8 @@ def test_a_non_loopback_address_is_refused():
     assert is_loopback("127.0.0.1") and is_loopback("::1") and is_loopback("localhost")
     assert not is_loopback("0.0.0.0") and not is_loopback("192.0.2.1")
     with pytest.raises(WebError, match="loopback only"):
-        WebServer(CachedSource(_scans, gw.Captures), "0.0.0.0", _free_port()).start()
+        asyncio.run(WebServer(CachedSource(_scans, gw.Captures), "0.0.0.0",
+                              _free_port()).start())
 
 
 def test_a_port_in_use_is_reported_with_its_setting():
@@ -367,7 +376,8 @@ def test_a_port_in_use_is_reported_with_its_setting():
         busy.listen()
         port = busy.getsockname()[1]
         with pytest.raises(WebError, match=f"port {port} is in use.*web_port"):
-            WebServer(CachedSource(_scans, gw.Captures), "127.0.0.1", port).start()
+            asyncio.run(WebServer(CachedSource(_scans, gw.Captures), "127.0.0.1",
+                                  port).start())
 
 
 # --- sorting and narrowing the gallery ------------------------------------------------------
@@ -452,3 +462,22 @@ def test_gallery_path_for_rows(tmp_path):
     group = next(r for r in vdefs.services_view().rows(scans)
                  if r.target.port == 80 and r.target.host_count > 1)
     assert gallery_path_for(group) == "/?protocol=tcp&port=80", "one port, several hosts"
+
+
+def test_no_route_on_the_loop_reads_the_model():
+    """The server shares the viewer's event loop: an `async def` endpoint runs
+    on it, so one that built or walked the model would freeze the viewer.
+    Everything that reads the model is a plain `def` - FastAPI's threadpool."""
+    import inspect
+
+    from fastapi.routing import APIRoute
+
+    from seek.web.deps import model
+
+    app = create_app(CachedSource(_scans, gw.Captures))
+    for route in app.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        uses_model = any(d.call is model for d in route.dependant.dependencies)
+        if uses_model:
+            assert not inspect.iscoroutinefunction(route.endpoint), route.path

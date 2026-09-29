@@ -589,3 +589,36 @@ def statistics_view() -> View:
                 # The question a breakdown answers is "how often", so the tab
                 # opens on the count, biggest first.
                 default_sort=(1, True))
+
+
+def service_everywhere(svc: Service, hosts: list[Host]) -> View:
+    """One host's service, opened as that service across the whole set."""
+    group = proj.group_for(hosts, svc)
+    if group is not None:
+        return service_detail(group)
+    # Only a closed or filtered port gets here - it is in no overview row, so
+    # fall back to every host that reports the same port at all.
+    members = [(h, s) for h in hosts for s in h.services
+               if s.port == svc.port and s.protocol == svc.protocol]
+    return grouping_detail(Grouping(key="port", label=f"{svc.port}/{svc.protocol}",
+                                    members=members))
+
+
+def open_row(row: Row, hosts: list[Host], only_open: bool = False) -> View | None:
+    """Where opening a row goes - the one answer both front ends use.
+
+    `drill` is what a row opens when that is not the record its detail
+    reports on; an aggregate line names its own destination as a `View`.
+    """
+    target = row.drill if row.drill is not None else row.target
+    if isinstance(target, View):
+        return target
+    if isinstance(target, proj.ServiceGroup):
+        return service_detail(target)
+    if isinstance(target, Grouping):
+        return grouping_detail(target)
+    if isinstance(target, Host):
+        return host_detail(target, only_open)
+    if isinstance(target, Service):
+        return service_everywhere(target, hosts)
+    return None

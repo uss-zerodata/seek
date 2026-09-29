@@ -90,6 +90,19 @@ def init(
     typer.echo(render_init(key))
 
 
+def _typed_serve() -> bool:
+    """Whether the first path was typed as the bare word `serve`.
+
+    Asked of the command line itself: a `Path` prints `./serve` as `serve`,
+    and `./serve` is exactly how to name a directory of that name.
+    """
+    args = sys.argv[1:]
+    if "nmap" in args:
+        args = args[args.index("nmap") + 1:]
+    first = next((a for a in args if not a.startswith("-")), None)
+    return first == "serve"
+
+
 @app.command()
 def nmap(
     paths: Annotated[
@@ -99,6 +112,13 @@ def nmap(
                  "like, merged into one view (default: the working directory).",
         ),
     ] = None,
+    serve: Annotated[
+        bool, typer.Option("--serve", help="Run the web interface without the terminal "
+                                           "viewer (also: `seek nmap serve PATHS…`).")
+    ] = False,
+    open_browser: Annotated[
+        bool, typer.Option("--open", help="With serve: open the browser once it listens.")
+    ] = False,
 ) -> None:
     """Browse one or more nmap XML scans, consolidated.
 
@@ -113,6 +133,17 @@ def nmap(
     """
     from seek.gowitness.locate import find_databases
     from seek.nmap.merge import Pending, discover, naming
+
+    # `seek nmap serve …` is the headless form - unless `serve` is also a file or
+    # directory right here, which is not guessed at: said, and left to the user.
+    if paths and str(paths[0]) == "serve" and _typed_serve():
+        if Path("serve").exists():
+            typer.echo("seek: `serve` is ambiguous - a file or directory of that name is "
+                       "here. Use `./serve` for the directory, or `seek nmap --serve` "
+                       "for the web interface.", err=True)
+            raise typer.Exit(code=2)
+        serve = True
+        paths = paths[1:]
 
     # The working directory is the engagement directory often enough that
     # naming it adds nothing, and it is the directory a scan started here would
@@ -153,14 +184,24 @@ def nmap(
         typer.echo(f"seek: and no scan can be started here ({nmap.reason})", err=True)
         raise typer.Exit(code=1)
 
+    first = paths[0]
+    scan_dir = first if first.is_dir() else Path.cwd()
+
+    if serve:
+        import asyncio
+
+        from seek.web import serve as serve_mod
+
+        session = serve_mod.build([Path(p) for p in paths], candidates, naming(paths),
+                                  databases, config, scan_dir)
+        raise typer.Exit(code=asyncio.run(serve_mod.serve(session, open_browser)))
+
     if not _stdout_is_usable():
         typer.echo("seek: requires an interactive terminal", err=True)
         raise typer.Exit(code=1)
 
     from seek.tui.nmap.app import run_viewer
 
-    first = paths[0]
-    scan_dir = first if first.is_dir() else Path.cwd()
     # The paths given are the sources: a directory keeps covering whatever a
     # scan writes into it, so a finished run needs no special case.
     raise typer.Exit(code=run_viewer(Pending(candidates, naming(paths), databases), config,

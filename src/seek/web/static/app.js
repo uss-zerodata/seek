@@ -16,7 +16,10 @@ function wire(form, target, fieldsOf) {
       const mine = ++sent;
       try {
         const response = await fetch(url);
-        if (response.ok && mine === sent) target.innerHTML = await response.text();
+        if (response.ok && mine === sent) {
+          target.innerHTML = await response.text();
+          document.dispatchEvent(new CustomEvent("list:replaced"));
+        }
       } catch (_) { /* the viewer was closed; leave the list as it is */ }
     }, delay);
   };

@@ -63,3 +63,64 @@ td.ports { font-variant-numeric: tabular-nums; }
                    border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
 .scope { margin: -4px 0 12px; }
 .siblings { font-size: .85rem; }
+
+/* --- the viewer: list beside record ------------------------------------------ */
+nav#tabs { flex-wrap: wrap; }
+.status { margin-left: auto; color: var(--dim); font-size: .85rem; }
+.viewer { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; }
+@media (max-width: 1000px) { .viewer { grid-template-columns: 1fr; } }
+.pane-record { border-left: 1px solid var(--line); padding-left: 16px; min-width: 0;
+               position: sticky; top: 56px; max-height: calc(100vh - 72px); overflow: auto; }
+@media (max-width: 1000px) { .pane-record { border-left: 0; padding-left: 0; position: static; max-height: none; } }
+.crumbs { margin: 0 0 10px; }
+.crumbs .small { margin-left: 10px; }
+table.rows tr.row { cursor: default; }
+table.rows tr.selected td { background: var(--pill); }
+table.rows tr.heading td { font-weight: 700; color: var(--accent); padding-top: 14px; }
+td.mark, th.mark { width: 1.5em; color: #b0408f; text-align: center; }
+th a.sort { color: var(--dim); }
+.record { font-family: ui-monospace, "SFMono-Regular", monospace; font-size: .82rem;
+          line-height: 1.35; overflow-wrap: anywhere; }
+/* Whitespace is kept per line only: between lines it is markup, not text. */
+.record .ln { min-height: 1.35em; white-space: pre-wrap; }
+.record .ln.cursor { background: var(--pill); }
+.record a.opens { color: inherit; display: block; }
+.record a.opens:hover, .record .ln.cursor a.opens { outline: 1px solid var(--accent); }
+.record-head { display: flex; gap: 12px; align-items: baseline; margin: 0 0 8px; flex-wrap: wrap; }
+.record-head h2 { margin: 0; font-size: 1rem; }
+.record-search { display: flex; gap: 8px; align-items: center; margin: 0 0 8px; }
+.record-search input { flex: 1; font: inherit; padding: 4px 8px; background: var(--card); color: var(--fg);
+                       border: 1px solid var(--line); border-radius: 6px; }
+mark.hit { background: #f5d76e; color: #000; } mark.hit.current { background: #ffae00; }
+kbd { font: .8rem ui-monospace, monospace; padding: 0 4px; border: 1px solid var(--line); border-radius: 3px; }
+button, .button { font: inherit; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--line);
+                  background: var(--card); color: var(--fg); cursor: pointer; }
+button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+dialog { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 10px;
+         max-width: min(720px, 94vw); width: 100%; }
+dialog::backdrop { background: rgb(0 0 0 / .35); }
+/* Rich styles, by attribute - see seek/web/record.py */
+.b { font-weight: 700; } .d { opacity: .62; } .i { font-style: italic; } .u { text-decoration: underline; }
+.s { text-decoration: line-through; } .rv { background: var(--fg); color: var(--bg); }
+.c-black { color: #555; } .c-red { color: #c0392b; } .c-green { color: #1f7a3a; } .c-yellow { color: #9a6400; }
+.c-blue { color: #2458c6; } .c-magenta { color: #9b3a8c; } .c-cyan { color: #127a86; } .c-white { color: var(--fg); }
+.c-bblack { color: #777; } .c-bred { color: #e04b3a; } .c-bgreen { color: #2e9e4f; } .c-byellow { color: #b37a00; }
+.c-bblue { color: #3d6fe0; } .c-bmagenta { color: #b14aa1; } .c-bcyan { color: #179aa8; } .c-bwhite { color: var(--fg); }
+@media (prefers-color-scheme: dark) {
+  .c-red { color: #ff7b72; } .c-green { color: #7ee2a0; } .c-yellow { color: #e3b35a; } .c-blue { color: #7ea6ff; }
+  .c-magenta { color: #e59ad6; } .c-cyan { color: #6fd6e0; } .c-bred { color: #ff9b8f; } .c-bgreen { color: #9cf0b5; }
+  .c-byellow { color: #f2cc7a; } .c-bblue { color: #a7c2ff; } .c-bmagenta { color: #f0b4e5; } .c-bcyan { color: #9be7ee; }
+  mark.hit { background: #7a6400; color: #fff; }
+}
+.viewer.full { grid-template-columns: 1fr; }
+.viewer.full .pane-list { display: none; }
+.viewer.full .pane-record { border-left: 0; padding-left: 0; position: static; max-height: none; }
+body.offline .status { color: var(--bad); }
+dialog h2 { margin-top: 0; }
+dialog textarea { width: 100%; font: .85rem ui-monospace, monospace; background: var(--bg); color: var(--fg);
+                  border: 1px solid var(--line); border-radius: 6px; padding: 6px; }
+dialog .fields label { display: inline-block; margin: 2px 8px 2px 0; font-size: .85rem; }
+dialog .buttons { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+dialog code { overflow-wrap: anywhere; }
+
+table.list th { white-space: nowrap; }
