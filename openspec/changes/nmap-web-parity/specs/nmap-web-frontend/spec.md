@@ -223,3 +223,28 @@ and how many looser matches were left out, with a way to include them.
 #### Scenario: Nothing found
 - **WHEN** the search finds nothing
 - **THEN** it says so and offers the syntax reference
+
+### Requirement: The screenshots can be grouped
+The gallery SHALL be able to gather its screenshots by host, by service, by page
+title and by look - screenshots that look alike, as gowitness's perceptual
+grouping records them - and the user SHALL switch between these and no grouping
+with one click or one key (`b`), keeping the filter and the sort. Each group
+SHALL be named - a host by its address and names, a service by host, port and
+product, a look-alike group by the title its pages most often carry or, when
+they carry none, by their HTTP status - and SHALL say how many screenshots it
+holds, show the first few, and lead to the gallery narrowed to exactly its
+members. Host and service groups SHALL be in address and port order, title and
+look-alike groups largest first. Look-alike groups from different capture
+databases SHALL NOT be merged, since each database numbers its own.
+
+#### Scenario: Finding the odd one out
+- **WHEN** the user groups by look-alike on an engagement where fourteen login pages look the same and one differs
+- **THEN** the fourteen are one group and the odd page is a group of its own
+
+#### Scenario: Switching
+- **WHEN** the gallery is filtered with `hektor` and grouped by page title, and the user presses `b`
+- **THEN** it is grouped by look-alike, still filtered with `hektor`
+
+#### Scenario: Into a group
+- **WHEN** the user follows a group's link
+- **THEN** the gallery lists exactly that group's screenshots and says what it is narrowed to

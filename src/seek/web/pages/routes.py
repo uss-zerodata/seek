@@ -83,17 +83,30 @@ def gallery(request: Request, q: str = "", offset: int = 0,
             limit: int = query.DEFAULT_LIMIT, fragment: bool = False,
             sort: str = query.DEFAULT_SORT, desc: bool = False,
             address: str | None = None, protocol: str | None = None,
-            port: int | None = None, m: WebModel = Depends(model)):
+            port: int | None = None, title: str | None = None,
+            similar: str | None = None, url_host: str | None = None,
+            url_port: int | None = None, group: str = "",
+            m: WebModel = Depends(model)):
     sort = sort if sort in query.SORTS else query.DEFAULT_SORT
-    page = query.captures(m, q, offset, limit, sort, desc, address, protocol, port)
+    group = group if group in query.GROUPINGS else ""
     # What the list is narrowed to, and the parameters that keep it narrowed
-    # when paging - the "next" link must not drop the sort or the scope.
+    # when paging - the "next" link must not drop the sort, the scope or the
+    # grouping.
     scope = {k: v for k, v in (("address", address), ("protocol", protocol),
-                               ("port", port)) if v is not None}
+                               ("port", port), ("title", title), ("similar", similar),
+                               ("url_host", url_host), ("url_port", url_port))
+             if v is not None}
     keep = {"q": q, "sort": sort, **({"desc": "1"} if desc else {}), **scope}
-    return _list(request, "gallery.html", "_captures.html", fragment,
-                 page=page, q=q, nav="gallery", sort=sort, desc=desc,
-                 sorts=query.SORTS, scope=scope, keep=keep,
+    if group and not scope:
+        page = query.capture_groups(m, group, q, sort, desc, offset, min(limit, 100))
+        template, part = "gallery.html", "_groups.html"
+    else:
+        page = query.captures(m, q, offset, limit, sort, desc, address, protocol, port,
+                              title, similar, url_host, url_port)
+        template, part = "gallery.html", "_captures.html"
+    return _list(request, template, part, fragment,
+                 page=page, q=q, nav="gallery", sort=sort, desc=desc, group=group,
+                 groupings=query.GROUPINGS, sorts=query.SORTS, scope=scope, keep=keep,
                  understood=filtering.explain(filtering.parse_filter(q)) if q.strip() else [])
 
 

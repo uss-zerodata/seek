@@ -13,13 +13,22 @@
   </label>
   <label><input type="checkbox" name="desc" value="1" {% if desc %}checked{% endif %}> descending</label>
   {% for key, value in scope.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+  {% if group %}<input type="hidden" name="group" value="{{ group }}">{% endif %}
   <noscript><button type="submit">apply</button></noscript>
 </form>
+<nav class="groupings" aria-label="group the screenshots">
+  <span class="dim small">group by <kbd>b</kbd></span>
+  <a href="/?{{ dict(keep, group="") | urlencode }}" {% if not group %}aria-current="true"{% endif %}>nothing</a>
+  {% for key, label in groupings.items() %}<a href="/?{{ dict(keep, group=key) | urlencode }}" {% if group == key %}aria-current="true"{% endif %} data-group="{{ key }}">{{ label }}</a>{% endfor %}
+</nav>
 {% if scope %}
 <p class="scope">only
   {% if scope.address %}<a href="{{ links.host(scope.address) }}">{{ scope.address }}</a>{% endif %}
   {% if scope.port %}{{ scope.port }}/{{ scope.protocol or "" }}{% endif %}
-  · <a href="/?{{ {"q": q, "sort": sort} | urlencode }}">show every capture</a></p>
+  {% if scope.title is defined %}the page title “{{ scope.title or "(none)" }}”{% endif %}
+  {% if scope.similar %}one look-alike group{% endif %}
+  {% if scope.url_host %}{{ scope.url_host }}{% if scope.url_port %}:{{ scope.url_port }}{% endif %} (not in the scans){% endif %}
+  · <a href="/?{{ {"q": q, "sort": sort, "group": group} | urlencode }}">{{ "back to the groups" if group else "show every capture" }}</a></p>
 {% endif %}
-<div id="list">{% include "_captures.html" %}</div>
+<div id="list">{% if group and not scope %}{% include "_groups.html" %}{% else %}{% include "_captures.html" %}{% endif %}</div>
 {% endblock %}

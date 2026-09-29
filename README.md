@@ -408,7 +408,7 @@ gallery instead of one at a time in an image viewer.
 
 | Page | What it shows |
 | --- | --- |
-| `/` | every screenshot, with URL, status, title and the database it came from; failures say why. Sortable by address, host name, port, HTTP status, URL, title, time taken or database, either way; a card whose service was captured more than once links to all of them together |
+| `/` | every screenshot, with URL, status, title and the database it came from; failures say why. Sortable by address, host name, port, HTTP status, URL, title, time taken or database, either way; groupable by host, service, page title or look (screenshots that look alike, from gowitness's perceptual grouping) - one click or `b` switches; a card whose service was captured more than once links to all of them together |
 | `/hosts`, `/hosts/<address>` | hosts; one host's ports with each port's screenshots beside it |
 | `/services`, `/services/<proto>/<port>` | services by port number; one service with every host's screenshot |
 | `/captures/<id>` | the screenshot full size, headers, cookies, console log, technologies, TLS names |

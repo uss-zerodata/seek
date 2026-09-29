@@ -173,3 +173,15 @@ a.hit:hover, a.hit.active, a.all.active { background: var(--pill); text-decorati
 .syntax-table button.ex { font: .82rem ui-monospace, monospace; padding: 1px 6px; margin: 1px 2px 1px 0; }
 button.linkish { border: 0; background: none; color: var(--accent); padding: 0; cursor: pointer; }
 @media (max-width: 800px) { .global-search input { width: 100%; max-width: none; } .global-search { flex: 1; } }
+
+/* --- the gallery, grouped --------------------------------------------------------- */
+.groupings { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 0 0 12px; }
+.groupings a { padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--fg);
+               font-size: .88rem; }
+.groupings a[aria-current] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.groupings a:hover { text-decoration: none; border-color: var(--accent); }
+.shot-group { margin: 0 0 22px; }
+.shot-group h2 { display: flex; gap: 10px; align-items: baseline; font-size: 1rem; margin: 0 0 8px;
+                 padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+.shot-group h2 .group-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shot-group h2 a { margin-left: auto; white-space: nowrap; }

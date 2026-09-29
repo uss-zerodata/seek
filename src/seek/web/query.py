@@ -8,9 +8,11 @@ about which rows a filter keeps, or in what order they come.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from typing import TypeVar
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 from seek.nmap import filtering
 from seek.nmap.export import Record
@@ -154,25 +156,48 @@ SORTS: dict[str, tuple[str, Callable[[Placed], tuple]]] = {
 DEFAULT_SORT = "address"
 
 
-def _in_scope(p: Placed, address: str | None, protocol: str | None,
-              port: int | None) -> bool:
-    """The structured narrowing `w` and a card's "all for this service" use."""
-    if address is not None and (p.host is None or p.host.address != address):
-        return False
-    if port is not None and (p.service is None or p.service.port != port):
-        return False
-    if protocol is not None and (p.service is None or p.service.protocol != protocol):
-        return False
-    return True
+@dataclass(frozen=True, slots=True)
+class Scope:
+    """What the gallery is narrowed to - one host, one port, one page title,
+    one look-alike group - on top of the filter text."""
+
+    address: str | None = None
+    protocol: str | None = None
+    port: int | None = None
+    title: str | None = None
+    similar: str | None = None
+    # A capture of something not in the scans: the host and port of its URL.
+    url_host: str | None = None
+    url_port: int | None = None
+
+    def admits(self, p: Placed) -> bool:
+        if self.address is not None and (p.host is None or p.host.address != self.address):
+            return False
+        if self.port is not None and (p.service is None or p.service.port != self.port):
+            return False
+        if self.protocol is not None and (p.service is None
+                                          or p.service.protocol != self.protocol):
+            return False
+        if self.title is not None and _title_key(p) != _norm(self.title):
+            return False
+        if self.similar is not None and _similar_key(p) != self.similar:
+            return False
+        if self.url_host is not None:
+            host, port = _url_host(p)
+            if p.host is not None or host != self.url_host:
+                return False
+            if self.url_port is not None and port != self.url_port:
+                return False
+        return True
 
 
-def captures(model: WebModel, q: str = "", offset: int = 0,
-             limit: int = DEFAULT_LIMIT, sort: str = DEFAULT_SORT, desc: bool = False,
-             address: str | None = None, protocol: str | None = None,
-             port: int | None = None) -> s.Page[s.CaptureSummary]:
+def _filtered(model: WebModel, q: str, sort: str, desc: bool,
+              scope: Scope) -> tuple[list[Placed], int]:
+    """The gallery's captures for a filter and a scope, in order; and how many
+    looser matches were left out."""
     spec = filtering.parse_filter(q.strip()) if q.strip() else filtering.FilterSpec()
     kept = [p for p in model.captures
-            if _in_scope(p, address, protocol, port)
+            if scope.admits(p)
             and filtering.matches(spec, _capture_text(p),
                                   (p.host.address,) if p.host else (),
                                   (Record(p.host, p.service),) if p.host and p.service else ())]
@@ -184,15 +209,137 @@ def captures(model: WebModel, q: str = "", offset: int = 0,
     known = [(k[1], p) for k, p in keyed if k[0]]
     known.sort(key=lambda kp: kp[0], reverse=desc)
     rest = sorted((p for k, p in keyed if not k[0]), key=lambda p: p.capture.url)
-    ordered = [p for _k, p in known] + rest
+    return [p for _k, p in known] + rest, loose
 
-    def convert(p: Placed) -> s.CaptureSummary:
-        siblings = len(model.captures_of(p.host, p.service)) if p.host and p.service else 0
-        return s.out_capture(p, siblings=siblings)
 
-    page = _page(ordered, convert, offset, limit)
+def _summary(model: WebModel, p: Placed) -> s.CaptureSummary:
+    siblings = len(model.captures_of(p.host, p.service)) if p.host and p.service else 0
+    return s.out_capture(p, siblings=siblings)
+
+
+def captures(model: WebModel, q: str = "", offset: int = 0,
+             limit: int = DEFAULT_LIMIT, sort: str = DEFAULT_SORT, desc: bool = False,
+             address: str | None = None, protocol: str | None = None,
+             port: int | None = None, title: str | None = None,
+             similar: str | None = None, url_host: str | None = None,
+             url_port: int | None = None) -> s.Page[s.CaptureSummary]:
+    ordered, loose = _filtered(model, q, sort, desc,
+                               Scope(address, protocol, port, title, similar,
+                                     url_host, url_port))
+    page = _page(ordered, lambda p: _summary(model, p), offset, limit)
     page.loose = loose
     return page
+
+
+# --- grouping the gallery ------------------------------------------------------------
+#
+# The same captures, gathered by what they have in common: one host, one
+# service, one page title, or one look-alike group - gowitness's perceptual-hash
+# group, which puts screenshots that *look* the same together (every default
+# nginx page, every FRITZ!Box login) whatever their title says. Its ids are
+# numbered per database, so a group is named by database and id together.
+
+GROUPINGS: dict[str, str] = {
+    "host": "Host", "service": "Service", "title": "Page title", "similar": "Look-alike",
+}
+PER_GROUP = 12
+
+
+def _norm(title: str) -> str:
+    return " ".join(title.split()).casefold()
+
+
+def _title_key(p: Placed) -> str:
+    return _norm(p.capture.title)
+
+
+def _similar_key(p: Placed) -> str:
+    c = p.capture
+    if c.failed or c.perception_group is None:
+        return ""
+    digest = hashlib.sha1(str(c.database or "").encode()).hexdigest()[:6]
+    return f"{digest}-{c.perception_group}"
+
+
+def _url_host(p: Placed) -> tuple[str, int | None]:
+    split = urlsplit(p.capture.url)
+    return split.hostname or p.capture.url, split.port
+
+
+def _group_of(p: Placed, by: str) -> tuple[str, str, dict, tuple]:
+    """(key, label, the scope that is this group, the group's sort key)."""
+    c = p.capture
+    if by == "host":
+        if p.host is not None:
+            names = ", ".join(p.host.hostnames[:2])
+            return (f"h:{p.host.address}", " · ".join(filter(None, [p.host.address, names])),
+                    {"address": p.host.address}, (0, addr_key(p.host.address)))
+        host, _port = _url_host(p)
+        return (f"u:{host}", f"{host} (not in the scans)", {"url_host": host},
+                (1, host))
+    if by == "service":
+        if p.host is not None and p.service is not None:
+            svc = p.service
+            what = " ".join(filter(None, [svc.name, svc.product]))
+            return (f"s:{p.host.address}/{svc.protocol}/{svc.port}",
+                    f"{p.host.address}  {svc.port}/{svc.protocol}  {what}".strip(),
+                    {"address": p.host.address, "protocol": svc.protocol, "port": svc.port},
+                    (0, addr_key(p.host.address), port_key(svc.port, svc.protocol)))
+        host, port = _url_host(p)
+        scope = {"url_host": host, **({"url_port": port} if port else {})}
+        return (f"u:{host}:{port}", f"{host}:{port or '-'} (not in the scans)",
+                scope, (1, host, port or 0))
+    if by == "title":
+        key = _title_key(p)
+        if c.failed:
+            return "failed", "(capture failed)", {"q": "failed"}, (2, "")
+        if not key:
+            return "untitled", "(no title)", {"title": ""}, (1, "")
+        return f"t:{key}", " ".join(c.title.split()), {"title": c.title}, (0, key)
+    key = _similar_key(p)
+    if not key:
+        return "none", "(no screenshot to compare)", {"q": "failed"}, (1, "")
+    return f"p:{key}", "", {"similar": key}, (0, key)
+
+
+def capture_groups(model: WebModel, by: str, q: str = "", sort: str = DEFAULT_SORT,
+                   desc: bool = False, offset: int = 0, limit: int = 100,
+                   per_group: int = PER_GROUP) -> s.GroupPage:
+    """The filtered captures gathered by `by` - largest groups first for title
+    and look-alike, address and port order for host and service."""
+    ordered, loose = _filtered(model, q, sort, desc, Scope())
+    groups: dict[str, list] = {}
+    for p in ordered:
+        key, label, scope, order = _group_of(p, by)
+        entry = groups.setdefault(key, [label, scope, order, []])
+        entry[3].append(p)
+    if by == "similar":
+        for entry in groups.values():
+            if not entry[0]:
+                # Named by what its members most often say they are.
+                titles = [" ".join(p.capture.title.split()) for p in entry[3]
+                          if p.capture.title.strip()]
+                if titles:
+                    entry[0] = f"looks like: {max(set(titles), key=titles.count)}"
+                else:
+                    codes = [str(p.capture.status) for p in entry[3] if p.capture.status]
+                    code = max(set(codes), key=codes.count) if codes else ""
+                    entry[0] = "untitled pages" + (f" · {code}" if code else "")
+    if by in ("title", "similar"):
+        ranked = sorted(groups.items(), key=lambda kv: (kv[1][2][0], -len(kv[1][3]),
+                                                        kv[1][0].casefold()))
+    else:
+        ranked = sorted(groups.items(), key=lambda kv: kv[1][2])
+    out = []
+    for key, (label, scope, _order, members) in ranked[max(0, offset):offset + limit]:
+        more = {k: v for k, v in scope.items() if k != "q"}
+        text = " ".join(filter(None, [q.strip(), scope.get("q", "")]))
+        query_ = urlencode({**({"q": text} if text else {}), "sort": sort,
+                            **({"desc": "1"} if desc else {}), **more})
+        out.append(s.CaptureGroup(key=key, label=label, count=len(members), more=query_,
+                                  items=[_summary(model, p) for p in members[:per_group]]))
+    return s.GroupPage(by=by, groups=out, total=len(groups), captures=len(ordered),
+                       offset=offset, limit=limit, loose=loose)
 
 
 def capture(model: WebModel, capture_id: str) -> s.CaptureOut:

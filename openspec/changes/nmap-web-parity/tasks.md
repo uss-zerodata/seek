@@ -98,3 +98,10 @@
 - [x] 12.5 Header search (`Ctrl+K`): grouped hosts / services / names / screenshots as you type, arrows and Enter, a full `/search` page, "all →" to the tab with the same text
 - [x] 12.6 Syntax reference behind a `?` on every search box, examples that fill the box; terminal help updated
 - [x] 12.7 Tests: grammar, explain, prefer_firm, screenshot text, the search API and pages, the terminal's looser note
+
+## 13. The gallery, grouped
+
+- [x] 13.1 `query.capture_groups`: by host, service, page title, look-alike (gowitness's perception group, keyed with its database); named, counted, first twelve shown
+- [x] 13.2 `query.Scope`: title, look-alike and not-in-the-scans URL host/port narrowings, so every group's link lists exactly its members
+- [x] 13.3 `/api/v1/captures/groups`; the gallery's `group` parameter, a group-by switch that keeps filter and sort, `b` to step through
+- [x] 13.4 Tests: each grouping, order, naming, databases kept apart, every group's link, switching keeps the filter, unknown grouping

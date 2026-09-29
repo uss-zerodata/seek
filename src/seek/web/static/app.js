@@ -39,3 +39,15 @@ document.querySelectorAll("input[data-filter]").forEach((box) => {
   holder.appendChild(box);
   wire(holder, document.getElementById(box.dataset.filter), () => [["q", box.value]]);
 });
+
+// The gallery's grouping: `b` steps to the next one, as `b` steps through the
+// terminal's groupings. Not while typing.
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "b" || event.ctrlKey || event.metaKey || event.altKey) return;
+  if (event.target.closest("input, textarea, select, dialog")) return;
+  const links = [...document.querySelectorAll(".groupings a")];
+  if (!links.length) return;
+  const at = links.findIndex((a) => a.hasAttribute("aria-current"));
+  event.preventDefault();
+  window.location.href = links[(at + 1) % links.length].href;
+});

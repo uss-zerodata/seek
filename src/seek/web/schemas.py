@@ -386,3 +386,24 @@ class SearchOut(BaseModel):
     q: str
     understood: list[str] = []        # what the query was read as, in words
     groups: list[HitGroup] = []
+
+
+# --- the gallery, grouped ---------------------------------------------------------------
+
+
+class CaptureGroup(BaseModel):
+    key: str
+    label: str
+    count: int
+    more: str                        # query string: the gallery narrowed to this group
+    items: list[CaptureSummary] = []  # the first few
+
+
+class GroupPage(BaseModel):
+    by: str
+    groups: list[CaptureGroup]
+    total: int                       # groups in all
+    captures: int                    # captures in them
+    offset: int = 0
+    limit: int = 100
+    loose: int = 0

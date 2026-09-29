@@ -42,5 +42,5 @@
 ## features
 
 - [ ] allow the webinterface to use the full width of the browser window. currently the webinterface is limited in width.
-- [ ] allow grouping of hosts by host, service, website title and similarity of the image. this should be done in a way that the user can select which grouping to use and can switch between the different groupings easily.
+- [x] allow grouping of hosts by host, service, website title and similarity of the image. this should be done in a way that the user can select which grouping to use and can switch between the different groupings easily.
 - [ ] for services where multiple screenshots were taken, summarize them in a single screenshot page where the user can switch between the different screenshots.
