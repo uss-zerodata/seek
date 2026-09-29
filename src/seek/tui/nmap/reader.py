@@ -13,6 +13,15 @@ running scan's raw output is pushed into an open reader the same way it is
 pushed into the pane (`NmapApp._refresh_detail`), so it keeps streaming; a
 search is re-applied to the new lines as they arrive.
 
+**Two levels, like the pane.** Handed a record as `list[Line]`, the reader has
+a line cursor: `↑`/`↓` move it a line, lines that open something are links, and
+`o` follows one into a scan's own text. That is the second level, where `↑`/`↓`
+scroll and `←`/`→` step between the scans that saw the same subject; `Esc`
+comes back to the record at the link it left from. `←`/`→` on the record step
+between rows. Each level steps only within itself, so a reader in nmap's text
+is never handed a record by an arrow key. The app owns the data - the reader
+asks it through `on_step`, `on_open` and `on_sibling`.
+
 **Windowed like the search session's own `DetailScreen`.** Only the visible
 slice is painted per keystroke - a raw scan log can run to `runner.LOG_LIMIT`
 (20 000) lines, and laying all of them into one `Static` at once is the exact
@@ -33,13 +42,23 @@ from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widgets import Input, Static
 
+from seek.nmap import rawlog
+from seek.tui.nmap.detail import Line
+
 _FALLBACK_HEIGHT = 20
 _FALLBACK_WIDTH = 80
 _MATCH_STYLE = "black on yellow"
 _CURRENT_MATCH_STYLE = "bold black on bright_yellow"
 
+# A record handed over as lines, or anything else as one block.
+Content = RenderableType | list[Line]
+# What `on_open` / `on_sibling` hand back for a scan's text: the request it
+# answers, a title, and the text.
+RawPage = tuple[rawlog.Request, str, RenderableType]
 
-def render_to_lines(renderable: RenderableType, width: int) -> list[Text]:
+
+def render_to_lines(renderable: RenderableType, width: int,
+                    console: Console | None = None) -> list[Text]:
     """One styled `Text` per screen line, wrapped at `width`, style kept.
 
     A throwaway `Console` is used only to get Rich's own wrapping and to read
@@ -47,7 +66,8 @@ def render_to_lines(renderable: RenderableType, width: int) -> list[Text]:
     anything, so its own colour system has no bearing on how the lines end up
     looking once Textual renders them.
     """
-    console = Console(width=max(1, width), height=None, color_system="standard")
+    if console is None:
+        console = _console(width)
     lines: list[Text] = []
     for segments in console.render_lines(renderable, pad=False):
         text = Text()
@@ -55,6 +75,10 @@ def render_to_lines(renderable: RenderableType, width: int) -> list[Text]:
             text.append(segment.text, style=segment.style or "")
         lines.append(text)
     return lines or [Text("")]
+
+
+def _console(width: int) -> Console:
+    return Console(width=max(1, width), height=None, color_system="standard")
 
 
 class _Body(Static):
@@ -74,6 +98,7 @@ class DetailReader(ModalScreen[None]):
         Binding("escape,q", "back", "Back", show=False),
         Binding("up,k", "scroll(-1)", "Up", show=False),
         Binding("down,j", "scroll(1)", "Down", show=False),
+        Binding("o", "open", "Open the link", show=False),
         Binding("ctrl+u", "half(-1)", "½ page up", show=False),
         Binding("ctrl+d", "half(1)", "½ page down", show=False),
         Binding("pageup,b", "page(-1)", "Page up", show=False),
@@ -98,14 +123,31 @@ class DetailReader(ModalScreen[None]):
     DetailReader .controls { color: $text-muted; padding: 0 1; height: 1; }
     """
 
-    def __init__(self, title: str, renderable: RenderableType,
+    def __init__(self, title: str, renderable: Content,
                  on_freeze: Callable[[], None] | None = None,
-                 on_step: Callable[[int], tuple[str, RenderableType, bool] | None]
+                 on_step: Callable[[int], tuple[str, Content, bool] | None]
                  | None = None,
-                 follow: bool = False) -> None:
+                 follow: bool = False,
+                 on_open: Callable[[rawlog.Request], RawPage | None] | None = None,
+                 on_sibling: Callable[[rawlog.Request, int], RawPage | None]
+                 | None = None,
+                 raw: RawPage | None = None) -> None:
         super().__init__()
         self._title = title
         self._source = renderable
+        # The record's lines and the cursor over them; a single item, and no
+        # cursor to speak of, when the content is one block.
+        self._items: list[Line] = []
+        self._cursor = 0
+        self._starts: list[int] = [0]
+        self._on_open = on_open
+        self._on_sibling = on_sibling
+        # While a scan's text is showing: the request it answers, and the
+        # record to go back to - (title, content, cursor, top).
+        self._raw: rawlog.Request | None = None
+        self._record: tuple[str, Content, int, int] | None = None
+        if raw is not None:
+            self._enter_raw(raw, cursor=_opening(renderable, raw[0]))
         # `<-`/`->`: hand a direction to the list and get the neighbouring
         # row's record back, so entries are read one after another without
         # going back to the list and reopening. `None` at either end - the
@@ -144,6 +186,8 @@ class DetailReader(ModalScreen[None]):
     def on_mount(self) -> None:
         # The body has no real size until a layout pass has run.
         self.call_after_refresh(lambda: self._set_renderable(self._source))
+        if self._raw is not None:
+            self._set_title(self._title)
 
     def on_resize(self, _event: object) -> None:
         # Re-wrapping at the new width is the only correct response to a
@@ -152,13 +196,33 @@ class DetailReader(ModalScreen[None]):
 
     # --- content -------------------------------------------------------
 
-    def update(self, renderable: RenderableType) -> None:
-        """Replace the content - the live path, called as a scan streams."""
+    def update(self, renderable: Content) -> None:
+        """Replace the record - the live path, called as a scan streams.
+
+        While a scan's text is showing, the record underneath is what changed,
+        so it is the one kept up to date; the text on screen stays.
+        """
+        if self._record is not None:
+            title, _old, cursor, top = self._record
+            self._record = (title, renderable, cursor, top)
+            return
         self._source = renderable
         self._set_renderable(renderable)
 
-    def _set_renderable(self, renderable: RenderableType) -> None:
-        self._lines = render_to_lines(renderable, self._width())
+    def _set_renderable(self, renderable: Content) -> None:
+        width = self._width()
+        if isinstance(renderable, list):
+            self._items = renderable or [Line(Text(""))]
+            console = _console(width)
+            self._lines, self._starts = [], []
+            for item in self._items:
+                self._starts.append(len(self._lines))
+                self._lines += render_to_lines(item.text, width, console)
+        else:
+            self._items = [Line(renderable)]
+            self._starts = [0]
+            self._lines = render_to_lines(renderable, width)
+        self._cursor = max(0, min(self._cursor, len(self._items) - 1))
         self._reapply_search()
         if self._follow:
             self._top = self._clamp(len(self._lines) - self._height())
@@ -191,18 +255,43 @@ class DetailReader(ModalScreen[None]):
 
     # --- painting ------------------------------------------------------
 
+    def _has_cursor(self) -> bool:
+        return len(self._items) > 1
+
+    def _span(self, index: int) -> tuple[int, int]:
+        """The screen lines one record line occupies."""
+        start = self._starts[index]
+        end = self._starts[index + 1] if index + 1 < len(self._starts) else len(self._lines)
+        return start, end
+
+    def _item_at(self, screen_line: int) -> int:
+        """The record line that covers a screen line."""
+        found = 0
+        for i, start in enumerate(self._starts):
+            if start > screen_line:
+                break
+            found = i
+        return found
+
     def _paint(self) -> None:
         body = self._body()
         if body is None:
             return
         height = self._height()
         start, end = self._top, min(len(self._lines), self._top + height)
+        marked = self._span(self._cursor) if self._has_cursor() else (0, 0)
         by_line: dict[int, list[tuple[int, int, bool]]] = {}
         for i, (line, s, e) in enumerate(self._matches):
             by_line.setdefault(line, []).append((s, e, i == self._match_index))
         window: list[Text] = []
         for idx in range(start, end):
             line = self._lines[idx].copy()
+            if marked[0] <= idx < marked[1]:
+                # As in the pane: reverse video on the line itself, composed
+                # with what it already carries.
+                line.style = f"{line.style} reverse".strip()
+                if not line.plain.strip():
+                    line = Text(" " * 3, style="reverse")
             for s, e, current in by_line.get(idx, []):
                 line.stylize(_CURRENT_MATCH_STYLE if current else _MATCH_STYLE, s, e)
             window.append(line)
@@ -221,25 +310,144 @@ class DetailReader(ModalScreen[None]):
         self._paint()
 
     def action_scroll(self, direction: int) -> None:
+        """A line of the cursor on a record, a line of text otherwise.
+
+        Where the cursor cannot move - the ends, or one block of text - the
+        key scrolls instead, as it does in the pane.
+        """
+        if self._has_cursor():
+            at = max(0, min(len(self._items) - 1, self._cursor + direction))
+            if at != self._cursor:
+                self._cursor = at
+                self._follow = False
+                self._reveal_cursor()
+                self._update_controls()
+                return
         self._move(direction, follow=False)
+
+    def _reveal_cursor(self) -> None:
+        start, end = self._span(self._cursor)
+        height = self._height()
+        if start < self._top:
+            self._top = start
+        elif end > self._top + height:
+            self._top = start if end - start > height else end - height
+        self._top = self._clamp(self._top)
+        self._paint()
+
+    def _cursor_into_view(self) -> None:
+        """After a jump by pages, the cursor goes where the reader is looking."""
+        if not self._has_cursor():
+            return
+        start, end = self._span(self._cursor)
+        if end <= self._top or start >= self._top + self._height():
+            self._cursor = self._item_at(self._top)
+        self._update_controls()
 
     def action_half(self, direction: int) -> None:
         self._move(direction * max(1, self._height() // 2), follow=False)
+        self._cursor_into_view()
+        self._paint()
 
     def action_page(self, direction: int) -> None:
         self._move(direction * max(1, self._height() - 1), follow=False)
+        self._cursor_into_view()
+        self._paint()
 
     def action_to_top(self) -> None:
         self._top = 0
         self._follow = False
+        self._cursor = 0
         self._paint()
+        self._update_controls()
 
     def action_to_bottom(self) -> None:
         self._top = self._clamp(len(self._lines))
         self._follow = True
+        self._cursor = max(0, len(self._items) - 1)
         self._paint()
+        self._update_controls()
+
+    # --- following a link, and the scan's text it leads to ------------------
+
+    def _opens_here(self) -> rawlog.Request | None:
+        if self._raw is not None or not self._has_cursor():
+            return None
+        return self._items[self._cursor].opens
+
+    def action_open(self) -> None:
+        request = self._opens_here()
+        if request is None or self._on_open is None:
+            return
+        page = self._on_open(request)
+        if page is None:
+            return
+        self._record = (self._title, self._source, self._cursor, self._top)
+        self._enter_raw(page)
+        self._display_raw()
+
+    def _display_raw(self) -> None:
+        """Show the scan's text just entered, from its top. A search carries."""
+        self._top = 0
+        self._follow = False
+        self._match_index = -1
+        self._set_title(self._title)
+        self._set_renderable(self._source)
+
+    def _enter_raw(self, page: RawPage, cursor: int = 0) -> None:
+        """Take the scan's text as the content; keep the record to go back to."""
+        request, title, text = page
+        if self._record is None:
+            # Opened straight onto a scan's text: the record handed in is the
+            # one `Esc` comes back to, at the link that leads here.
+            self._record = (self._title, self._source, cursor, 0)
+        self._raw = request
+        self._title = title
+        self._source = text
+        self._cursor = 0
+
+    def _leave_raw(self) -> None:
+        title, content, cursor, top = self._record
+        self._raw = None
+        self._record = None
+        self._title = title
+        self._source = content
+        self._cursor = cursor
+        self._match_index = -1
+        self._set_title(title)
+        self._set_renderable(content)
+        self._top = self._clamp(top)
+        self._reveal_cursor()
+        self._update_controls()
+
+    def _set_title(self, title: str) -> None:
+        try:
+            self.query_one(".title", Static).update(f" {title} ")
+        except NoMatches:
+            pass
 
     def action_step(self, delta: int) -> None:
+        """The previous/next of whatever is showing: a row's record, or a scan.
+
+        In a scan's text it is the other scans of the same subject; on a record
+        it is the neighbouring rows. Never one for the other - an arrow that
+        swapped nmap's text for a record would be leaving the level unasked.
+        """
+        if self._raw is not None:
+            self._step_scan(delta)
+            return
+        self._step_row(delta)
+
+    def _step_scan(self, delta: int) -> None:
+        if self._on_sibling is None or self._raw is None:
+            return
+        page = self._on_sibling(self._raw, delta)
+        if page is None:
+            return
+        self._enter_raw(page)
+        self._display_raw()
+
+    def _step_row(self, delta: int) -> None:
         """Read the previous/next row's record in place.
 
         The list is the one that moves - it hands back the row it landed on,
@@ -263,11 +471,9 @@ class DetailReader(ModalScreen[None]):
         at its top and `n` goes to its first match, not its second.
         """
         self._title = title
-        try:
-            self.query_one(".title", Static).update(f" {title} ")
-        except NoMatches:
-            pass
+        self._set_title(title)
         self._top = 0
+        self._cursor = 0
         self._match_index = -1
         self._follow = follow
         self.update(renderable)
@@ -276,6 +482,9 @@ class DetailReader(ModalScreen[None]):
         box = self.query_one("#search-input", Input)
         if self.focused is box:
             self._clear_search()
+            return
+        if self._raw is not None and self._record is not None:
+            self._leave_raw()
             return
         self.dismiss(None)
 
@@ -336,6 +545,8 @@ class DetailReader(ModalScreen[None]):
             return
         line, _s, _e = self._matches[self._match_index]
         self._top = self._clamp(line - self._height() // 2)
+        if self._has_cursor():
+            self._cursor = self._item_at(line)
         self._follow = False
         self._paint()
 
@@ -388,5 +599,33 @@ class DetailReader(ModalScreen[None]):
             else:
                 status = f"/{self._term} — no matches"
             return f"{status}   n next · N prev · / edit · Esc clear · q back"
+        if self._raw is not None:
+            scans = " · ←/→ other scans" if self._on_sibling is not None else ""
+            return f"j/k ↑↓ scroll{scans} · / search · q/Esc back to the record"
         step = " · ←/→ entry" if self._on_step is not None else ""
-        return f"j/k ↑↓ scroll{step} · g/G ends · / search · q/Esc back"
+        move = "j/k ↑↓ line" if self._has_cursor() else "j/k ↑↓ scroll"
+        link = " · o open" if self._opens_here() is not None else ""
+        return f"{move}{link}{step} · g/G ends · / search · q/Esc back"
+
+
+def _opening(content: Content, request: rawlog.Request) -> int:
+    """Where in a record the link to this request is - where `Esc` lands."""
+    if not isinstance(content, list):
+        return 0
+    for i, line in enumerate(content):
+        opens = line.opens
+        if opens is not None and _same(opens, request):
+            return i
+    return 0
+
+
+def _same(a: rawlog.Request, b: rawlog.Request) -> bool:
+    """One scan's text about one subject - by what it is, not by object.
+
+    The pane's record and the reader's fuller one are built separately, so
+    their requests are equal without being the same object.
+    """
+    def port(r: rawlog.Request):
+        return None if r.service is None else (r.service.port, r.service.protocol)
+    return (a.entry.scan is b.entry.scan and a.host.address == b.host.address
+            and port(a) == port(b))

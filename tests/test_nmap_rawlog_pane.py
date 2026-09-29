@@ -8,12 +8,14 @@ output file, and one whose file cannot be read.
 
 from __future__ import annotations
 
+import copy
+import dataclasses
 import threading
 from pathlib import Path
 
 import pytest
 from rich.console import Console
-from textual.widgets import Static
+from textual.widgets import DataTable, Static
 
 from seek.config import Config
 from seek.nmap.merge import load
@@ -21,6 +23,7 @@ from seek.nmap.views import prepare
 from seek.tui.nmap import app as app_mod
 from seek.tui.nmap import detail as detail_pane
 from seek.tui.nmap.app import NmapApp
+from seek.tui.nmap.reader import DetailReader
 
 pytestmark = pytest.mark.asyncio
 FIX = Path(__file__).parent / "fixtures" / "nmap"
@@ -45,8 +48,10 @@ def _pane(app) -> str:
 async def _to_first_entry(pilot, app) -> None:
     await pilot.pause(0.2)
     assert app._openable(), "the record offers no scan to open"
-    await pilot.press("right")
+    for _ in range(app._openable()[0]):
+        await pilot.press("l")                  # the cursor, a line at a time
     await pilot.pause(0.05)
+    assert app._opens_here() is not None
 
 
 async def test_opening_an_entry_shows_what_that_scan_wrote_about_the_host():
@@ -212,25 +217,114 @@ async def test_the_scans_tab_keeps_its_own_meaning_for_the_key():
         assert app._raw is None
 
 
+def _reader_text(reader) -> str:
+    return "\n".join(line.plain for line in reader._lines)
+
+
+async def _open_reader(pilot, app):
+    await pilot.press("d")
+    await pilot.pause(0.3)
+    reader = app.screen
+    assert isinstance(reader, DetailReader)
+    return reader
+
+
 async def test_the_reader_opens_whichever_state_the_pane_is_in():
     app = _app("basic")
     async with app.run_test(size=(120, 40)) as pilot:
         await _to_first_entry(pilot, app)
-        row = app._current_row()
-
-        _title, renderable, _follow = app._reader_payload(row)
-        console = Console(width=110, record=True, file=open("/dev/null", "w"))
-        console.print(renderable)
-        assert "Nmap scan report" not in console.export_text(), "the record, so far"
+        reader = await _open_reader(pilot, app)
+        assert "Nmap scan report" not in _reader_text(reader), "the record, so far"
+        await pilot.press("escape")
+        await pilot.pause(0.2)
 
         await pilot.press("o")
         await pilot.pause(0.1)
-        title, renderable, _follow = app._reader_payload(row)
-        console = Console(width=110, record=True, file=open("/dev/null", "w"))
-        console.print(renderable)
-        body = console.export_text()
-        assert "Nmap scan report for alpha.example" in body
-        assert "192.0.2.1" in title and "basic" in title
+        reader = await _open_reader(pilot, app)
+        assert "Nmap scan report for alpha.example" in _reader_text(reader)
+        assert "192.0.2.1" in reader._title and "basic" in reader._title
+
+
+async def test_escape_in_the_reader_goes_from_the_text_to_the_record():
+    """Opened on a scan's text, the reader goes back to the record first."""
+    app = _app("basic")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _to_first_entry(pilot, app)
+        await pilot.press("o")
+        await pilot.pause(0.1)
+        reader = await _open_reader(pilot, app)
+
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+        assert app.screen is reader, "still in the reader"
+        assert "Nmap scan report" not in _reader_text(reader), "on the record"
+        assert reader._opens_here() is not None, "at the link it came from"
+
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+        assert not isinstance(app.screen, DetailReader)
+
+
+async def test_the_reader_has_a_line_cursor_and_follows_links():
+    app = _app("basic")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        reader = await _open_reader(pilot, app)
+        assert reader._cursor == 0
+        await pilot.press("j")
+        assert reader._cursor == 1, "every line is a stop"
+        await pilot.press("k")
+        assert reader._cursor == 0
+
+        links = [i for i, line in enumerate(reader._items) if line.opens is not None]
+        assert links, "the record lists the scans that saw it"
+        for _ in range(links[0]):
+            await pilot.press("down")
+        assert "o open" in reader._controls_text()
+        await pilot.press("o")
+        await pilot.pause(0.2)
+        assert "Nmap scan report for alpha.example" in _reader_text(reader)
+        assert app.query_one(DataTable).cursor_row == 0, "the list did not move"
+
+
+async def test_the_arrows_in_the_text_step_between_scans_not_rows(monkeypatch):
+    app = _app("basic")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _to_first_entry(pilot, app)
+        # A second scan of the same host: the same file under another identity,
+        # built once so the steps agree about which one is which.
+        (entry,) = app._siblings(app._opens_here())
+        pair = [entry, dataclasses.replace(entry, scan=copy.copy(entry.scan))]
+        monkeypatch.setattr(app, "_siblings", lambda r: pair)
+        await pilot.press("o")
+        await pilot.pause(0.1)
+        reader = await _open_reader(pilot, app)
+        table = app.query_one(DataTable)
+        assert "scan 1 of 2" in _reader_text(reader)
+
+        await pilot.press("right")
+        await pilot.pause(0.1)
+        assert "scan 2 of 2" in _reader_text(reader), "the other scan's text"
+        assert "Nmap scan report" in _reader_text(reader), "still nmap's text"
+        assert table.cursor_row == 0, "not another row"
+        await pilot.press("right")
+        await pilot.pause(0.1)
+        assert "scan 2 of 2" in _reader_text(reader), "it stops at the end"
+        await pilot.press("left")
+        await pilot.pause(0.1)
+        assert "scan 1 of 2" in _reader_text(reader)
+
+
+async def test_the_arrows_on_the_record_still_step_rows():
+    app = _app("basic")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        reader = await _open_reader(pilot, app)
+        first = reader._title
+        await pilot.press("right")
+        await pilot.pause(0.1)
+        assert app.query_one(DataTable).cursor_row == 1
+        assert reader._title != first and "Nmap scan report" not in _reader_text(reader)
 
 
 def _held(monkeypatch, release: threading.Event):
@@ -315,89 +409,41 @@ async def test_escape_abandons_a_read_still_in_flight(monkeypatch):
 # --- the arrows keep meaning "between entries" once one is open ---------------
 
 
-async def test_the_arrows_step_between_the_scans_of_the_same_subject():
-    """Reading what several scans each said about one host is the comparison
-    the feature exists for; leaving and coming back for every one of them
-    would be the long way round."""
-    app = _app("basic", "scripts", "xml-only")
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause(0.3)
-        # A host all three scans would have to record is not in these fixtures,
-        # so drive the stepping through the app's own entry list instead.
-        await _to_first_entry(pilot, app)
-        request = app._opens_here()
-        await pilot.press("o")
-        await pilot.pause(0.1)
-        assert app._raw is not None
-        entries = app._siblings(request)
-
-        first = app._raw[0].entry.scan
-        await pilot.press("right")
-        await pilot.pause(0.1)
-        if len(entries) > 1:
-            assert app._raw[0].entry.scan is not first, "moved to the next scan"
-            await pilot.press("left")
-            await pilot.pause(0.1)
-        assert app._raw[0].entry.scan is first, "and back again"
-
-
-async def test_stepping_stops_at_the_ends_rather_than_wrapping():
+async def test_the_arrows_read_the_raw_output_rather_than_leave_it():
+    """Inside a scan's text ←/→ move the cursor, as everywhere in the pane."""
     app = _app("basic")
     async with app.run_test(size=(120, 40)) as pilot:
         await _to_first_entry(pilot, app)
         await pilot.press("o")
         await pilot.pause(0.1)
         at = app._raw[0].entry.scan
-        for _ in range(4):
-            await pilot.press("right")
-            await pilot.pause(0.05)
-        assert app._raw is not None, "stepping never leaves the raw state"
-        assert app._raw[0].entry.scan is at, "one scan, nowhere to step to"
-        for _ in range(4):
-            await pilot.press("left")
-            await pilot.pause(0.05)
-        assert app._raw[0].entry.scan is at
-
-
-async def test_stepping_leaves_escape_going_back_to_where_it_was_opened():
-    app = _app("basic")
-    async with app.run_test(size=(120, 40)) as pilot:
-        await _to_first_entry(pilot, app)
-        opened_at = app._line
-        await pilot.press("o")
-        await pilot.pause(0.1)
         await pilot.press("right")
-        await pilot.pause(0.1)
-        await pilot.press("escape")
-        await pilot.pause(0.1)
-        assert app._raw is None
-        assert app._line == opened_at, "however far the reader wandered"
+        await pilot.pause(0.05)
+        assert app._raw is not None and app._raw[0].entry.scan is at
+        assert app._line == 1, "the cursor moved a line"
+        await pilot.press("left")
+        await pilot.pause(0.05)
+        assert app._line == 0
 
 
-async def test_the_raw_state_says_which_scan_of_how_many_and_how_to_reach_them():
+async def test_the_raw_state_says_which_scan_and_how_to_read_it():
     app = _app("basic")
     async with app.run_test(size=(150, 40)) as pilot:
         await _to_first_entry(pilot, app)
         await pilot.press("o")
         await pilot.pause(0.1)
-        # One scan: nothing to step to, so nothing offers a key that does nothing.
-        assert "scan 1 of" not in _pane(app)
+        assert "scan 1 of" not in _pane(app), "one scan: no position to give"
         hints = str(app.query_one("#hint-bar", Static).render())
-        assert "other scans" not in hints
-        assert "JK" in hints and "back to the record" in hints
+        assert "←→" in hints and "back to the record" in hints
         assert hints.count("Esc") == 1, "the way out is offered once"
 
 
-async def test_the_hint_bar_offers_the_other_scans_when_there_are_any(monkeypatch):
-    """Two scans of one host: the bar names the arrows and says where you are."""
+async def test_the_raw_state_says_which_of_several_scans_it_is(monkeypatch):
     app = _app("basic")
     async with app.run_test(size=(150, 40)) as pilot:
         await _to_first_entry(pilot, app)
-        request = app._opens_here()
         real = app._siblings
         monkeypatch.setattr(app, "_siblings", lambda r: real(r) * 2)
         await pilot.press("o")
         await pilot.pause(0.1)
         assert "scan 1 of 2" in _pane(app)
-        assert "other scans (1 of 2)" in str(app.query_one("#hint-bar", Static).render())
-        assert request is not None

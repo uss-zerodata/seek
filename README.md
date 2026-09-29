@@ -84,7 +84,7 @@ yourself replaces the drill-down. The filter box uses the same fuzzy grammar (`'
 | Key | Action |
 | --- | --- |
 | `↑` `↓` / `j` `k` | select a row — the detail below follows |
-| `←` `→` | scroll the detail of the selected row |
+| `←` `→` / `h` `l` | move the detail pane's line cursor · `o` opens an underlined line |
 | `PageUp` `PageDown` | page the list |
 | `Home` `End` / `g` `G` | first / last row |
 | `Enter` | open the selected row — press again to keep digging |
@@ -92,7 +92,7 @@ yourself replaces the drill-down. The filter box uses the same fuzzy grammar (`'
 | `/` | filter (`Enter` or `Esc` returns to the list) |
 | `1`…`9` | sort by that column, ascending — or click its heading; again reverses it |
 | `r` | hosts with at least one open port only (on a host: open ports only) |
-| `d` | open the detail full-screen: searchable, `←`/`→` steps entries · `D` show / hide the pane |
+| `d` | open the detail full-screen: searchable, `o` follows links, `←`/`→` steps entries (or scans, in nmap's text) · `D` show / hide the pane |
 | `s` | statistics · `b` group by · `u` up hosts only (on a host: open ports only) |
 | `m` `M` | mark the selected row · clear every mark |
 | `n` | new scan · `o` report view · `p` freeze log · `c` cancel |
@@ -174,22 +174,21 @@ list the scans that recorded them, one per line, saying what each one found.
 own text, scoped to that host or that port — not the whole file, which runs to
 tens of thousands of lines. That is where the things nmap reports only in its
 text are readable: `Not shown: 984 filtered tcp ports (no-response)`, the
-`REASON` a port was called open, the timing of the scan. Inside it, `←`/`→` step between
-the scans that saw the same host or port, so what three of them each recorded
-can be read in one place; the heading says which of how many you are on. `Esc`
-goes back to the record, at the entry it was opened from however far you
-stepped, and `d` opens whichever of the two the pane is showing full-screen
+`REASON` a port was called open, the timing of the scan. The heading says which
+of how many scans you are on; the record lists the others. `Esc` goes back to
+the record, at the entry it was opened from, and `d` opens whichever of the two the pane is showing full-screen
 with search and paging. A scan handed over as XML
 alone left no `.nmap` file; its entry shows a report rebuilt from what was
 parsed and says so, rather than the feature quietly disappearing.
 
-*The detail pane is navigated by a cursor.* `J`/`K` move it a line at a time and
-the record scrolls to keep it in view; `←`/`→` jump it to the next and previous
-line that opens something, since a record is mostly lines that do not. Where
-there is nowhere to move — a scan's report, which is one block rather than a
-list of lines, or the end of a long record — both pairs scroll instead, so
-nothing is unreadable. The hint bar offers `o` only when the line under the
-cursor is one that opens something.
+*The detail pane has a line cursor, like a text editor.* `←`/`→` (or `h`/`l`)
+move it up and down one line and the record scrolls to keep it in view, while
+`↑`/`↓` (or `j`/`k`) keep moving the list. Every line is a stop; lines that open
+something - the scans that saw a host or port - are underlined, and `o` opens
+the one under the cursor. Where the cursor has nowhere to go, a scan's report
+being one block, the keys scroll instead. To go through the rows' records one
+after another, use the full-screen reader (`d`), where `↑`/`↓` scroll and
+`←`/`→` step to the previous and next row.
 
 *Every long step reports the same way.* Reading files, folding them together,
 building the scan history and projecting an overview all report work done
@@ -316,7 +315,7 @@ and names anything it left aside. A filter that uses none of this works exactly
 as before.
 
 Rows are clipped to fit the terminal rather than overflowing — the full value is
-in the detail pane, which scrolls with `←`/`→` when a record is long.
+in the detail pane, which `←`/`→` move through when a record is long.
 
 A number (or a click on the heading) sorts by that column, ascending; the same
 column again reverses it, and again flips it back. The arrow in the heading and
@@ -343,7 +342,11 @@ search keeps matching the new lines; `p` freezes it to read without the scan
 stopping, exactly as it does in the pane. `Esc` clears a search first, then
 leaves the reader.
 
-`←`/`→` inside the reader read the previous and next entry in the list
+The reader has the pane's two levels. On a record, `↑`/`↓` move a line cursor
+and `o` follows an underlined link into that scan's text; there, `↑`/`↓`
+scroll, `←`/`→` switch to the other scans of the same host or port, and `Esc`
+comes back to the record at the link - a second `Esc` leaves the reader. On a
+record, `←`/`→` read the previous and next entry in the list
 without leaving it, so a record can be compared against its neighbours - and an
 active search carries across, recounted against each entry, which is the fast
 way to find which host a term actually appears on. The list moves with you:

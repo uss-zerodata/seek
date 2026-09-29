@@ -769,27 +769,19 @@ async def test_narrow_terminals_clip_cells_rather_than_overflow():
 
 
 async def test_the_detail_pane_scrolls():
-    """The pane comes up to meet its cursor, rather than being scrolled blind.
-
-    `J` moves the cursor a line; the record moves only once the cursor reaches
-    the edge of what is visible, which is why a single press does not scroll.
-    """
+    """The record comes up to meet its cursor, and goes back down with it."""
     app = _app("vuln")
     async with app.run_test(size=(120, 34)) as pilot:
         await pilot.press("enter")           # a report taller than the pane
         await pilot.pause(0.3)
         pane = app.query_one("#detail")
         assert pane.max_scroll_y > 0, "the report must exceed the pane"
-        assert pane.scroll_offset.y == 0
-        await pilot.press("J")
-        await pilot.pause(0.1)
-        assert pane.scroll_offset.y == 0, "the cursor is still on screen"
         for _ in range(len(app._lines)):
-            await pilot.press("J")
+            await pilot.press("l")
         await pilot.pause(0.2)
         assert pane.scroll_offset.y > 0
         for _ in range(len(app._lines)):
-            await pilot.press("K")
+            await pilot.press("h")
         await pilot.pause(0.2)
         assert pane.scroll_offset.y == 0 and app._line == 0
 
@@ -800,7 +792,7 @@ async def test_moving_to_another_row_returns_the_report_to_the_top():
         await pilot.press("enter")
         await pilot.pause(0.3)
         for _ in range(len(app._lines)):
-            await pilot.press("J")
+            await pilot.press("right")
         await pilot.pause(0.2)
         assert app.query_one("#detail").scroll_offset.y > 0
         await pilot.press("down")
@@ -901,9 +893,8 @@ async def test_columns_are_titled_and_numbered_for_sorting():
 async def test_left_and_right_act_on_the_pane_not_on_the_columns():
     """`DataTable` binds them to column movement; the viewer's binding wins.
 
-    What they do on the pane changed - they jump between the lines that can be
-    opened rather than scrolling it - but the thing this guards is unchanged:
-    they must never move the table's own column cursor.
+    They move the record pane's line cursor; whatever they do there, they
+    must never move the table's own column cursor.
     """
     app = _app("vuln")
     async with app.run_test(size=(120, 34)) as pilot:
@@ -911,12 +902,9 @@ async def test_left_and_right_act_on_the_pane_not_on_the_columns():
         await pilot.pause(0.3)
         table = app.query_one(DataTable)
         assert table.cursor_column == 0
-        marks = app._openable()
-        assert marks, "a service's record offers the scans that saw it"
-
         await pilot.press("right")
         await pilot.pause(0.1)
-        assert app._line == marks[0], "the pane's cursor went to an entry"
+        assert app._line == 1, "the pane's cursor moved a line"
         assert table.cursor_column == 0, "and the table's columns did not move"
 
         await pilot.press("left")

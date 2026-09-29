@@ -658,9 +658,11 @@ The system SHALL let the user move through a list with the up and down arrow
 keys, page through it, and jump to its first and last row, so that a scan of
 several hundred hosts can be traversed without holding a key down. Navigation
 SHALL keep the selected row and its detail in step. The left and right arrow keys
-SHALL scroll the selected row's record, since a row-oriented list has no
-horizontal cursor to move. While the filter is being edited the arrow keys SHALL
-move the text cursor as usual.
+SHALL move through the selected row's record, since a row-oriented list has no
+horizontal cursor to move. Every arrow key SHALL have a vim equivalent that does
+exactly the same thing - `k`/`j` for up/down, `h`/`l` for left/right - so either
+set navigates the whole viewer. While the filter is being edited the arrow keys
+SHALL move the text cursor as usual.
 
 Opening the detail SHALL show the selected row's record full-screen for reading
 and searching; a separate action SHALL show or hide the inline detail pane, so
@@ -679,9 +681,9 @@ the full-screen reader.
 - **WHEN** a filter changes which rows are listed
 - **THEN** the selection lands on the first matching row and the detail shows it
 
-#### Scenario: Left and right scroll the record
-- **WHEN** the selected row's record is taller than the space for it and the user presses the right arrow
-- **THEN** the record scrolls, and the selected row does not change
+#### Scenario: Left and right move through the record
+- **WHEN** the selected row's record is taller than the space for it and the user presses the right arrow, or `l`, repeatedly
+- **THEN** the record's line cursor moves down and the record scrolls to follow it, and the selected row does not change
 
 #### Scenario: Arrows edit the filter while it is focused
 - **WHEN** the user is typing in the filter and presses the left arrow
@@ -817,51 +819,45 @@ value is available in the detail below. The layout SHALL follow a resize.
 ### Requirement: A long record is navigated by a line cursor
 When the record for the selected row is taller than the space available, the user
 SHALL be able to move through it without leaving the list or losing the selection.
-The pane SHALL be navigated by a cursor that moves one line at a time and is
-visibly distinguished from the rest of the record, rather than by scrolling with
-no indication of position: the record contains lines that can be acted on, and
-which line is current has to be answerable before one can be chosen.
+The pane SHALL have a line cursor, as a text editor does: the left and right
+arrow keys, and `h`/`l`, SHALL move it one line up and down, every line SHALL be
+a stop, and the cursor line SHALL be visibly distinguished. The pane SHALL keep
+the cursor in view, moving the record under it when the cursor reaches an edge
+of the visible region. Where the cursor cannot move - a record that is one block
+of text, or its last line - the same keys SHALL scroll the record a line instead.
+Moving the list to another row SHALL return the cursor to the top of the new
+record.
 
-The pane SHALL keep the cursor in view, moving the record under it when the
-cursor reaches an edge of the visible region. Moving the list to another row
-SHALL return the cursor to the top of the new record.
+Lines that can be opened SHALL be styled as links, so they can be told apart
+before the cursor reaches them, and the open key SHALL open the line under the
+cursor when it is one.
 
-Most lines of a record cannot be acted on, so the system SHALL also let the user
-move the cursor directly to the next and to the previous line that can be, and
-SHALL make clear which lines those are. Reaching the end SHALL stop there rather
-than wrapping.
+The pane SHALL NOT step between rows or between scans itself: the previous and
+next row are read in the full-screen reader, or by moving the list.
 
-The keys that move this cursor SHALL be distinct from those that move the list,
-so that neither moves the other, and SHALL keep working when the record contains
-no line that can be acted on — moving through it is how a long record is read.
+#### Scenario: Moving through a long record
+- **WHEN** the selected row's record does not fit and the user presses the right arrow repeatedly
+- **THEN** the cursor moves down a line per press, the record scrolls once the cursor reaches the edge, and the list selection is unchanged
 
-#### Scenario: Moving through a long report
-- **WHEN** the selected row's record does not fit and the user moves the pane cursor down
-- **THEN** the cursor moves down a line, the record scrolls once the cursor reaches the edge, and the list selection is unchanged
+#### Scenario: Moving back up
+- **WHEN** the cursor is at the end of a long record and the user presses the left arrow repeatedly
+- **THEN** the cursor moves up a line per press and the record scrolls once the cursor reaches the top edge
 
-#### Scenario: The current line is visible
-- **WHEN** the pane cursor is on a line
-- **THEN** that line is distinguished from the rest of the record
+#### Scenario: Arrows and vim keys agree
+- **WHEN** the user presses `l` or `h` instead of the right or left arrow
+- **THEN** the cursor moves exactly as the arrow would move it
+
+#### Scenario: Links are visible
+- **WHEN** a record lists the scans that saw its subject
+- **THEN** those lines are styled as links, and the open key opens one when the cursor is on it
 
 #### Scenario: A new selection starts at the top
 - **WHEN** the user moves the pane cursor down a record and then selects a different row
 - **THEN** the new record is shown from its beginning with the cursor on its first line
 
-#### Scenario: Jumping to the next line that can be opened
-- **WHEN** the record's openable entries are far below the cursor and the user presses the jump-to-next key
-- **THEN** the cursor moves to the next such line rather than a line at a time
-
-#### Scenario: Jumping past the last one
-- **WHEN** the cursor is on the last line that can be opened and the user jumps forward again
-- **THEN** the cursor stays where it is rather than wrapping to the first
-
-#### Scenario: A record with nothing to open
-- **WHEN** the record contains no line that can be opened
-- **THEN** the cursor still moves through it a line at a time and the record can still be read to its end
-
-#### Scenario: The two cursors are independent
-- **WHEN** the user moves the pane cursor
-- **THEN** the list selection does not move, and the keys that move the list do not move the pane cursor
+#### Scenario: A record that is one block of text
+- **WHEN** the record is a single block, such as a scan's report, and the user presses the right arrow
+- **THEN** the record scrolls a line
 ### Requirement: An empty list explains itself
 A list with no rows SHALL say why it is empty and how to leave that state. It
 SHALL keep the column headers, which say what would be there, and place the
@@ -1088,7 +1084,17 @@ When the reader is showing a scan that is still running, its output SHALL
 continue to update as the scan produces it, and an active search SHALL apply to
 the new output as it arrives.
 
-The reader SHALL let the user read the previous and next entry of the list it
+The reader SHALL have the same two levels as the pane, and its arrow keys SHALL
+stay within the level on screen. On a record it SHALL have a line cursor that
+the up and down keys move a line at a time, with the lines that open something
+styled as links and the open key following the one under the cursor into that
+scan's text. On a scan's text the up and down keys SHALL scroll, the left and
+right keys SHALL show the previous and next scan's text about the same subject,
+stopping at the ends, and leaving SHALL return to the record at the link it was
+opened from rather than closing the reader. A reader opened on the text the pane
+is showing SHALL likewise return to that row's record first.
+
+On a record, the reader SHALL let the user read the previous and next entry of the list it
 was opened from without leaving it, so neighbouring records can be compared in
 one place. Stepping SHALL move the list selection with it, so leaving the reader
 lands on the entry last read, and SHALL stop at the ends of the list rather than
@@ -1121,6 +1127,18 @@ act on the reader, never on the list underneath it.
 #### Scenario: Reachable from every tab
 - **WHEN** the selected row is a host, a service, a grouping or a scan
 - **THEN** opening the detail full-screen shows that row's record
+
+#### Scenario: Following a link in the reader
+- **WHEN** the reader shows a host's record and the user moves the cursor to a scan it lists and opens it
+- **THEN** that scan's text about the host is shown in the reader, and the list selection is unchanged
+
+#### Scenario: Stepping between scans stays in the text
+- **WHEN** the reader shows one scan's text about a host that several scans saw, and the user presses the right arrow
+- **THEN** the next scan's text about the same host is shown, not another row's record
+
+#### Scenario: Leaving the text returns to the record
+- **WHEN** the reader shows a scan's text and the user presses the key that leaves
+- **THEN** the reader shows the record again with the cursor on that scan's link, and leaving again closes the reader
 
 #### Scenario: Reading the next entry without leaving
 - **WHEN** the user steps to the next entry from inside the reader

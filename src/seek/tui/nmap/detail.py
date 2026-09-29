@@ -84,13 +84,17 @@ def scan_entries(host: Host, scanned: rawlog.Scanned,
     for entry in found:
         line = Text(" " * 4)
         line.append("• ", style=_KEY)
-        line.append(f"{entry.label:<{width}}")
+        # Underlined like a link: this line opens something, and the cursor's
+        # reverse video alone would not say so until it landed here.
+        line.append(entry.label, style=_LINK)
+        line.append(" " * (width - len(entry.label)))
         line.append(f"   {entry.summary()}", style=_KEY)
         if not entry.written:
             line.append("   (no output file)", style="dim italic")
         out.append(Line(line, opens=rawlog.Request(entry, host, service)))
     return out
 _KEY = "dim"
+_LINK = "underline"
 _HEAD = "bold cyan"
 _SECTION = "bold"
 
@@ -604,13 +608,11 @@ def raw_record(request: rawlog.Request, excerpt: rawlog.Excerpt,
     elif request.entry.path is not None:
         head.append(f"   {request.entry.path.name}", style=_KEY)
     parts: list[RenderableType] = [head]
-    # Which of the subject's scans this is. Without it there is nothing to say
-    # that the other four exist, and the arrows that reach them are a key
-    # nobody would think to press.
+    # Which of the subject's scans this is: the record it was opened from
+    # lists the others, one link each.
     if at is not None and at[1] > 1:
         where = Text("  ")
         where.append(f"scan {at[0]} of {at[1]}", style=_SECTION)
-        where.append("   ← → for the others", style=_KEY)
         parts.append(where)
     parts.append(Text(""))
     if excerpt.problem:

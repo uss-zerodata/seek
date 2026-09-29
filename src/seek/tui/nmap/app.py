@@ -47,6 +47,7 @@ from seek.runner import Run
 from seek.tui.cells import cell_len, clip_cells, width_of
 from seek.tui.menu import ChoiceScreen, MultiChoiceScreen, PromptScreen
 from seek.tui.nmap import detail as detail_pane
+from seek.tui.nmap import reader as reader_mod
 from seek.tui.nmap import scans as scan_views
 from seek.tui.nmap import views as vdefs
 from seek.tui.nmap.commands import ScanCommands
@@ -257,48 +258,45 @@ class ScanTable(DataTable):
     """The list, with ←/→ reassigned.
 
     `DataTable` uses them to move between columns, which does nothing useful in
-    row-cursor mode - so they scroll the report below instead, leaving ↑/↓ to
-    move the selection. Binding them here rather than on the app keeps them out
-    of the filter box, where they still edit text.
+    row-cursor mode - so they move the record's line cursor below instead,
+    leaving ↑/↓ to move the list. `h`/`l` are the same two keys, bound on the
+    app. Binding the arrows here rather than on the app keeps them out of the
+    filter box, where they still edit text.
     """
 
     BINDINGS = [
-        # These used to be a second pair bound to what `J`/`K` already did.
-        # Now that the pane has a cursor, they are the useful half of moving it:
-        # a record is mostly lines that cannot be opened, so the arrows go
-        # between the ones that can while `J`/`K` step through every line.
-        Binding("left", "entry(-1)", "Previous entry", show=False),
-        Binding("right", "entry(1)", "Next entry", show=False),
+        Binding("left", "line(-1)", "Detail up", show=False),
+        Binding("right", "line(1)", "Detail down", show=False),
     ]
 
-    def action_entry(self, direction: int) -> None:
-        self.app.action_entry(direction)
+    def action_line(self, direction: int) -> None:
+        self.app.action_line(direction)
 
 
 _HINTS = {
-    "hosts": [("↑↓", "select"), ("JK←→", "read record"), ("↵", "services"), ("v", "swap"),
+    "hosts": [("↑↓", "select"), ("←→", "read record"), ("↵", "services"), ("v", "swap"),
               ("1-9", "sort"), ("/", "filter"), ("u", "up"), ("r", "open ports"),
               ("s", "stats"), ("b", "group"), ("d", "detail"), ("m", "mark"), ("n", "scan"),
               ("x", "export"), ("?", "help"), ("^P", "commands")],
-    "services": [("↑↓", "select"), ("JK←→", "read record"), ("↵", "hosts"), ("v", "swap"),
+    "services": [("↑↓", "select"), ("←→", "read record"), ("↵", "hosts"), ("v", "swap"),
                  ("1-9", "sort"), ("/", "filter"), ("s", "stats"),
                  ("b", "group"), ("d", "detail"), ("m", "mark"), ("n", "scan"),
                  ("x", "export"), ("?", "help"), ("^P", "commands")],
-    "host-detail": [("↑↓", "select"), ("JK←→", "read record"), ("↵", "same service everywhere"),
+    "host-detail": [("↑↓", "select"), ("←→", "read record"), ("↵", "same service everywhere"),
                     ("1-9", "sort"), ("u", "open only"),
                     ("/", "filter"), ("d", "detail"), ("D", "pane"), ("m", "mark"),
                     ("x", "export"), ("?", "help"), ("^P", "commands")],
-    "group-hosts": [("↑↓", "select"), ("JK←→", "read record"), ("↵", "host"),
+    "group-hosts": [("↑↓", "select"), ("←→", "read record"), ("↵", "host"),
                     ("1-9", "sort"), ("/", "filter"), ("d", "detail"), ("m", "mark"),
                     ("x", "export"), ("?", "help"), ("^P", "commands")],
-    "service-detail": [("↑↓", "select"), ("JK←→", "read record"), ("↵", "host"),
+    "service-detail": [("↑↓", "select"), ("←→", "read record"), ("↵", "host"),
                        ("1-9", "sort"), ("/", "filter"), ("d", "detail"), ("m", "mark"),
                        ("x", "export"), ("?", "help"), ("^P", "commands")],
-    "grouping": [("↑↓", "select"), ("JK←→", "read record"), ("↵", "hosts"),
+    "grouping": [("↑↓", "select"), ("←→", "read record"), ("↵", "hosts"),
                  ("b", "next grouping"), ("1-9", "sort"), ("/", "filter"),
                  ("d", "detail"), ("m", "mark"), ("x", "export"), ("?", "help"),
                  ("^P", "commands")],
-    "names": [("↑↓", "select"), ("JK←→", "read record"), ("↵", "hosts"),
+    "names": [("↑↓", "select"), ("←→", "read record"), ("↵", "hosts"),
               ("1-9", "sort"), ("/", "filter"), ("d", "detail"),
               ("m", "mark"), ("n", "scan"), ("x", "export"), ("?", "help"),
               ("^P", "commands")],
@@ -400,12 +398,11 @@ class NmapApp(App[int]):
         Binding("u", "up", "Up hosts / open ports only", show=False),
         Binding("d", "open_detail", "Open detail", show=False),
         Binding("D", "toggle_detail", "Detail pane", show=False),
-        # J/K move the report's own cursor, pairing with j/k moving the list
-        # above. They scrolled it blindly before; the record now says which
-        # line is current, because a line has to be current before it can be
-        # chosen.
-        Binding("K", "line(-1)", "Detail up", show=False),
-        Binding("J", "line(1)", "Detail down", show=False),
+        # One key pair per axis, arrows and vim alike: ↑↓/jk move the list,
+        # ←→/hl move the record's line cursor. The arrows are bound on the
+        # table (`ScanTable`) so the filter box keeps them for editing.
+        Binding("h", "line(-1)", "Detail up", show=False),
+        Binding("l", "line(1)", "Detail down", show=False),
         Binding("n", "new_scan", "New scan", show=False),
         Binding("o", "report_mode", "Report view", show=False),
         Binding("p", "freeze_log", "Freeze the log", show=False),
@@ -501,9 +498,8 @@ class NmapApp(App[int]):
         # of the same one leaves the reader's scroll position alone.
         self._detail_target: int | None = None
         # The record the pane is showing, and which of its lines the cursor is
-        # on. The cursor is what selects a line to open, so it exists whether
-        # or not the record has anything openable in it - moving through a
-        # record is also how a long one is read.
+        # on - any line, as in a text editor; a line that opens something is
+        # styled as a link, and `o` opens it while the cursor is there.
         self._lines: list[detail_pane.Line] = []
         self._line = 0
         # The raw output the pane is showing instead of a record, if any, and
@@ -1274,10 +1270,7 @@ class NmapApp(App[int]):
                 # nothing while it is showing, and a bar still offering them
                 # would be describing a screen that is not there. `Esc` is
                 # appended below, as it is for every other state.
-                shown, total = self._position()
-                items = [("JK", "read")]
-                if total > 1:
-                    items.append(("←→", f"other scans ({shown} of {total})"))
+                items = [("←→", "read")]
                 items.append(("d", "full screen"))
             elif self._opens_here() is not None:
                 items.insert(0, ("o", "raw log"))
@@ -2528,7 +2521,7 @@ class NmapApp(App[int]):
             # (`o`) or a freeze toggle (`p`) reflected in it, with no separate
             # "is the reader open on this row" bookkeeping.
             deep, _ = self._detail_content(row, full=True)
-            self._reader.update(detail_pane.as_group(deep))
+            self._reader.update(deep)
         # Scrolling is decided by *what changed*, not by what kind of row this
         # is. A new record starts at the top; the same record being re-rendered
         # must not move, or a live run's log throws the reader back to the top
@@ -2536,7 +2529,7 @@ class NmapApp(App[int]):
         moved = id(target) != self._detail_target
         if moved:
             # A different row is a different record: its cursor starts at the
-            # top, as the pane's scroll position always has.
+            # top, as the pane's scroll position does.
             self._line = 0
             pane.update(self._with_cursor(lines))
         self._detail_target = id(target)
@@ -2606,53 +2599,18 @@ class NmapApp(App[int]):
     def action_line(self, delta: int) -> None:
         """Move the pane's cursor one line - or scroll, when it cannot move.
 
-        A record is not always a list of lines to step through: a scan's report
-        and a capture's log are one renderable as far as the pane is concerned,
-        so the cursor has a single stop and moving it does nothing. Falling
-        back to scrolling is what keeps those readable, and it is also what the
-        end of a long record needs, where the last line wraps below the fold.
+        Every line is a stop, as in a text editor, and the record scrolls to
+        keep the cursor in view. A scan's report and a capture's log are one
+        renderable as far as the pane is concerned, so the cursor has a single
+        stop there; falling back to scrolling a line is what keeps those
+        readable, and the end of a long record whose last line wraps below the
+        fold too.
         """
         if not self._lines:
             return
         at = max(0, min(len(self._lines) - 1, self._line + delta))
         if at == self._line:
             self.action_scroll_detail(delta)
-            return
-        self._line = at
-        self._show_line()
-
-    def action_entry(self, delta: int) -> None:
-        """Move between the record's entries - or, in the raw state, between them.
-
-        One meaning in both states: the arrows go between entries. In a record
-        that is the lines that open one, because a host with a dozen services
-        is forty lines with three entries in it and a cursor that only stepped
-        would cost thirty presses to reach one. In the raw output it is the
-        scans themselves - reading what three scans each said about the same
-        host is the comparison the whole feature exists for, and having to
-        leave and come back for every one of them would be the long way round.
-
-        Stops at the ends rather than wrapping, either way, so the key never
-        silently takes the reader back past where they started.
-        """
-        if self._raw is not None or self._raw_pending is not None:
-            self._step_entry(delta)
-            return
-        marks = self._openable()
-        if not marks:
-            # Nothing to step between: the statistics, the groupings and a
-            # scan's own report have no entries. Scroll instead of doing
-            # nothing - these keys read the pane, and a key that reads nothing
-            # is worse than one that does the obvious thing.
-            self.action_scroll_detail(delta)
-            return
-        later = [i for i in marks if i > self._line] if delta > 0 else []
-        earlier = [i for i in marks if i < self._line] if delta < 0 else []
-        at = later[0] if later else marks[-1]
-        if delta < 0:
-            at = earlier[-1] if earlier else marks[0]
-        if at == self._line:
-            self.action_scroll_detail(delta)        # already at the last one
             return
         self._line = at
         self._show_line()
@@ -2699,36 +2657,13 @@ class NmapApp(App[int]):
         """Every scan that recorded this request's subject, in scan order."""
         return self._scans_index().entries(request.host, request.service)
 
-    def _step_entry(self, delta: int) -> None:
-        """Show the previous or next scan's account of the same subject."""
-        showing = self._raw[0] if self._raw is not None else self._raw_pending
-        if showing is None:
-            return
-        entries = self._siblings(showing)
-        here = next((i for i, e in enumerate(entries)
-                     if e.scan is showing.entry.scan), -1)
-        if here < 0:
-            self.action_scroll_detail(delta)
-            return
-        at = max(0, min(len(entries) - 1, here + delta))
-        if at == here:
-            # The only scan that saw this, or the end of them: scroll the text
-            # rather than leaving the key dead.
-            self.action_scroll_detail(delta)
-            return
-        # `_raw_from` is left alone: `Esc` still goes back to the line the
-        # reader opened, whichever scan they wandered to from there.
-        self._open_raw(rawlog.Request(entries[at], showing.host, showing.service),
-                       keep_origin=True)
-
-    def _open_raw(self, request: rawlog.Request, keep_origin: bool = False) -> None:
+    def _open_raw(self, request: rawlog.Request) -> None:
         """Show what one scan wrote about the record's subject.
 
         Inline unless the file is big enough that reading and cutting it would
         be felt between keystrokes; see `_RAW_INLINE_MAX`.
         """
-        if not keep_origin:
-            self._raw_from = self._line
+        self._raw_from = self._line
         path = request.entry.path
         cached = self._files_read.get(path) if path is not None else None
         if path is not None and cached is None and self._too_big(path):
@@ -2854,25 +2789,47 @@ class NmapApp(App[int]):
             return True
         return pane.scroll_offset.y >= pane.max_scroll_y - 1
 
-    def _reader_payload(self, row: vdefs.Row | None) -> tuple[str, RenderableType, bool]:
-        """What the reader needs to show one row: title, record, follow-tail."""
-        if self._raw is not None:
-            # Whatever the pane is showing is what the reader opens, so search
-            # and paging reach the raw text with no separate way in.
-            request, excerpt = self._raw
-            lines = detail_pane.raw_record(request, excerpt)
-            title = f"{request.entry.label} · {request.subject}"
-        else:
-            lines, title = self._detail_content(row, full=True)
-        renderable = detail_pane.as_group(lines)
+    def _reader_payload(self, row: vdefs.Row | None) -> tuple[str, reader_mod.Content, bool]:
+        """What the reader needs to show one row: title, record, follow-tail.
+
+        Always the record, as lines, so the reader has a cursor and links on
+        it. A scan's text the pane happens to be showing is handed over
+        separately (`action_open_detail`), as the level above this one.
+        """
+        lines, title = self._detail_content(row, full=True)
         target = row.target if row is not None else None
         # Match the pane's own rule for the same case (`_refresh_detail`'s
         # scroll_end): only a running scan's raw log opens at the newest line.
         follow = (isinstance(target, ScanRun) and target.running
                  and self._report_mode == "raw" and not self._log_frozen)
-        return title, renderable, follow
+        return title, lines, follow
 
-    def _step_detail(self, delta: int) -> tuple[str, RenderableType, bool] | None:
+    def _raw_page(self, request: rawlog.Request) -> reader_mod.RawPage:
+        """One scan's text about one subject, for the reader.
+
+        Read synchronously: the reader asked for it with a key and has nothing
+        else to show meanwhile, and the file is cached for the pane as well.
+        """
+        path = request.entry.path
+        source = self._file_text(path) if path is not None else None
+        excerpt = rawlog.read(request, source=source)
+        entries = self._siblings(request)
+        here = next((i for i, e in enumerate(entries) if e.scan is request.entry.scan), 0)
+        lines = detail_pane.raw_record(request, excerpt, at=(here + 1, len(entries)))
+        return (request, f"{request.entry.label} · {request.subject}",
+                detail_pane.as_group(lines))
+
+    def _raw_sibling(self, request: rawlog.Request,
+                     delta: int) -> reader_mod.RawPage | None:
+        """The previous/next scan's text about the same subject; `None` at the ends."""
+        entries = self._siblings(request)
+        here = next((i for i, e in enumerate(entries) if e.scan is request.entry.scan), -1)
+        at = here + delta
+        if here < 0 or not (0 <= at < len(entries)):
+            return None
+        return self._raw_page(rawlog.Request(entries[at], request.host, request.service))
+
+    def _step_detail(self, delta: int) -> tuple[str, reader_mod.Content, bool] | None:
         """`←`/`→` in the reader: move the list, hand back the row landed on.
 
         Moving the real cursor rather than tracking a second one in the reader
@@ -2897,9 +2854,15 @@ class NmapApp(App[int]):
         if row is None and not self._rows:
             self.notify("nothing to show", severity="warning")
             return
-        title, renderable, follow = self._reader_payload(row)
-        reader = DetailReader(title, renderable, on_freeze=self.action_freeze_log,
-                              on_step=self._step_detail, follow=follow)
+        title, content, follow = self._reader_payload(row)
+        # Whatever the pane is showing is what the reader opens on: a scan's
+        # text opens as that, with the record behind it for `Esc`.
+        showing = self._raw[0] if self._raw is not None else self._raw_pending
+        raw = self._raw_page(showing) if showing is not None else None
+        reader = DetailReader(title, content, on_freeze=self.action_freeze_log,
+                              on_step=self._step_detail, follow=follow,
+                              on_open=self._raw_page, on_sibling=self._raw_sibling,
+                              raw=raw)
         self._reader = reader
         try:
             await self.push_screen_wait(reader)
@@ -2949,15 +2912,13 @@ class NmapApp(App[int]):
         self._refresh_status()
 
     def action_scroll_detail(self, direction: int) -> None:
-        """Scroll the pane without moving its cursor.
+        """Scroll the pane one line, for a record the cursor cannot move in.
 
-        Kept for the record that has no cursor to move - a scan's report is one
-        line as far as the pane is concerned, and paging through it is what the
-        reader is for.
+        Paging through a long one is what `d` is for.
         """
         try:
             self.query_one("#detail", VerticalScroll).scroll_relative(
-                y=direction * 3, animate=False)
+                y=direction, animate=False)
         except NoMatches:
             return
 

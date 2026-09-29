@@ -559,24 +559,35 @@ stdout, `cd`) cannot run while Textual owns the screen. They set
   reader becoming two descriptions of a record. A *line* is one thing a
   renderer emitted, not one row of the terminal: a wrapped line is one cursor
   stop, so the cursor does not move when the window is resized.
-- **`J`/`K` move the pane's cursor; `←`/`→` jump between openable lines.** The
-  arrows used to be a second pair bound to what `J`/`K` already did. A record
-  is forty lines with three entries in it, so a cursor that only stepped would
-  cost thirty presses to reach one - the arrows go between the lines that can
-  be opened, and stop at the ends rather than wrapping. `o` opens the line
-  under the cursor, and keeps its report-mode meaning on the Scans tab, where
-  no line is openable: the two are disjoint by construction, not by precedence.
-  The arrows mean the same thing in both of the pane's states - *between
-  entries*. In a record that is the lines that open one; in the raw output it
-  is the scans themselves, so what several of them said about one host can be
-  compared without leaving and coming back for each.
-  **And when the movement a key means is impossible, it scrolls.** Both pairs.
-  A scan's report and a capture's log are a single renderable as far as the
-  pane is concerned, so the cursor has one stop and moving it does nothing -
-  without the fall-back those records cannot be read past the fold at all,
-  which is what these keys did before the cursor existed. The same rule covers
-  a record with no entries to jump between, and the end of a long one whose
-  last line wraps below the fold. Both were found by testing, in that order.
+- **One key pair per axis, and every arrow has its vim twin.** `↑`/`↓` and
+  `j`/`k` move the list; `←`/`→` and `h`/`l` move the record pane's line
+  cursor, like a text editor's: every line is a stop, the record scrolls to
+  keep the cursor in view, and a line that opens something is *underlined*
+  (`detail._LINK`) so it reads as a link before the cursor reaches it - `o`
+  opens the line under the cursor. There is no `J`/`K`: a second pair doing
+  what an arrow does is the divergence this rule exists to prevent. The arrows
+  are bound on `ScanTable`, not the app, so the filter box keeps them for
+  editing; `h`/`l` are app bindings because a focused `Input` swallows
+  printable keys anyway. The pane does not step between rows or between scans
+  - reading one record after another is the full-screen reader's job (`d`:
+  `↑`/`↓` scroll, `←`/`→` step rows), or the list's.
+  **When the cursor cannot move, the keys scroll a line.** A scan's report
+  and a capture's log are one renderable as far as the pane is concerned, so
+  the cursor has one stop; without the fall-back those records could not be
+  read past the fold at all.
+- **The reader has the pane's two levels, and an arrow never leaves one.**
+  `DetailReader` is handed a record as `list[Line]` (so it has a cursor and
+  links, like the pane) or anything else as one block (plain scroll - a live
+  log, and every test that builds one from a `Group`). `o` asks the app
+  (`on_open` → `NmapApp._raw_page`) for a scan's text and keeps the record in
+  `_record` for `Esc`; in the text `←`/`→` ask `on_sibling` for the other
+  scans of the *same subject*, never `on_step` for another row - that was the
+  bug: stepping from nmap's text landed on a different row's record. A reader
+  opened while the pane shows raw output starts in the text with the row's
+  record behind it (`raw=`), and `_opening` finds the link by scan, address
+  and port, because the pane's record and the reader's fuller one are built
+  separately. `update()` while in the text refreshes the record behind it,
+  not the text on screen.
 - **`nmap/rawlog.py` answers "which lines", never "what do they mean".** It
   cuts one host or one port out of a scan's `.nmap` text by boundary search -
   a report line opens a host, a port line opens a port, `|`/`|_` continue it.
