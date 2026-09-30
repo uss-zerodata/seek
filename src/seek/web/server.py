@@ -29,6 +29,8 @@ from urllib.parse import urlencode
 from seek.web.source import ModelSource, WebModel
 
 _STARTUP_TIMEOUT = 5.0
+# How far past a busy configured port to look for a free one.
+_PORT_ATTEMPTS = 100
 
 
 class WebError(RuntimeError):
@@ -44,10 +46,8 @@ def is_loopback(host: str) -> bool:
         return False
 
 
-def _probe(host: str, port: int) -> None:
-    """Fail now, with a message, rather than from inside a dying thread."""
-    if port == 0:
-        return
+def _bindable(host: str, port: int) -> bool:
+    """Whether `port` is free; any failure other than "in use" is raised."""
     family = socket.AF_INET6 if ":" in host else socket.AF_INET
     with socket.socket(family, socket.SOCK_STREAM) as sock:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -55,10 +55,23 @@ def _probe(host: str, port: int) -> None:
             sock.bind((host, port))
         except OSError as exc:
             if exc.errno == errno.EADDRINUSE:
-                raise WebError(f"port {port} is in use - set web_port in the "
-                               f"config to use another") from None
+                return False
             raise WebError(f"cannot listen on {host}:{port}: "
                            f"{exc.strerror or exc}") from None
+    return True
+
+
+def _probe(host: str, port: int) -> int:
+    """The first free port from `port` upward - fail now, with a message,
+    rather than from inside a dying thread."""
+    if port == 0:
+        return 0
+    last = min(port + _PORT_ATTEMPTS - 1, 65535)
+    for candidate in range(port, last + 1):
+        if _bindable(host, candidate):
+            return candidate
+    raise WebError(f"ports {port}-{last} are all in use - set web_port in the "
+                   f"config to use another")
 
 
 def _quiet() -> None:
@@ -108,7 +121,7 @@ class WebServer:
         if not is_loopback(self.host):
             raise WebError(f"the web interface binds to loopback only, not "
                            f"{self.host} - set web_host to 127.0.0.1")
-        _probe(self.host, self.port)
+        self.port = _probe(self.host, self.port)
         uvicorn, create_app, server_cls = await asyncio.to_thread(_load_stack)
         _quiet()
         config = uvicorn.Config(create_app(self.source, self.session, self.origin),

@@ -32,8 +32,10 @@ database it came from.
 The interface SHALL bind to a loopback address and a port taken from the
 configuration. When the configured address is not a loopback address, the system
 SHALL refuse to start the interface and say why, rather than exposing the
-engagement's data on the network. When the port is already in use, the system
-SHALL say so and name the setting that changes it.
+engagement's data on the network. When the configured port is already in use, the
+system SHALL try the next port up, and so on, without asking, and report the port
+it listens on; only when no port in a bounded range above the configured one is
+free SHALL it say so and name the setting that changes it.
 
 #### Scenario: Default binding
 - **WHEN** the interface is started with the default configuration
@@ -45,7 +47,11 @@ SHALL say so and name the setting that changes it.
 
 #### Scenario: The port is taken
 - **WHEN** another program already listens on the configured port
-- **THEN** the user is told the port is in use and which setting changes it
+- **THEN** the interface starts on the next free port above it and the address shown carries that port
+
+#### Scenario: No port in the range is free
+- **WHEN** the configured port and every port in the range above it are in use
+- **THEN** the interface is not started and the user is told the ports are in use and which setting changes it
 
 ### Requirement: The interface works without internet access
 Every page SHALL be complete with what the interface itself serves: no script,

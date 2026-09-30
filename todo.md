@@ -32,15 +32,17 @@
 - [x] when going back from one view to the previous, search filters are not being preserved. please make sure the user can always return to the previous view with the same search filters applied and with the curser being at the same position as it was when leaving the view. this should be true for all views, including the main view, host list, service list and port list.
 - [x] when opening a nmap scan result directly within the detail view, but not in fullscreen mode, the scan cannot be scrolled, as scrolling here collides with the switching between the nmap scan results. please make sure that in this detail view, the user can scroll through the result using left and right arrow keys. switching between the nmap scan results should only be possible when the user is in fullscreen mode. here the scrolling is then done using up and down arrow keys, while left and right arrow keys are used to switch between the nmap scan results. the separation of these modes is really important here to make it work.
 - [x] gowhittness results are not being loaded for all provided paths. please check how the gowhitness results are being loaded and make sure that all provided paths are being considered and scanned recursively for gowhitness results.
+- [ ] check version numbers for known vulnerabilities against a vulnerability database and highlight the vulnerable services in the service list. this way the user can easily identify application version with known vulnerabilities. 
+- [ ] check version numbers for out of date software against the endoflife.date database and highlight the out of date services in the service list. this way the user can easily identify application version which are no longer supported by the vendor and may have known vulnerabilities.
 
 # seek nmap webinterface
 
 ## bugs
 
-- [ ] when launching the webinterface and the port is already being used, increment the port number by one and try again until a free port is found. this should be done automatically without user interaction.
+- [x] when launching the webinterface and the port is already being used, increment the port number by one and try again until a free port is found. this should be done automatically without user interaction.
 
 ## features
 
-- [ ] allow the webinterface to use the full width of the browser window. currently the webinterface is limited in width.
+- [x] allow the webinterface to use the full width of the browser window. currently the webinterface is limited in width.
 - [x] allow grouping of hosts by host, service, website title and similarity of the image. this should be done in a way that the user can select which grouping to use and can switch between the different groupings easily.
 - [ ] for services where multiple screenshots were taken, summarize them in a single screenshot page where the user can switch between the different screenshots.

@@ -22,8 +22,9 @@ from seek.nmap.merge import load
 from seek.nmap.views import prepare
 from seek.tui.nmap import views as vdefs
 from seek.web import query
+from seek.web import server as server_mod
 from seek.web.app import create_app
-from seek.web.server import WebError, WebServer, is_loopback, path_for
+from seek.web.server import WebError, WebServer, _probe, is_loopback, path_for
 from seek.web.source import CachedSource, WebModel, capture_id
 
 NMAP = Path(__file__).parent / "fixtures" / "nmap"
@@ -405,14 +406,19 @@ def test_a_non_loopback_address_is_refused():
                               _free_port()).start())
 
 
-def test_a_port_in_use_is_reported_with_its_setting():
+def test_a_port_in_use_moves_on_to_the_next_free_one():
     with socket.socket() as busy:
         busy.bind(("127.0.0.1", 0))
         busy.listen()
         port = busy.getsockname()[1]
-        with pytest.raises(WebError, match=f"port {port} is in use.*web_port"):
-            asyncio.run(WebServer(CachedSource(_scans, gw.Captures), "127.0.0.1",
-                                  port).start())
+        assert _probe("127.0.0.1", port) > port
+
+
+def test_a_run_of_busy_ports_is_reported_with_its_setting(monkeypatch):
+    monkeypatch.setattr(server_mod, "_bindable", lambda host, port: False)
+    with pytest.raises(WebError, match="ports 7272-7371 are all in use.*web_port"):
+        asyncio.run(WebServer(CachedSource(_scans, gw.Captures), "127.0.0.1",
+                              7272).start())
 
 
 # --- sorting and narrowing the gallery ------------------------------------------------------

@@ -19,7 +19,7 @@ a:hover { text-decoration: underline; }
 .brand { font-weight: 700; color: var(--fg); }
 nav { display: flex; gap: 16px; }
 nav a[aria-current] { color: var(--fg); font-weight: 600; }
-main { padding: 16px; max-width: 1600px; margin: 0 auto; }
+main { padding: 16px; }
 h1 { font-size: 1.35rem; margin: 4px 0 12px; overflow-wrap: anywhere; }
 h2 { font-size: 1.1rem; margin: 24px 0 8px; }
 h3 { font-size: 1rem; margin: 0 0 8px; font-weight: 600; }
