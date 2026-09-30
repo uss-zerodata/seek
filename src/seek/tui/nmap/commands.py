@@ -44,6 +44,8 @@ _STATIC: list[tuple[str, str, str, object]] = [
      "action_reverse", None),
     ("Filter", "Narrow the list; CIDR terms filter by range (/)", "action_filter", None),
     ("New scan", "Scope, preset, command, review, run (n)", "action_new_scan", None),
+    ("Scan unversioned ports", "-sV --version-all on the open ports with no version (U)",
+     "action_scan_unversioned", None),
     ("Cancel the running scan", "Ends the process (c)", "action_cancel_scan", None),
     ("Freeze the log", "Stops the view, not the scan (p)", "action_freeze_log", None),
     ("Report view", "Overview, diff or raw output (o)", "action_report_mode", None),

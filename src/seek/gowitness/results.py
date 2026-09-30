@@ -32,6 +32,7 @@ import sqlite3
 import threading
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from html import unescape
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -131,6 +132,8 @@ class Capture:
     tls: str = ""
     sans: list[str] = field(default_factory=list)
     shot: Path | None = None
+    # The page's `<meta name="generator">`, when the stored HTML has one.
+    generator: str = ""
     failure: str = ""
     # The database this was read from - `None` for a failure recovered from a
     # run's log. Two databases can hold the same URL; this is what tells the
@@ -268,6 +271,37 @@ def _tls_line(row: sqlite3.Row) -> str:
     return " · ".join(bits)
 
 
+# The head of a page is all a generator tag can be in; reading a bounded prefix
+# keeps a database of large pages from costing their full size in memory.
+_HTML_HEAD = 65536
+_META = re.compile(r"<meta\b[^>]{0,1000}>", re.IGNORECASE)
+_ATTR = re.compile(r"""\b([a-z-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""", re.IGNORECASE)
+
+
+def meta_generator(html: str) -> str:
+    """The `content` of a page's `<meta name="generator">`, or empty."""
+    for tag in _META.findall(html):
+        attrs = {m.group(1).lower(): m.group(2) or m.group(3) or m.group(4) or ""
+                 for m in _ATTR.finditer(tag)}
+        if attrs.get("name", "").lower() == "generator":
+            return unescape(attrs.get("content", "")).strip()
+    return ""
+
+
+def _generators(con: sqlite3.Connection, tables: set[str]) -> dict[int, str]:
+    """Each result's generator tag, read from the stored HTML if there is any."""
+    if "results" not in tables or not {"id", "html"} <= _columns(con, "results"):
+        return {}
+    out: dict[int, str] = {}
+    for rid, head in con.execute(
+            f"select id, substr(html, 1, {_HTML_HEAD}) from results where html != ''"):
+        if isinstance(head, str):
+            found = meta_generator(head)
+            if found:
+                out[rid] = found
+    return out
+
+
 def _shot(shots, name: str) -> Path | None:
     if not name or shots is None:
         return None
@@ -322,6 +356,8 @@ def read_database(path: Path, shots: Path | Callable[[str], Path | None] | None 
             label = " ".join(str(x) for x in (status, mime) if x)
             network.setdefault(row["result_id"], []).append(
                 (str(row["url"]) if "url" in keys else "", label))
+
+        generators = _generators(con, tables)
 
         sans: dict[int, list[str]] = {}
         for row in _rows(con, "tls_san_lists", ("tls_id", "value"), tables):
@@ -378,6 +414,7 @@ def read_database(path: Path, shots: Path | Callable[[str], Path | None] | None 
                 tls=tls_line.get(rid, ""),
                 sans=tls_sans.get(rid, []),
                 shot=_shot(shots, name),
+                generator=generators.get(rid, ""),
                 failure=str(get("failed_reason") or "") if get("failed") else "",
                 database=path,
             ))

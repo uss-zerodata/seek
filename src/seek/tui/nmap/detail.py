@@ -26,6 +26,7 @@ from rich.console import Group, RenderableType
 from rich.text import Text
 
 from seek.gowitness.results import Capture, Captures
+from seek.nmap import inventory as inv_mod
 from seek.nmap import names as name_mod
 from seek.nmap import rawlog, vulns
 from seek.nmap.export import service_urls
@@ -398,7 +399,8 @@ def _state_text(host: Host) -> tuple[str, str]:
 
 
 def host_detail(host: Host, shots: Captures | None = None, full: bool = False,
-                scanned: rawlog.Scanned | None = None) -> list[Line]:
+                scanned: rawlog.Scanned | None = None,
+                inventory: inv_mod.Inventory | None = None) -> list[Line]:
     state, style = _state_text(host)
     os_text = host.os or ABSENT
     if host.os and host.osclass:
@@ -436,6 +438,8 @@ def host_detail(host: Host, shots: Captures | None = None, full: bool = False,
         parts.append(_section("Services", len(host.open_services)))
         for svc in host.open_services:
             parts.append(Line(_bullet(svc.label()), to=(host, svc)))
+    if inventory is not None:
+        parts.extend(_host_software(host, inventory))
     every_url = [url for svc in host.open_services
                  for url in service_urls(svc, host)]
     captures = _capture_rows(list(dict.fromkeys(every_url)), shots)
@@ -456,7 +460,8 @@ def host_detail(host: Host, shots: Captures | None = None, full: bool = False,
 
 def service_detail(svc: Service, host: Host | None = None,
                    shots: Captures | None = None, full: bool = False,
-                   scanned: rawlog.Scanned | None = None) -> list[Line]:
+                   scanned: rawlog.Scanned | None = None,
+                   inventory: inv_mod.Inventory | None = None) -> list[Line]:
     state_line = Text()
     state_line.append(f"  {'state':<{_LABEL_W}}", style=_KEY)
     state_line.append(str(svc.state or ABSENT), style="bold green" if svc.is_open else _KEY)
@@ -488,6 +493,12 @@ def service_detail(svc: Service, host: Host | None = None,
             line.append(f"{name:<32}")
             line.append(source, style=_KEY)
             parts.append(line)
+    if inventory is not None and host is not None:
+        comps = inventory.of_service(host, svc)
+        if comps:
+            parts.append(Text(""))
+            parts.append(_section("Software", len(comps)))
+            parts.extend(_software_block(comps))
     urls = service_urls(svc, host)
     if urls:
         parts.append(Text(""))
@@ -630,9 +641,110 @@ def raw_pending(request: rawlog.Request) -> list[Line]:
     ])
 
 
+def _component_line(c: inv_mod.Component, indent: int = 4) -> Text:
+    line = _bullet(c.label(), "bold" if c.versioned else "", indent)
+    if c.conflicting:
+        line.append("  conflicting versions", style="yellow")
+    elif not c.versioned:
+        line.append("  unversioned", style=_KEY)
+    line.append(f"  {inv_mod.KIND_NAMES.get(c.kind, c.kind)} · {c.confidence}", style=_KEY)
+    return line
+
+
+def _software_block(comps: list[inv_mod.Component]) -> list[Text]:
+    """Each component, its CPE, and - dimmed under it - who said so.
+
+    Every observation is listed, the ones that lost included: a conflict is a
+    thing for the reader to judge, and the record is where the evidence for it
+    has to be.
+    """
+    out: list[Text] = []
+    for c in comps:
+        out.append(_component_line(c))
+        cpe = Text(" " * 8)
+        cpe.append(f"{'cpe':<10}", style=_KEY)
+        if c.cpes:
+            cpe.append("   ".join(c.cpe23))
+            if c.cpe_origin == "alias":
+                cpe.append("  (from the alias table)", style=_KEY)
+        else:
+            cpe.append("no CPE", style="yellow")
+        out.append(cpe)
+        for o in c.observations:
+            line = Text(" " * 8, style=_KEY)
+            line.append(f"{o.source:<20}", style=_KEY)
+            line.append(f"{o.version or ABSENT:<12}",
+                        style="yellow" if c.conflicting and o.version else _KEY)
+            line.append(f" {o.product}", style=_KEY)
+            if o.detail:
+                line.append(f" · {o.detail}", style=_KEY)
+            out.append(line)
+    return out
+
+
+def _host_software(host: Host, inventory: inv_mod.Inventory) -> list[RenderableType]:
+    """The host's own components in full, and one line per service summarising
+    its stack - each service's own record has the evidence."""
+    parts: list[RenderableType] = []
+    own = inventory.of_host(host)
+    per_service = [(svc, inventory.of_service(host, svc)) for svc in host.open_services]
+    per_service = [(svc, comps) for svc, comps in per_service if comps]
+    if not own and not per_service:
+        return parts
+    parts.append(Text(""))
+    parts.append(_section("Software", len(own) + sum(len(c) for _s, c in per_service)))
+    parts.extend(_software_block(own))
+    for svc, comps in per_service:
+        line = Text(" " * 4)
+        line.append("• ", style=_KEY)
+        line.append(f"{svc.port}/{svc.protocol:<9}", style=_KEY)
+        line.append(", ".join(c.label() for c in comps))
+        if any(c.conflicting for c in comps):
+            line.append("  conflicting versions", style="yellow")
+        parts.append(Line(line, to=(host, svc)))
+    return parts
+
+
+def entry_detail(entry: inv_mod.Entry) -> list[Line]:
+    """One product at one version across the model: identity, then where."""
+    parts: list[RenderableType] = [
+        _heading(entry.label(), inv_mod.KIND_NAMES.get(entry.kind, entry.kind)),
+        _pair("hosts", f"{len(entry.hosts)} host(s), {entry.service_count} service(s)",
+              "bold"),
+        _pair("confidence", entry.confidence),
+        _pair("sources", ", ".join(entry.sources)),
+    ]
+    if entry.cpe23:
+        for i, cpe in enumerate(entry.cpe23):
+            parts.append(_pair("cpe" if i == 0 else "", cpe))
+    else:
+        parts.append(_pair("cpe", "no CPE - not in the alias table, and nmap gave none",
+                           "yellow"))
+    conflicts = [(h, s, c) for h, s, c in entry.places if c.conflicting]
+    if conflicts:
+        parts.append(Text(""))
+        parts.append(_section("Conflicting versions", len(conflicts), "bold yellow"))
+        for host, svc, c in conflicts[:_MEMBER_LIMIT]:
+            where = f"{host.address} {svc.port}/{svc.protocol}" if svc else host.address
+            said = ", ".join(f"{v} ({src})" for v, src in c.versions)
+            parts.append(Line(_bullet(f"{where:<28} {said}"),
+                              to=(host, svc) if svc else host))
+        parts.extend(_more(_MEMBER_LIMIT, len(conflicts)))
+    parts.append(Text(""))
+    parts.append(_section("Runs on", len(entry.places)))
+    for host, svc, c in entry.places[:_MEMBER_LIMIT]:
+        where = f"{host.address} {svc.port}/{svc.protocol}" if svc else host.address
+        line = _bullet(where)
+        line.append(f"  {', '.join(c.sources)}", style=_KEY)
+        parts.append(Line(line, to=(host, svc) if svc else host))
+    parts.extend(_more(_MEMBER_LIMIT, len(entry.places)))
+    return lines_of(parts)
+
+
 def render(target: object, host: Host | None = None,
            shots: Captures | None = None, full: bool = False,
-           scanned: rawlog.Scanned | None = None) -> list[Line]:
+           scanned: rawlog.Scanned | None = None,
+           inventory: inv_mod.Inventory | None = None) -> list[Line]:
     """The record for one row, as the lines it is made of.
 
     `full` is the reader's depth: the same record, with everything a capture
@@ -651,8 +763,10 @@ def render(target: object, host: Host | None = None,
         return group_detail(target, shots)
     if isinstance(target, Grouping):
         return grouping_detail(target, shots)
+    if isinstance(target, inv_mod.Entry):
+        return entry_detail(target)
     if isinstance(target, Service):
-        return service_detail(target, host, shots, full, scanned)
+        return service_detail(target, host, shots, full, scanned, inventory)
     if isinstance(target, Host):
-        return host_detail(target, shots, full, scanned)
+        return host_detail(target, shots, full, scanned, inventory)
     return [Line(Text(""))]

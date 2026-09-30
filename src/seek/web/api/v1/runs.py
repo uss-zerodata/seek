@@ -92,7 +92,17 @@ def scan_presets(sess=Depends(session)):
 
 def _plan(sess, body: s.ScanPlanIn):
     """The review, and the plan behind it - `None` when the command is refused."""
-    command, note, out_base = sess.draft_command(body.preset, body.targets)
+    if body.preset == presets_mod.VERSION_GAPS_PRESET:
+        # Drafted from a view by `/scans/gaps`, not from a preset and a scope:
+        # what comes back is the command that draft produced, maybe edited.
+        if not sess.nmap.available:
+            raise ScanError(f"cannot scan: {sess.nmap.reason}")
+        if not body.command:
+            raise ScanError("the unversioned-ports scan is drafted by /scans/gaps")
+        command, note = body.command, ""
+        out_base = presets_mod.output_base(sess.scan_dir, body.preset)
+    else:
+        command, note, out_base = sess.draft_command(body.preset, body.targets)
     out = s.ScanPlanOut(preset=body.preset, command=body.command or command, note=note)
     try:
         plan = sess.plan_scan(body.preset, out.command, body.targets, out_base)
@@ -112,6 +122,26 @@ async def review(body: s.ScanPlanIn, request: Request):
     except ScanError as exc:
         raise HTTPException(409, str(exc)) from None
     return out
+
+
+@router.post("/scans/gaps", response_model=s.ScanPlanOut)
+async def gaps(body: s.CaptureIn, request: Request):
+    """The terminal's `U`: version the open ports the inventory has no version
+    for, among the marks or the listed rows. A draft to review, never a run."""
+    sess, cache = session(request), places(request)
+
+    def draft() -> s.ScanPlanOut:
+        records, _label = _source(sess, cache, body.tab, body.path, body.q)
+        command, note, _out, targets = sess.draft_version_gaps(records)
+        out, _ = _plan(sess, s.ScanPlanIn(preset=presets_mod.VERSION_GAPS_PRESET,
+                                          targets=targets, command=command))
+        out.note = note
+        return out
+
+    try:
+        return await run_in_threadpool(draft)
+    except ScanError as exc:
+        raise HTTPException(409, str(exc)) from None
 
 
 @router.post("/scans", response_model=s.RunOut)

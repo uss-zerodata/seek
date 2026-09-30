@@ -453,3 +453,12 @@ DEFAULT_PRESETS: dict[str, str] = {
 }
 
 PORTS_PLACEHOLDER = "{ports}"
+
+# The inventory's own scan: version detection at full intensity on exactly the
+# open ports nothing has versioned yet, with the scripts whose output the
+# inventory reads. Not a chooser entry - its targets and ports come from the
+# inventory, not from a scope - but named like one, so its output files sort
+# beside the phase-03 scans they complement.
+VERSION_GAPS_PRESET = "03 · Versions, unversioned ports"
+VERSION_GAPS_ARGS = ("-vv -T4 -n -Pn -sV --version-all "
+                     "--script banner,http-server-header,http-generator -p{ports}")

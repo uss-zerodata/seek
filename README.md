@@ -61,7 +61,7 @@ after them, so a five-scan engagement is on screen immediately and a hundred
 and twenty scans fill in as they are read.
 
 The overviews are tabs — **Hosts**, **Services**, **Statistics**, **By service**,
-**By product**, **By port**, **Names**, **Scans** — clickable, or `v`/`V` to
+**By product**, **By port**, **Inventory**, **Names**, **Scans** — clickable, or `v`/`V` to
 cycle and `s`/`b`/`u` to jump. Hosts shows address, hostname, OS and service count; Services shows port,
 protocol, name, product, version, extra info, host count and vulnerabilities,
 grouped across every host. `Enter` drills in both directions and keeps going:
@@ -96,6 +96,7 @@ yourself replaces the drill-down. The filter box uses the same fuzzy grammar (`'
 | `s` | statistics · `b` group by · `u` up hosts only (on a host: open ports only) |
 | `m` `M` | mark the selected row · clear every mark |
 | `n` | new scan · `o` report view · `p` freeze log · `c` cancel |
+| `U` | scan the open ports that have no version yet (`-sV --version-all`) |
 | `x` | export, or capture the URLs with gowitness · `?` help |
 | `i` | open a capture's screenshot · `W` serve gowitness's report · `w` open the web interface |
 | `Ctrl+P` | command palette — every action above, searchable by name |
@@ -122,6 +123,31 @@ nmap -sV -iL up-hosts.txt
 #   By service tab → m on http and on https → x → HTTP/HTTPS URLs → text → file
 gowitness file -f urls.txt
 ```
+
+**Software inventory.** The **Inventory** tab lists every product and version
+running anywhere, one row per `(product, version)` with its kind, CPE, how
+many hosts and services run it, and how sure the identification is. It is built
+from everything already read — nmap's version probe and the `<cpe>` identifiers
+it writes, OS detection, the scripts that name a service's own software
+(`http-server-header`, `Server:` / `X-Powered-By:` lines and SSH, FTP and SMTP
+greetings in `fingerprint-strings` and `banner`, `http-generator`,
+`smb-os-discovery`, the CPEs `vulners` keys on) and gowitness captures of the
+service (detected technologies such as `PHP:7.4.33`, response headers, the
+page's `<meta name="generator">`). Nothing is sent over the network to build it.
+A web port lists its whole stack — nginx 1.16.1, PHP 7.4.33 and jQuery 2.1.3 are
+three components of one service. When two sources name the same product the
+more trusted one's version is shown (probe, then banner, then header, then
+detection), a more specific version (`8.9p1` over `8.9`) fills in rather than
+conflicts, and a real disagreement is marked `conflict` with every version
+listed in the service's **Software** block. A CPE comes from nmap or from a
+curated table of common products and is never guessed; anything else says
+`no CPE`. Filter by source (`gowitness`, `banner`), by `conflict`, `unversioned`
+or `no-cpe`. `x → Software inventory` writes it as CSV or as a versioned JSON
+document (`"schema": "seek.inventory", "version": 1`), and the web interface
+serves the same document at `/api/v1/inventory`. `U` drafts one
+`-sV --version-all` scan of the open ports nothing has versioned yet — over the
+marks, or the rows on screen — and says how many extra host/port pairs the
+shared port list adds before you review it.
 
 When a filter leaves nothing, the list says what matched nothing and how to get
 back — `Esc` clears it. Modals (export, fields, format) move with `↑`/`↓`, choose

@@ -63,6 +63,7 @@ def _plain(lines) -> str:
     ("hosts", ""), ("hosts", "open:443"), ("hosts", "192.0.2.0/28 !ssh"),
     ("services", ""), ("services", "nginx OR apache"), ("stats", ""),
     ("group-service", ""), ("group-product", ""), ("group-port", "80"), ("names", ""),
+    ("inventory", ""), ("inventory", "nmap"),
 ])
 async def test_every_overview_lists_what_the_terminal_lists(tmp_path, tab, q):
     app = NmapApp(prepare(load(PATHS)), Config(nmap_path=str(_stub(tmp_path))),

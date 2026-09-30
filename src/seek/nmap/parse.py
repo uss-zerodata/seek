@@ -16,7 +16,7 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from seek.nmap.models import Host, ScanFile, ScriptResult, Service, by_port
+from seek.nmap.models import Host, OsMatch, ScanFile, ScriptResult, Service, by_port
 
 
 class NmapParseError(Exception):
@@ -69,9 +69,23 @@ def _service(port_el: ET.Element, source: str) -> Service:
         tunnel=get("tunnel"),
         method=get("method"),
         conf=get("conf"),
+        cpes=[c.text.strip() for c in svc.findall("cpe") if c.text and c.text.strip()]
+        if svc is not None else [],
         scripts=[_script(s) for s in port_el.findall("script")],
         sources=[source],
     )
+
+
+def _os_match(el: ET.Element) -> OsMatch:
+    accuracy = el.get("accuracy")
+    cpes: list[str] = []
+    for c in el.findall("osclass/cpe"):
+        text = (c.text or "").strip()
+        if text and text not in cpes:
+            cpes.append(text)
+    return OsMatch(name=el.get("name") or "",
+                   accuracy=int(accuracy) if accuracy and accuracy.isdigit() else None,
+                   cpes=cpes)
 
 
 def _host(el: ET.Element, source: str) -> Host:
@@ -91,6 +105,7 @@ def _host(el: ET.Element, source: str) -> Host:
                         key=by_port),
         scripts=[_script(s) for s in el.findall("hostscript/script")],
         sources=[source],
+        os_matches=[_os_match(m) for m in el.findall("os/osmatch")],
     )
 
 

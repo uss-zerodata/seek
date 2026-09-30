@@ -95,6 +95,14 @@ _GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("w", "the web interface: hosts, services and every screenshot from"),
         ("", "every capture database, in a browser - opened at the selected row"),
     ]),
+    ("Software inventory", [
+        ("Inventory tab", "every product and version, from nmap, its scripts and"),
+        ("", "gowitness captures; ↵ lists where one runs"),
+        ("", "filter by source (gowitness, banner), conflict, unversioned, no-cpe"),
+        ("", "a service's record lists its software with who said so"),
+        ("U", "scan the ports that have no version yet (-sV --version-all),"),
+        ("", "through the usual review; x exports the inventory as CSV / JSON"),
+    ]),
     ("Scan", [
         ("n", "new scan: scope, preset, command, then a review before it runs"),
         ("o", "cycle a scan's report: overview, what it added, raw output"),

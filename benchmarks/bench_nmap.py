@@ -46,6 +46,13 @@ does not.
                    p95       10.4 ms      1.2 ms
                    worst   1962.0 ms      2.4 ms
 
+The software inventory (`openspec/changes/service-inventory/`) adds two rows,
+measured on the same corpus under the same policy: `inventory` - building it,
+once per model and capture generation - 544 ms, and `inventory tab` - grouping
+it into the tab's rows - 582 ms. Both were 1.9 s and 5.6 s before memoising
+the CPE bindings and per-place reconciliation (a corpus repeats a few
+identifications across 342 557 services) and summarising each entry once.
+
 Note that "to the first screen" has no row any more, because there no longer is
 one: the viewer opens on the candidate files and reads them with the screen
 already up. What the user waits for is the first publication, not the last -
@@ -72,7 +79,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from seek.nmap import bulk, timeline
+from seek.nmap import bulk, inventory, timeline
 from seek.nmap import merge as merge_mod
 from seek.nmap.parse import NmapParseError, parse_file
 from seek.nmap.views import prepare
@@ -113,6 +120,22 @@ def _policy(applied: bool):
         yield
 
 
+class _Inventoried:
+    """What `inventory_view` reads from a session, without a session: the
+    model, a capture generation, and the inventory cached once built."""
+
+    class _Shots:
+        generation = 0
+
+    def __init__(self, scans) -> None:
+        self.scans, self.shots, self._inventory = scans, self._Shots(), None
+
+    def inventory(self, report=None):
+        if self._inventory is None:
+            self._inventory = inventory.build(self.scans.hosts, report=report)
+        return self._inventory
+
+
 def pipeline(root: Path, policy: bool = True) -> None:
     """Every phase between "the directory" and "a tab full of rows"."""
     split = Split()
@@ -148,6 +171,11 @@ def pipeline(root: Path, policy: bool = True) -> None:
             ("names", vdefs.names_view()),
         ):
             split.time(label, lambda view=view: view.rows(scans))
+        # The inventory is built once per model (a session projection), then
+        # the tab groups it - two phases, timed apart.
+        owner = _Inventoried(scans)
+        split.time("inventory", owner.inventory)
+        split.time("inventory tab", lambda: vdefs.inventory_view(owner).rows(scans))
 
     size = sum(p.stat().st_size for p in paths)
     print(f"\n{len(paths)} files, {size / 1e6:.1f} MB, {len(scans.hosts)} hosts, "

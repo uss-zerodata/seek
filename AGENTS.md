@@ -102,6 +102,8 @@ src/seek/
     presets.py      is nmap here, preset -> argv, privilege from flags, targets
     runner.py       one scan: launch, stream, cancel, classify. No Textual.
     diff.py         what a scan added to what was already known
+    cpe.py          CPE 2.2/2.3 bindings + the alias table (one product, every spelling, its CPE)
+    inventory.py    software inventory: recognisers -> observations -> reconciled components
   tui/nmap/
     views.py        column specs + row builders per view
     detail.py       full record for the selected row (scripts, vulnerabilities)
@@ -122,7 +124,8 @@ src/seek/
     views.py        every overview and drill-down by URL; step names; ViewCache
     record.py       Rich record -> HTML by style attribute; raw-text links
     serve.py        `seek nmap serve`: headless build, owner and signal handling
-    api/v1/         + views, records/raw, marks/export, runs/scans/captures/events (SSE)
+    api/v1/         + views, records/raw, marks/export, runs/scans/captures/events (SSE),
+                    inventory (the versioned JSON document the export writes)
     static/js/      viewer.js (list/record), keys.js (the key table), actions.js, events.js
     schemas.py      pydantic shapes - the API returns them, the templates render them
     query.py        list/filter/sort/page over the TUI's own view projections
@@ -524,6 +527,32 @@ stdout, `cd`) cannot run while Textual owns the screen. They set
   URLs, technologies and status. `filtering.explain` is the filter in words;
   every web list shows it. A list, the header search group and the TUI must list
   the same rows for the same text - `test_every_overview_lists_what_the_terminal_lists`.
+- **The software inventory is a session projection, never a model attachment.**
+  `nmap/inventory.py` turns every source into `Observation`s - nmap's probe and
+  its `<cpe>`s, OS matches, the scripts that *state* this service's software
+  (`http-server-header`, header lines and greetings in `fingerprint-strings` /
+  `banner`, `http-generator`, `smb-os-discovery`, `vulners` keys) and gowitness
+  captures joined by `captures_by_service` - and reconciles each product in each
+  place into one `Component`. Unlike `names`/`vulns` it is not attached in
+  `views.prepare`: half the evidence is captures, which change without the model
+  changing, so `Session.inventory()` caches it on `(scans identity, shots.generation)`
+  and `View.stamp` adds the generation to the Inventory tab's row cache. Three
+  rules: **observations are never discarded** - the version shown comes from
+  the best rank (probe < banner < header < detection), a more specific version
+  refines rather than conflicts, and a real disagreement is flagged with every
+  version listed; **a CPE is never guessed** - nmap's are kept as written,
+  anything else gets one only from `cpe.ALIASES`, and an unmapped product is
+  shown as having none; **a recogniser reads only anchored text** - header
+  lines, greetings, generator strings - never a page body or an advisory (the
+  `http-vuln-*` fixture names Struts to prove it). A record reads it through
+  `Session.inventory_ready()`, which builds inline only below
+  `INLINE_INVENTORY_HOSTS`; above that the rows worker builds it. The JSON
+  export and `GET /api/v1/inventory` are one document (`export.inventory_document`,
+  `schema`/`version`) - the contract the vulnerability lookup reads; adding a
+  field keeps the version, renaming or redefining one bumps it, and
+  `test_version_1_fields_are_pinned` holds it. `U` drafts `-sV --version-all`
+  over the union of the unversioned ports (one command has one port list) and
+  states the extra pairs that costs.
 - **Freezing the log is not pausing the scan.** nmap's timers run against the
   wall clock, so `SIGSTOP` can time hosts out on resume; `p` is a view state and
   the pane header says the scan is still running. `runner` only runs or cancels.

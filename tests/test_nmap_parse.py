@@ -127,3 +127,29 @@ def test_source_is_recorded_on_hosts_and_services():
 def test_disabled_ping_is_detected_from_args():
     assert parse_file(FIX / "pn-asserted.xml").disabled_ping is True
     assert parse_file(FIX / "discovery.xml").disabled_ping is False
+
+
+# --- CPEs and OS matches -------------------------------------------------------
+
+
+def _inv_host(addr: str):
+    return next(h for h in parse_file(FIX / "inventory.xml").hosts if h.address == addr)
+
+
+def test_service_cpes_are_read_as_written():
+    svc = next(s for s in _inv_host("198.51.100.10").services if s.port == 22)
+    assert svc.cpes == ["cpe:/a:openbsd:openssh:8.2p1", "cpe:/o:linux:linux_kernel"]
+
+
+def test_a_service_without_cpe_has_none():
+    svc = next(s for s in _inv_host("198.51.100.10").services if s.port == 21)
+    assert svc.cpes == []
+
+
+def test_every_os_match_is_kept_with_its_cpes():
+    host = _inv_host("198.51.100.10")
+    assert host.os == "Linux 4.15 - 5.8", "the best match's name, as before"
+    assert [(m.name, m.accuracy) for m in host.os_matches] == [
+        ("Linux 4.15 - 5.8", 96), ("Linux 2.6.32", 90)]
+    assert host.os_matches[0].cpes == ["cpe:/o:linux:linux_kernel:4",
+                                       "cpe:/o:linux:linux_kernel:5"]

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Generic, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from seek.nmap import names as name_mod
 from seek.nmap import vulns
@@ -407,3 +407,43 @@ class GroupPage(BaseModel):
     offset: int = 0
     limit: int = 100
     loose: int = 0
+
+
+# --- the software inventory (`/api/v1/inventory`) -------------------------------
+# The same document the JSON export writes - `export.inventory_document` - so a
+# consumer of either reads one shape. Version 1; see `export.INVENTORY_VERSION`.
+
+
+class InventoryObservation(BaseModel):
+    source: str
+    product: str
+    version: str | None = None
+    detail: str = ""
+
+
+class InventoryEntry(BaseModel):
+    address: str
+    names: list[str] = []
+    port: int | None = None
+    protocol: str | None = None
+    service: str | None = None
+    product: str
+    version: str | None = None
+    kind: str
+    cpe22: list[str] = []
+    cpe23: list[str] = []
+    cpe_origin: str | None = None
+    confidence: str
+    conflicting: bool = False
+    observations: list[InventoryObservation] = []
+
+
+class InventoryDocument(BaseModel):
+    # `schema` shadows a BaseModel attribute, so the field carries an alias.
+    model_config = ConfigDict(populate_by_name=True)
+
+    schema_: str = Field(alias="schema")
+    version: int
+    generated_from: list[str] = []
+    unplaced_captures: int = 0
+    entries: list[InventoryEntry] = []

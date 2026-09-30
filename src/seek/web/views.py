@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from seek.nmap import filtering
+from seek.nmap import inventory as inv_mod
 from seek.nmap.models import Host, Service
 from seek.nmap.runner import ScanRun
 from seek.nmap.session import Session
@@ -45,6 +46,9 @@ def step_of(row: vdefs.Row) -> str:
         return f"p:{row.host.address}/{t.protocol}/{t.port}"
     if isinstance(t, vdefs.Grouping):
         return f"b:{t.key}/{t.label}"
+    if isinstance(t, inv_mod.Entry):
+        # Product *and* version: the tab lists nginx 1.16.1 and nginx apart.
+        return f"i:{t.key}/{t.version or ''}"
     if isinstance(t, Scan):
         return f"f:{t.path or t.label}"
     if isinstance(t, Run):
@@ -157,6 +161,10 @@ class ViewCache:
     def resolve(self, session: Session, tab: str, path: list[str], only_up: bool = False,
                 only_ports: bool = False, only_open: bool = False) -> Place:
         key = (tab, tuple(path), only_up, only_ports, only_open)
+        if tab == "inventory":
+            # Its levels are built from entries that captures change without
+            # the model changing; a new capture generation is a new place.
+            key += (session.shots.generation,)
         place = self._places.get(key)
         if place is None or place.levels[0].view.kind == "scans":
             place = resolve(session, tab, path, only_up, only_ports, only_open)
@@ -169,7 +177,8 @@ class ViewCache:
 def _opens(row: vdefs.Row) -> bool:
     """Whether opening a row goes anywhere - without building where it goes."""
     target = row.drill if row.drill is not None else row.target
-    return isinstance(target, (vdefs.View, ServiceGroup, vdefs.Grouping, Host, Service))
+    return isinstance(target, (vdefs.View, ServiceGroup, vdefs.Grouping, inv_mod.Entry,
+                               Host, Service))
 
 
 _SHOTS_PER_ROW = 3

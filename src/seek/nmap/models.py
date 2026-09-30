@@ -63,6 +63,16 @@ class ScriptResult:
 
 
 @dataclass(slots=True)
+class OsMatch:
+    """One `<osmatch>`: nmap's name for a guess, how sure it is, and the CPEs
+    of its `<osclass>` entries - often several kernel lines for one match."""
+
+    name: str
+    accuracy: int | None = None
+    cpes: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class Service:
     protocol: str
     port: int
@@ -76,6 +86,9 @@ class Service:
     tunnel: str | None = None
     method: str | None = None
     conf: str | None = None
+    # The `<cpe>` identifiers nmap gave with the identification, as written
+    # (CPE 2.2 URIs). They travel with it when scans merge, like `conf`.
+    cpes: list[str] = field(default_factory=list)
     scripts: list[ScriptResult] = field(default_factory=list)
     vulnerabilities: list[Vulnerability] = field(default_factory=list)
     # (name, where it came from) for every DNS name this service revealed -
@@ -108,7 +121,8 @@ class Service:
             reason=self.reason, name=self.name, product=self.product,
             version=self.version, extrainfo=self.extrainfo, ostype=self.ostype,
             tunnel=self.tunnel, method=self.method, conf=self.conf,
-            scripts=list(self.scripts), vulnerabilities=list(self.vulnerabilities),
+            cpes=list(self.cpes), scripts=list(self.scripts),
+            vulnerabilities=list(self.vulnerabilities),
             names=list(self.names), sources=list(self.sources),
         )
 
@@ -139,6 +153,9 @@ class Host:
     services: list[Service] = field(default_factory=list)
     scripts: list[ScriptResult] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
+    # Every OS match, best first as nmap orders them. `os`/`osclass` stay the
+    # best one's name and family for the views that already read them.
+    os_matches: list[OsMatch] = field(default_factory=list)
 
     @property
     def hostname(self) -> str | None:
@@ -178,6 +195,7 @@ class Host:
             os=self.os, osclass=self.osclass,
             services=[s.copy() for s in self.services],
             scripts=list(self.scripts), sources=list(self.sources),
+            os_matches=list(self.os_matches),
         )
 
 

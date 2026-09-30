@@ -35,6 +35,7 @@ from seek.gowitness import detect as gw_detect
 from seek.gowitness import locate as gw_locate
 from seek.gowitness import results as gw_results
 from seek.gowitness.results import canonical_url
+from seek.nmap import inventory as inventory_mod
 from seek.nmap import merge as merge_mod
 from seek.nmap import presets as presets_mod
 from seek.nmap import rawlog, timeline
@@ -144,6 +145,9 @@ class Session:
         self.owner: Owner | None = None
         self._by_service: dict = {}
         self._by_service_key: tuple | None = None
+        self._unplaced = 0
+        self._inventory: inventory_mod.Inventory | None = None
+        self._inventory_for: tuple = (None, None)
         self._row_texts: dict[int, tuple] = {}
         # What each finished scan added to what was known, by run.
         self.diffs: dict[int, object] = {}
@@ -214,13 +218,52 @@ class Session:
                         owner.setdefault(canonical_url(url),
                                          (host.address, svc.protocol, svc.port))
             index: dict[tuple[str, str, int], list] = {}
+            unplaced = 0
             for capture in self.shots.all():
                 where = owner.get(canonical_url(capture.url))
                 if where is not None:
                     index.setdefault(where, []).append(capture)
+                else:
+                    unplaced += 1
             self._by_service, self._by_service_key = index, key
+            self._unplaced = unplaced
             self._row_texts = {}
         return self._by_service
+
+    def inventory(self, report=None) -> inventory_mod.Inventory:
+        """The software inventory of the model and the captures as they stand.
+
+        A projection of the session rather than something attached to the
+        model: half its evidence is captures, which change without the model
+        changing. Rebuilt only when either does.
+        """
+        scans, generation = self._inventory_for
+        if (self._inventory is None or scans is not self.scans
+                or generation != self.shots.generation):
+            index = self.captures_by_service()
+            self._inventory = inventory_mod.build(self.scans.hosts, index,
+                                                  self._unplaced, report)
+            self._inventory.sources = list(self.scans.sources)
+            self._inventory_for = (self.scans, self.shots.generation)
+        return self._inventory
+
+    # Below this many hosts a record may build the inventory itself; above it
+    # only the projection worker does, and a record shows it once it is there.
+    INLINE_INVENTORY_HOSTS = 2000
+
+    def inventory_ready(self) -> inventory_mod.Inventory | None:
+        """The inventory if it is current - or cheap enough to make now.
+
+        For a record, which is redrawn on every movement of the list cursor
+        and must never be the thing that walks twenty thousand hosts.
+        """
+        scans, generation = self._inventory_for
+        if (self._inventory is not None and scans is self.scans
+                and generation == self.shots.generation):
+            return self._inventory
+        if len(self.scans.hosts) <= self.INLINE_INVENTORY_HOSTS:
+            return self.inventory()
+        return None
 
     def row_text(self, row) -> str:
         """A row's text to filter on: what the list shows, and what its
@@ -361,6 +404,61 @@ class Session:
             args = args.replace(presets_mod.PORTS_PLACEHOLDER, known[0])
         command = " ".join([self.config.nmap_path, args, *targets])
         return command, f"writes {out_base}.{{xml,nmap,gnmap}}", out_base
+
+    def version_gaps(self, records) -> dict[str, list]:
+        """The open services of `records` that no source has versioned, by host
+        address - in record order, each service once."""
+        inv = self.inventory()
+        gaps: dict[str, list] = {}
+        for record in records:
+            for svc in record.services:
+                if not svc.is_open or svc.protocol not in ("tcp", "udp"):
+                    continue
+                if inv.service_versioned(record.host, svc):
+                    continue
+                listed = gaps.setdefault(record.host.address, [])
+                if svc not in listed:
+                    listed.append(svc)
+        return gaps
+
+    def draft_version_gaps(self, records) -> tuple[str, str, Path, list[str]]:
+        """The command that versions what the inventory could not, what it
+        costs, its output base and its targets - or `ScanError` why not.
+
+        One nmap command gives every target the same port list, so the scan is
+        the union of the gaps; the note says how many pairs that adds, so the
+        cost is read before anything runs.
+        """
+        if not self.nmap.available:
+            raise ScanError(f"cannot scan: {self.nmap.reason}")
+        gaps = self.version_gaps(records)
+        if not gaps:
+            raise ScanError("every open port here already has a version - nothing to scan")
+        problem = presets_mod.writable(self.scan_dir)
+        if problem is not None:
+            raise ScanError(f"cannot write the scan here: {problem}")
+        tcp = sorted({s.port for ss in gaps.values() for s in ss if s.protocol == "tcp"})
+        udp = sorted({s.port for ss in gaps.values() for s in ss if s.protocol == "udp"})
+        if udp:
+            groups = ([f"T:{','.join(map(str, tcp))}"] if tcp else []) + [
+                f"U:{','.join(map(str, udp))}"]
+            ports = ",".join(groups)
+        else:
+            ports = ",".join(map(str, tcp))
+        args = presets_mod.VERSION_GAPS_ARGS.replace(presets_mod.PORTS_PLACEHOLDER, ports)
+        if udp:
+            # A UDP port is only scanned by a UDP scan, and naming one scan
+            # type drops the default TCP one - so both are named.
+            args += " -sU" + (" -sS" if tcp else "")
+        targets = list(gaps)
+        wanted = sum(len(ss) for ss in gaps.values())
+        extra = len(targets) * (len(tcp) + len(udp)) - wanted
+        note = (f"{wanted} unversioned port(s) on {len(targets)} host(s); one port list "
+                f"for all of them adds {extra} host/port pair(s) that are versioned "
+                "already or not open")
+        out_base = presets_mod.output_base(self.scan_dir, presets_mod.VERSION_GAPS_PRESET)
+        command = " ".join([self.config.nmap_path, args, *targets])
+        return command, note, out_base, targets
 
     def plan_scan(self, preset: str, command: str, targets: list[str],
                   out_base: Path) -> ScanPlan:

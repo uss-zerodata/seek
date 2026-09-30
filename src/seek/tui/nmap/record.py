@@ -51,5 +51,6 @@ def record_lines(row: vdefs.Row | None, view_title: str, session: Session,
         return [detail_pane.Line(Text(row.text, style="dim"))], view_title
     title = f"{view_title} · {row.cells[0]}" if row is not None else view_title
     return (detail_pane.render(target, row.host if row else None, session.shots,
-                               full=full, scanned=session.scanned()),
+                               full=full, scanned=session.scanned(),
+                               inventory=session.inventory_ready()),
             title)

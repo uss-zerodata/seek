@@ -160,6 +160,43 @@ async function newScan() {
   });
 }
 
+async function scanGaps() {
+  let plan;
+  try { plan = await send("POST", "/api/v1/scans/gaps", view()); } catch (e) { say(e.message); return; }
+  const d = dialog(`
+    <form method="dialog" class="scan">
+      <h2>Scan unversioned ports</h2>
+      <p class="dim small">${esc(plan.note)}</p>
+      <p><label>command<br><textarea name="command" rows="3">${esc(plan.command)}</textarea></label></p>
+      <div class="review dim small"></div>
+      <p class="buttons"><button value="start" class="primary">Start the scan</button> <button value="cancel">Cancel</button>
+        <span class="dim small">Esc leaves - nothing runs until you start it</span></p>
+    </form>`);
+  const form = d.querySelector("form");
+  const body = () => ({ preset: plan.preset, targets: plan.targets, command: form.command.value });
+  const review = async () => {
+    const box = form.querySelector(".review");
+    try {
+      const out = await send("POST", "/api/v1/scans/review", body());
+      box.innerHTML = out.error
+        ? `<span class="c-red">${esc(out.error)}</span>`
+        : `runs <code>${esc(out.argv.join(" "))}</code><br>${out.targets.length} target(s) · writes ${esc(out.out_base)}.{xml,nmap,gnmap}` +
+          (out.elevated ? `<br><strong>needs root</strong> (${esc(out.privilege)}) - through <code>sudo -n</code>, never a prompt` : "");
+      form.querySelector("button[value=start]").disabled = Boolean(out.error);
+    } catch (e) { box.innerHTML = `<span class="c-red">${esc(e.message)}</span>`; }
+  };
+  form.command.addEventListener("input", () => { clearTimeout(review.t); review.t = setTimeout(review, 300); });
+  review();
+  d.addEventListener("close", async () => {
+    if (d.returnValue !== "start") return;
+    try {
+      const run = await send("POST", "/api/v1/scans", body());
+      say(`started ${run.label}`);
+      if (root?.dataset.tab !== "scans") window.location.href = "/v/scans";
+    } catch (e) { say(e.message); }
+  });
+}
+
 // --- the log -----------------------------------------------------------------------------
 
 export const logState = { frozen: false, mode: "condensed" };
@@ -200,4 +237,4 @@ export function help(keys) {
     <p><button value="close">Close</button> <span class="dim small">Esc leaves</span></p></form>`);
 }
 
-export const handlers = { mark, clearMarks, export: exportDialog, newScan, cancel, freeze, shots };
+export const handlers = { mark, clearMarks, export: exportDialog, newScan, scanGaps, cancel, freeze, shots };

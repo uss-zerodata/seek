@@ -21,6 +21,7 @@ import json
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
+from seek.nmap import inventory as inv_mod
 from seek.nmap import names
 from seek.nmap.models import Host, Service
 
@@ -277,11 +278,100 @@ EXPORTS: dict[str, tuple[str, Callable[[Iterable[Record]], list[str]], str | Non
     "ports": ("Open ports (comma separated)", export_ports, None),
     "host-ports": ("host:port pairs", export_host_ports, "host_port"),
     "urls": ("HTTP/HTTPS URLs", export_urls, "url"),
+    # Built by `produce` from the inventory, not by a recipe over records: the
+    # recipe slot is never called for it.
+    "inventory": ("Software inventory (products, versions, CPEs)", lambda _r: [],
+                  "inventory"),
 }
 
 
+# --- the software inventory ---------------------------------------------------
+# A document rather than a list: it is the contract the vulnerability lookup
+# reads, so it names itself and its version. Adding a field keeps the version;
+# renaming a field or changing what one means increases it.
+
+INVENTORY_SCHEMA = "seek.inventory"
+INVENTORY_VERSION = 1
+INVENTORY_FIELDS = ["address", "names", "port", "protocol", "service", "product", "version",
+                    "kind", "cpe22", "cpe23", "cpe_origin", "confidence", "conflicting",
+                    "observations"]
+
+
+def _entry(host: Host, svc: Service | None, c: inv_mod.Component) -> dict:
+    return {
+        "address": host.address,
+        "names": names.names_of(host),
+        "port": svc.port if svc is not None else None,
+        "protocol": svc.protocol if svc is not None else None,
+        "service": (svc.name or None) if svc is not None else None,
+        "product": c.product,
+        "version": c.version,
+        "kind": inv_mod.KIND_NAMES.get(c.kind, c.kind),
+        "cpe22": c.cpe22,
+        "cpe23": c.cpe23,
+        "cpe_origin": c.cpe_origin,
+        "confidence": c.confidence,
+        "conflicting": c.conflicting,
+        "observations": [{"source": o.source, "product": o.product, "version": o.version,
+                          "detail": o.detail} for o in c.observations],
+    }
+
+
+def inventory_entries(records: Iterable[Record], inventory: inv_mod.Inventory) -> list[dict]:
+    """One entry per component per service, and per host for the components
+    that describe the host. A host record covers its open services and its
+    own components; a service record covers that service only."""
+    out: dict[tuple, dict] = {}
+    for record in records:
+        host = record.host
+        if record.service is None:
+            for c in inventory.of_host(host):
+                out.setdefault((host.address, None, c.key, c.version), _entry(host, None, c))
+        for svc in record.services:
+            for c in inventory.of_service(host, svc):
+                out.setdefault((host.address, (svc.protocol, svc.port), c.key, c.version),
+                               _entry(host, svc, c))
+    return list(out.values())
+
+
+def inventory_document(records: Iterable[Record], inventory: inv_mod.Inventory) -> dict:
+    return {
+        "schema": INVENTORY_SCHEMA,
+        "version": INVENTORY_VERSION,
+        "generated_from": list(inventory.sources),
+        "unplaced_captures": inventory.unplaced,
+        "entries": inventory_entries(records, inventory),
+    }
+
+
+def _flat(entry: dict, field: str) -> str:
+    value = entry[field]
+    if field == "observations":
+        return "; ".join(f"{o['source']}={o['version'] or ''}" for o in value)
+    if isinstance(value, list):
+        return " ".join(value)
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    return "" if value is None else str(value)
+
+
+def render_inventory(records: Iterable[Record], inventory: inv_mod.Inventory,
+                     fmt: str) -> str:
+    """The inventory as a versioned JSON document, a CSV table, or text lines."""
+    document = inventory_document(records, inventory)
+    if fmt == "json":
+        return json.dumps(document, indent=2)
+    table = [tuple(_flat(e, f) for f in INVENTORY_FIELDS) for e in document["entries"]]
+    if fmt == "text":
+        picked = [INVENTORY_FIELDS.index(f) for f in
+                  ("address", "port", "protocol", "product", "version", "cpe23")]
+        return "\n".join(" ".join(row[i] for i in picked if row[i]) for row in table)
+    return _write(table, INVENTORY_FIELDS, fmt)
+
+
 def produce(records: Iterable[Record], which: str, fmt: str = "text",
-            fields: Iterable[str] = ()) -> tuple[str, str]:
+            fields: Iterable[str] = (),
+            inventory: inv_mod.Inventory | None = None) -> tuple[str, str]:
     """An export as text, and the format actually used - for every front end.
 
     `which` is a key of `EXPORTS`, or `custom` with `fields`. The port list is
@@ -291,6 +381,10 @@ def produce(records: Iterable[Record], which: str, fmt: str = "text",
     records = list(records)
     if which == "custom":
         return render(records, fields, fmt), fmt
+    if which == "inventory":
+        if inventory is None:
+            raise ValueError("the inventory export needs the inventory")
+        return render_inventory(records, inventory, fmt), fmt
     _label, recipe, column = EXPORTS[which]
     items = recipe(records)
     if column is None:

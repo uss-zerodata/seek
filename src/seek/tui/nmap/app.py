@@ -298,6 +298,14 @@ _HINTS = {
     "scans": [("↑↓", "select"), ("d", "detail"), ("o", "report view"),
               ("p", "freeze log"), ("c", "cancel"), ("n", "new scan"), ("1-9", "sort"),
               ("/", "filter"), ("x", "export"), ("w", "web"), ("?", "help"), ("^P", "commands")],
+    "inventory": [("↑↓", "select"), ("←→", "read record"), ("↵", "where it runs"),
+                  ("1-9", "sort"), ("/", "filter"), ("U", "scan unversioned"),
+                  ("d", "detail"), ("m", "mark"), ("x", "export"), ("w", "web"),
+                  ("?", "help"), ("^P", "commands")],
+    "inventory-detail": [("↑↓", "select"), ("←→", "read record"), ("↵", "host"),
+                         ("1-9", "sort"), ("/", "filter"), ("d", "detail"), ("m", "mark"),
+                         ("U", "scan unversioned"), ("x", "export"), ("w", "web"),
+                         ("?", "help"), ("^P", "commands")],
     "stats": [("↑↓", "select"), ("↵", "open the figure"), ("1-9", "sort"),
               ("/", "filter"), ("s", "back"), ("d", "detail"),
               ("m", "mark"), ("x", "export"), ("w", "web"), ("?", "help"), ("^P", "commands")],
@@ -399,6 +407,7 @@ class NmapApp(App[int]):
         Binding("h", "line(-1)", "Detail up", show=False),
         Binding("l", "line(1)", "Detail down", show=False),
         Binding("n", "new_scan", "New scan", show=False),
+        Binding("U", "scan_unversioned", "Scan unversioned ports", show=False),
         Binding("o", "report_mode", "Report view", show=False),
         Binding("p", "freeze_log", "Freeze the log", show=False),
         Binding("c", "cancel_scan", "Cancel the scan", show=False),
@@ -888,6 +897,14 @@ class NmapApp(App[int]):
             # event loop between keystrokes rather than at 5 ms boundaries.
             with bulk.bulk(), bulk.responsive():
                 view.rows(scans, report)
+                # The inventory is a projection every record reads (its
+                # Software block); building it here, once per model, keeps that
+                # work off the event loop whichever tab is being opened. A
+                # small model is built by the record itself in milliseconds, so
+                # its builds are not made any longer than they were.
+                if (scans is self.session.scans
+                        and len(scans.hosts) > self.session.INLINE_INVENTORY_HOSTS):
+                    self.session.inventory()
                 # Measured here too: it is a pass over every cell of every row,
                 # and the event loop should not be the one making it.
                 view.measure()
@@ -1705,6 +1722,35 @@ class NmapApp(App[int]):
         except ScanError as exc:
             self.notify(str(exc), severity="error", timeout=12)
             return
+        await self._command_review_run(name, command, note, out_base, targets)
+
+    def action_scan_unversioned(self) -> None:
+        self._start_gap_scan()
+
+    @work(exclusive=True, group="modal")
+    async def _start_gap_scan(self) -> None:
+        """`U`: version the open ports of the marks - or of the rows on screen -
+        that no source has versioned, through the same command and review."""
+        running = self.runner.busy()
+        if running is not None and self.nmap.available:
+            self.notify(f"{running.preset} is still running — cancel it first (c)",
+                        severity="warning")
+            return
+        records, _source = self._export_source()
+        try:
+            # The inventory may be built here for the first time; that walks
+            # every host, which is not work for the event loop.
+            command, note, out_base, targets = await asyncio.to_thread(
+                self.session.draft_version_gaps, records)
+        except ScanError as exc:
+            self.notify(str(exc), severity="warning", timeout=12)
+            return
+        await self._command_review_run(presets_mod.VERSION_GAPS_PRESET, command, note,
+                                       out_base, targets)
+
+    async def _command_review_run(self, name: str, command: str, note: str,
+                                  out_base, targets: list[str]) -> None:
+        """Command → review → run: the tail every scan flow shares."""
         while True:
             edited = await self.push_screen_wait(
                 CommandScreen(f"Scan · {name}", command, note))
@@ -3008,7 +3054,12 @@ class NmapApp(App[int]):
                 fmt = await self._pick_format()
                 if fmt is None:
                     return
-            text, fmt = exporter.produce(records, which, fmt)
+            inventory = None
+            if which == "inventory":
+                # Cached once built; the first build walks every host, which is
+                # not work for the event loop.
+                inventory = await asyncio.to_thread(self.session.inventory)
+            text, fmt = exporter.produce(records, which, fmt, inventory=inventory)
 
         dest = await self.push_screen_wait(ChoiceScreen(
             "Send it to:", [("clipboard", "clipboard"), ("file", "file")]))

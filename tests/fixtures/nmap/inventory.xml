@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nmaprun scanner="nmap" args="nmap -sV -O -sC -oX inventory.xml 198.51.100.10 198.51.100.20" start="1757000000" version="7.94" xmloutputversion="1.05">
+<scaninfo type="syn" protocol="tcp" numservices="10" services="21-22,25,80-81,445,3128,8080,8443"/>
+<host starttime="1757000001" endtime="1757000090"><status state="up" reason="syn-ack" reason_ttl="64"/>
+<address addr="198.51.100.10" addrtype="ipv4"/>
+<hostnames><hostname name="web.example.test" type="PTR"/></hostnames>
+<ports>
+<port protocol="tcp" portid="21"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="ftp" method="probed" conf="3"/>
+<script id="banner" output="220 (vsFTPd 3.0.3)"/>
+</port>
+<port protocol="tcp" portid="22"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="ssh" product="OpenSSH" version="8.2p1" extrainfo="Ubuntu 4ubuntu0.5" ostype="Linux" method="probed" conf="10"><cpe>cpe:/a:openbsd:openssh:8.2p1</cpe><cpe>cpe:/o:linux:linux_kernel</cpe></service>
+<script id="banner" output="SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.6"/>
+</port>
+<port protocol="tcp" portid="25"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="smtp" method="probed" conf="3"/>
+<script id="fingerprint-strings" output="&#xa;  GenericLines: &#xa;    220 mail.example.test ESMTP Postfix (Ubuntu)&#xa;    502 5.5.2 Error: command not recognized"><elem key="GenericLines">&#xa;    220 mail.example.test ESMTP Postfix (Ubuntu)&#xa;    502 5.5.2 Error: command not recognized</elem></script>
+</port>
+<port protocol="tcp" portid="80"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="http" product="nginx" method="probed" conf="10"><cpe>cpe:/a:igor_sysoev:nginx</cpe></service>
+<script id="http-server-header" output="nginx/1.16.1"><elem>nginx/1.16.1</elem></script>
+<script id="http-generator" output="WordPress 6.2.2"/>
+</port>
+<port protocol="tcp" portid="81"><state state="closed" reason="conn-refused" reason_ttl="64"/><service name="hosts2-ns" product="Closedd" version="1.0" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="445"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="netbios-ssn" product="Samba smbd" version="4.6.2" workgroup="WORKGROUP" method="probed" conf="10"><cpe>cpe:/a:samba:samba:4.6.2</cpe></service></port>
+<port protocol="tcp" portid="3128"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="squid-http" method="table" conf="3"/></port>
+<port protocol="tcp" portid="8080"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="http-proxy" method="probed" conf="3"/>
+<script id="fingerprint-strings" output="&#xa;  GetRequest: &#xa;    HTTP/1.0 200 OK&#xa;    Server: Python/3.8 websockets/8.1&#xa;    X-Powered-By: Express&#xa;    Content-Type: text/html&#xa;    &lt;p&gt;Powered by Apache/2.4.1&lt;/p&gt;"><elem key="GetRequest">&#xa;    HTTP/1.0 200 OK&#xa;    Server: Python/3.8 websockets/8.1&#xa;    X-Powered-By: Express&#xa;    Content-Type: text/html&#xa;    &lt;p&gt;Powered by Apache/2.4.1&lt;/p&gt;</elem></script>
+</port>
+<port protocol="tcp" portid="8443"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="https-alt" product="Apache Tomcat" version="9.0.1" tunnel="ssl" method="probed" conf="10"><cpe>cpe:/a:apache:tomcat:9.0.1</cpe></service>
+<script id="vulners" output="cpe:/a:apache:tomcat:9.0.1">
+<table key="cpe:/a:apache:tomcat:9.0.1">
+<table><elem key="type">cve</elem><elem key="id">CVE-2020-1938</elem><elem key="cvss">9.8</elem><elem key="is_exploit">true</elem></table>
+</table>
+</script>
+<script id="http-vuln-cve2017-5638" output="VULNERABLE: Apache Struts/2.3.5 remote code execution. References: https://cwiki.example.test/confluence/display/WW/S2-045 Server: Struts/2.3.5"/>
+</port>
+</ports>
+<os><osmatch name="Linux 4.15 - 5.8" accuracy="96" line="1"><osclass type="general purpose" vendor="Linux" osfamily="Linux" osgen="4.X" accuracy="96"><cpe>cpe:/o:linux:linux_kernel:4</cpe></osclass><osclass type="general purpose" vendor="Linux" osfamily="Linux" osgen="5.X" accuracy="96"><cpe>cpe:/o:linux:linux_kernel:5</cpe></osclass></osmatch><osmatch name="Linux 2.6.32" accuracy="90" line="2"><osclass type="general purpose" vendor="Linux" osfamily="Linux" osgen="2.6.X" accuracy="90"><cpe>cpe:/o:linux:linux_kernel:2.6.32</cpe></osclass></osmatch></os>
+<hostscript>
+<script id="smb-os-discovery" output="&#xa;  OS: Unix (Samba 4.6.2)&#xa;  NetBIOS computer name: WEB\x00&#xa;  Workgroup: WORKGROUP\x00"><elem key="os">Unix</elem><elem key="lanmanager">Samba 4.6.2</elem><elem key="server">WEB\x00</elem></script>
+</hostscript>
+</host>
+<host starttime="1757000001" endtime="1757000090"><status state="up" reason="syn-ack" reason_ttl="64"/>
+<address addr="198.51.100.20" addrtype="ipv4"/>
+<hostnames><hostname name="portal.example.test" type="PTR"/></hostnames>
+<ports>
+<port protocol="tcp" portid="80"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="http" method="probed" conf="3"/></port>
+<port protocol="tcp" portid="443"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="https" product="Microsoft IIS httpd" version="10.0" ostype="Windows" tunnel="ssl" method="probed" conf="10"><cpe>cpe:/a:microsoft:internet_information_services:10.0</cpe><cpe>cpe:/o:microsoft:windows</cpe></service></port>
+<port protocol="udp" portid="161"><state state="open" reason="udp-response" reason_ttl="64"/><service name="snmp" method="probed" conf="3"/></port>
+</ports>
+</host>
+<runstats><finished time="1757000090" timestr="" elapsed="90" exit="success"/><hosts up="2" down="0" total="2"/></runstats>
+</nmaprun>

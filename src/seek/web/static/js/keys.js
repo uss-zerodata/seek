@@ -26,6 +26,7 @@ export const KEYS = [
   [["M"], "clearMarks", "clear every mark"],
   [["x"], "export", "export the marks, else the filtered rows"],
   [["n"], "newScan", "new scan"],
+  [["U"], "scanGaps", "scan the ports that have no version yet"],
   [["c"], "cancel", "cancel the running scan"],
   [["p"], "freeze", "freeze the log view (the scan keeps running)"],
   [["d"], "full", "the record full-width"],

@@ -15,6 +15,7 @@ TABS: list[tuple[str, str]] = [
     ("group-service", "By service"),
     ("group-product", "By product"),
     ("group-port", "By port"),
+    ("inventory", "Inventory"),
     ("names", "Names"),
     ("scans", "Scans"),
 ]
@@ -48,6 +49,8 @@ def tab_view(tab: str, session: Session, only_up: bool = False,
              only_ports: bool = False) -> vdefs.View:
     if tab == "scans":
         return scans_view(session)
+    if tab == "inventory":
+        return vdefs.inventory_view(session)
     if tab == "names":
         return vdefs.names_view()
     if tab == "services":

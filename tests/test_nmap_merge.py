@@ -276,3 +276,25 @@ def test_failures_are_named_by_directory_too(tmp_path):
 def test_the_scan_file_carries_its_label(tmp_path):
     x, y = _two_dirs(tmp_path)
     assert [f.name for f in load([x, y]).files] == ["x/scan.xml", "y/scan.xml"]
+
+
+def _merged_service(first: Service, second: Service) -> Service:
+    from seek.nmap.merge import _merge_service
+    _merge_service(first, second)
+    return first
+
+
+def test_cpes_travel_with_a_probe_that_replaces_a_guess():
+    guess = Service("tcp", 80, "open", name="http", method="table",
+                    cpes=["cpe:/a:guess:guess"])
+    probe = Service("tcp", 80, "open", name="http", product="nginx", method="probed",
+                    cpes=["cpe:/a:igor_sysoev:nginx:1.16.1"])
+    assert _merged_service(guess, probe).cpes == ["cpe:/a:igor_sysoev:nginx:1.16.1"]
+
+
+def test_cpes_union_between_equals():
+    a = Service("tcp", 22, "open", method="probed", cpes=["cpe:/a:openbsd:openssh:8.2p1"])
+    b = Service("tcp", 22, "open", method="probed",
+                cpes=["cpe:/a:openbsd:openssh:8.2p1", "cpe:/o:linux:linux_kernel"])
+    assert _merged_service(a, b).cpes == ["cpe:/a:openbsd:openssh:8.2p1",
+                                          "cpe:/o:linux:linux_kernel"]

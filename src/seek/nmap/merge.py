@@ -209,6 +209,12 @@ def _merge_service(into: Service, other: Service) -> None:
             continue
         if (probed and attr in overridable) or getattr(into, attr) in (None, ""):
             setattr(into, attr, value)
+    # The CPEs name what the identification names, so a probe that replaces a
+    # guess replaces them too; otherwise the two lists union.
+    if probed and other.cpes:
+        into.cpes = list(other.cpes)
+    else:
+        into.cpes.extend(c for c in other.cpes if c not in into.cpes)
     seen = {(s.id, s.output) for s in into.scripts}
     into.scripts.extend(s for s in other.scripts if (s.id, s.output) not in seen)
     for src in other.sources:
@@ -220,6 +226,10 @@ def _merge_host(into: Host, other: Host) -> None:
     for attr in ("addrtype", "os", "osclass"):
         if getattr(into, attr) in (None, "") and getattr(other, attr) not in (None, ""):
             setattr(into, attr, getattr(other, attr))
+    # The matches go with `os`: taken from the same scan, never unioned - two
+    # scans' guesses interleaved would make "best first" mean nothing.
+    if not into.os_matches and other.os_matches:
+        into.os_matches = list(other.os_matches)
     # A recorded state beats an asserted one: `-Pn` says `up` for everything.
     # Between two recorded ones, `up` wins in either file order - a host that
     # answered discovery once is up, whatever an earlier or later ping missed.
