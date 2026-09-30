@@ -141,3 +141,26 @@ async def test_a_fresh_database_is_not_offered(db):
     async with app.run_test(size=(180, 40)) as pilot:
         await pilot.pause(0.5)
         assert not [n for n in app._notifications if "press A" in str(n.message)]
+
+
+async def test_the_pane_shows_the_worst_and_the_reader_all(db):
+    from seek.tui.nmap import detail
+    from seek.vulndb import match as vmatch
+
+    many = [vmatch.Finding(f"CVE-2099-{i:04d}", "HIGH" if i < 3 else "LOW", 8.0 if i < 3
+                           else 2.0, sources=("nvd",)) for i in range(25)]
+    app = _app(db)
+    async with app.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.3)
+        lookup = app.session.lookup()
+        host = next(h for h in app.scans.hosts if h.address == "198.51.100.10")
+        svc = next(s for s in host.services if s.port == 80)
+        [nginx, *_] = app.session.inventory().of_service(host, svc)
+        lookup.by_component[id(nginx)] = vmatch.Assessment(many, looked_up=True)
+        pane = _text(detail.render(svc, host, inventory=app.session.inventory(),
+                                   lookup=lookup))
+        assert "3 high, 22 low" in pane, "the answer first"
+        assert pane.count("CVE-2099-") == 10 and "… and 15 more" in pane
+        full = _text(detail.render(svc, host, inventory=app.session.inventory(),
+                                   lookup=lookup, full=True))
+        assert full.count("CVE-2099-") == 25

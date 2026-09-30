@@ -441,7 +441,7 @@ def host_detail(host: Host, shots: Captures | None = None, full: bool = False,
         for svc in host.open_services:
             parts.append(Line(_bullet(svc.label()), to=(host, svc)))
     if inventory is not None:
-        parts.extend(_host_software(host, inventory, lookup))
+        parts.extend(_host_software(host, inventory, lookup, full))
     every_url = [url for svc in host.open_services
                  for url in service_urls(svc, host)]
     captures = _capture_rows(list(dict.fromkeys(every_url)), shots)
@@ -506,7 +506,7 @@ def service_detail(svc: Service, host: Host | None = None,
         if lookup is not None:
             parts.extend(_known_block(
                 [(c, lookup.of(c, where)) for c in comps], lookup.service_only(where),
-                lookup))
+                lookup, full))
     urls = service_urls(svc, host)
     if urls:
         parts.append(Text(""))
@@ -704,36 +704,63 @@ _CAVEAT = ("matched by version: a distribution that backports a fix keeps the ol
            "version number, and is still listed")
 
 
+# The pane is a dozen rows: it shows the worst few and says how many more there
+# are. The full-screen reader (`d`) and the Findings tab list every one.
+_FINDINGS_SHOWN = 10
+
+
+def _severity_summary(findings: list[vmatch.Finding]) -> str:
+    counts: dict[str, int] = {}
+    for f in findings:
+        counts[f.severity.lower() or "unscored"] = counts.get(f.severity.lower() or "unscored",
+                                                              0) + 1
+    order = ["critical", "high", "medium", "moderate", "low", "unscored"]
+    return ", ".join(f"{counts[k]} {k}" for k in order if k in counts)
+
+
 def _known_block(assessed: list[tuple[inv_mod.Component, vmatch.Assessment]],
-                 loose: list[vmatch.Finding], lookup: vmatch.Lookup) -> list[RenderableType]:
-    """Every finding for a service's components, most severe first."""
-    if lookup.db_missing and not loose and not any(a.findings for _c, a in assessed):
-        return []
+                 loose: list[vmatch.Finding], lookup: vmatch.Lookup,
+                 full: bool = False) -> list[RenderableType]:
+    """A service's findings: a one-line answer first (how many, how bad), then
+    the most severe - all of them only at the reader's depth. Ranges that
+    could not be decided are a count, not a list: they are not findings."""
     rows: list[tuple[vmatch.Finding, str]] = []
-    undecided: list[tuple[vmatch.Finding, str]] = []
+    undecided = 0
     unknown: list[tuple[inv_mod.Component, int]] = []
+    skipped: list[tuple[inv_mod.Component, str]] = []
     for c, a in assessed:
         rows += [(f, c.label()) for f in a.findings]
-        undecided += [(f, c.label()) for f in a.undecided]
+        undecided += len(a.undecided)
         if not c.versioned and a.product_cves:
             unknown.append((c, a.product_cves))
+        if a.not_matched:
+            skipped.append((c, a.not_matched))
     rows += [(f, "") for f in loose]
-    if not rows and not undecided and not unknown:
+    if lookup.db_missing and not rows:
         return []
+    if not rows and not undecided and not unknown and not skipped:
+        return []
+    rows.sort(key=lambda r: (-r[0].rank[0], -r[0].rank[1], r[0].id))
     parts: list[RenderableType] = [Text("")]
     parts.append(_section("Known vulnerabilities", len(rows),
                           "bold red" if rows else _SECTION))
-    parts.append(Text(f"    {_CAVEAT}", style=_KEY))
-    for f, label in sorted(rows, key=lambda r: (-r[0].rank[0], -r[0].rank[1], r[0].id)):
+    if rows:
+        parts.append(Text(f"    {_severity_summary([f for f, _l in rows])}", style="bold"))
+        parts.append(Text(f"    {_CAVEAT}", style=_KEY))
+    shown = rows if full else rows[:_FINDINGS_SHOWN]
+    for f, label in shown:
         parts.append(_finding_line(f, product=label))
+    if len(shown) < len(rows):
+        parts.append(Text(f"    … and {len(rows) - len(shown)} more, less severe · d lists "
+                          "them all, the Findings tab by CVE", style="dim"))
     if undecided:
-        parts.append(Text(f"    undecided - the version cannot be placed in these ranges "
-                          f"({len(undecided)}):", style=_KEY))
-        for f, label in undecided[:20]:
-            parts.append(_finding_line(f, 6, label))
+        parts.append(Text(f"    {undecided} more could not be decided - the version is not "
+                          "precise enough to place in their ranges", style=_KEY))
     for c, n in unknown:
         parts.append(Text(f"    {c.product}: version unknown · {n} CVE(s) for this product "
                           "in some version - U scans for the version", style="yellow"))
+    for c, why in skipped:
+        parts.append(Text(f"    {c.label()}: {why}", style=_KEY))
     return parts
 
 
@@ -772,7 +799,8 @@ def _software_block(comps: list[inv_mod.Component], lookup: vmatch.Lookup | None
 
 
 def _host_software(host: Host, inventory: inv_mod.Inventory,
-                   lookup: vmatch.Lookup | None = None) -> list[RenderableType]:
+                   lookup: vmatch.Lookup | None = None,
+                   full: bool = False) -> list[RenderableType]:
     """The host's own components in full, and one line per service summarising
     its stack - each service's own record has the evidence."""
     parts: list[RenderableType] = []
@@ -803,11 +831,12 @@ def _host_software(host: Host, inventory: inv_mod.Inventory,
                 line.append("  end of life", style="bold red")
         parts.append(Line(line, to=(host, svc)))
     if lookup is not None and own:
-        parts.extend(_known_block([(c, lookup.of(c)) for c in own], [], lookup))
+        parts.extend(_known_block([(c, lookup.of(c)) for c in own], [], lookup, full))
     return parts
 
 
-def entry_detail(entry: inv_mod.Entry, lookup: vmatch.Lookup | None = None) -> list[Line]:
+def entry_detail(entry: inv_mod.Entry, lookup: vmatch.Lookup | None = None,
+                 full: bool = False) -> list[Line]:
     """One product at one version across the model: identity, then where."""
     assessed = lookup.of_entry(entry) if lookup is not None else None
     parts: list[RenderableType] = [
@@ -825,9 +854,8 @@ def entry_detail(entry: inv_mod.Entry, lookup: vmatch.Lookup | None = None) -> l
                            "yellow"))
     if assessed is not None:
         parts.append(_support_line(assessed, lookup.db_missing, indent=2))
-        if assessed.findings or assessed.undecided or assessed.product_cves:
-            first = next(iter({id(c): c for _h, _s, c in entry.places}.values()))
-            parts.extend(_known_block([(first, assessed)], [], lookup))
+        first = next(iter({id(c): c for _h, _s, c in entry.places}.values()))
+        parts.extend(_known_block([(first, assessed)], [], lookup, full))
     conflicts = [(h, s, c) for h, s, c in entry.places if c.conflicting]
     if conflicts:
         parts.append(Text(""))
@@ -903,7 +931,7 @@ def render(target: object, host: Host | None = None,
     if isinstance(target, Grouping):
         return grouping_detail(target, shots)
     if isinstance(target, inv_mod.Entry):
-        return entry_detail(target, lookup)
+        return entry_detail(target, lookup, full)
     if isinstance(target, vmatch.Affected):
         return affected_detail(target, lookup)
     if isinstance(target, Service):

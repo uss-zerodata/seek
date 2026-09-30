@@ -82,6 +82,7 @@ class Assessment:
     support: eol.Support = field(default_factory=lambda: eol.Support("unknown"))
     product_cves: int = 0          # for an unversioned component: CVEs in any version
     looked_up: bool = False        # the product has CPE names or an OSV package
+    not_matched: str = ""          # why CVEs were deliberately not looked up
 
     @property
     def worst(self) -> Finding | None:
@@ -152,7 +153,7 @@ def _merged(base: Assessment, extra: list[Finding]) -> Assessment:
             undecided.pop(f.id, None)
             by_id[f.id] = f
     return Assessment(ordered(by_id.values()), ordered(undecided.values()), base.support,
-                      base.product_cves, base.looked_up)
+                      base.product_cves, base.looked_up, base.not_matched)
 
 
 # --- evaluation ------------------------------------------------------------------
@@ -187,6 +188,18 @@ class _Evaluator:
         return found
 
     def assess(self, component: Component) -> Assessment:
+        if component.kind != "a":
+            # An operating system or a device, from nmap's fingerprint: a guess
+            # at a family ("Linux 4.15 - 5.8"), and a kernel has well over ten
+            # thousand CVEs. Matched, it buries every real finding under
+            # thousands that say nothing about this host - so it gets its
+            # support status and no CVE list.
+            slug = eol.SLUGS.get(component.key, "")
+            support = eol.support(component.key, component.version,
+                                  self.cycles(slug) if slug else [], self.today)
+            return Assessment(support=support, not_matched=(
+                "operating systems and devices are identified by fingerprint, a guess "
+                "at a version family - their CVEs are not listed"))
         keys = tuple(dict.fromkeys([*(c.key for c in component.cpes),
                                     *cpe_mod.cpe_keys(component.key)]))
         package = eol.OSV_PACKAGES.get(component.key, "")

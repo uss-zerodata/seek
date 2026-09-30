@@ -204,3 +204,13 @@ def test_a_database_that_appears_is_picked_up(db, tmp_path):
     assert s.lookup().db_missing
     shutil.copy(db, target)
     assert not s.lookup().db_missing, "a copied database is used as it is"
+
+
+def test_operating_systems_are_not_matched_against_cves(db):
+    from seek.nmap.models import OsMatch
+    lk, inv, host = _lookup(db, [], os_matches=[OsMatch("Linux 4.X", 95,
+                                                        ["cpe:/o:linux:linux_kernel:4"])])
+    [linux] = inv.of_host(host)
+    a = lk.of(linux)
+    assert a.findings == [] and a.undecided == [] and not a.looked_up
+    assert "fingerprint" in a.not_matched

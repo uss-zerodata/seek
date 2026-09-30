@@ -110,7 +110,8 @@ def test_cancel_rolls_back(tmp_path, feeds):
     with fx.serve(feeds) as urls:
         results = _run(db, urls, progress=progress, cancel=cancel)
     assert results[-1].error == "cancelled"
-    assert [r.source for r in results] == ["nvd"], "a cancel stops the whole update"
+    assert [r.source for r in results] == ["eol", "osv", "nvd"], "the small ones went first"
+    assert store.Store(db).counts()["eol"] > 0, "and are kept when NVD is cancelled"
     assert store.Store(db).counts()["cve"] == 0
 
 

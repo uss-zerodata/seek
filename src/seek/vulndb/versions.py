@@ -83,6 +83,18 @@ def compare(a: str, b: str) -> int | None:
     return _compare_segments(sa, sb)
 
 
+def less_precise(version: str, bound: str) -> bool:
+    """Whether `version` names a whole family that `bound` is inside of: `4`
+    against `4.4.1`, `7.4` against `7.4.33`. Such a version cannot be placed
+    relative to the bound - Linux `4` may be 4.0 or 4.19 - so a range that
+    turns on the bound cannot be decided for it. Trailing zeros do not count
+    (`1.0` against `1.0.0` is the same version)."""
+    sv, sb = segments(version), segments(bound)
+    if sv is None or sb is None or len(sb) <= len(sv) or sb[:len(sv)] != sv:
+        return False
+    return any(part != 0 for part in sb[len(sv):])
+
+
 def in_range(version: str, exact: str = "", start_incl: str = "", start_excl: str = "",
              end_incl: str = "", end_excl: str = "") -> bool | None:
     """Whether `version` is inside the criterion - `None` when that cannot be
@@ -92,6 +104,8 @@ def in_range(version: str, exact: str = "", start_incl: str = "", start_excl: st
     if exact and exact not in ("*",):
         if exact == "-":
             return None
+        if less_precise(version, exact):
+            return None
         c = compare(version, exact)
         return None if c is None else c == 0
     checks = ((start_incl, lambda c: c >= 0), (start_excl, lambda c: c > 0),
@@ -99,6 +113,9 @@ def in_range(version: str, exact: str = "", start_incl: str = "", start_excl: st
     undecided = False
     for bound, ok in checks:
         if not bound:
+            continue
+        if less_precise(version, bound):
+            undecided = True
             continue
         c = compare(version, bound)
         if c is None:

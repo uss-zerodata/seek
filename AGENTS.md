@@ -573,7 +573,11 @@ stdout, `cd`) cannot run while Textual owns the screen. They set
   product is looked up under **every** CPE name it is known by
   (`cpe.cpe_keys` - NVD renamed nginx's vendor), only `vulnerable: true`
   criteria are stored (that is what drops "running on Linux"), and a version
-  that cannot be ordered makes a CVE *undecided* - never affected, never safe.
+  that cannot be ordered makes a CVE *undecided* - never affected, never safe;
+  so does a version *less precise* than the bound (`versions.less_precise`:
+  `4` vs `4.4.1`). OS/device components (kind `o`/`h`) are never CVE-matched -
+  on the real sample `linux_kernel:4` from OS detection produced over 4 000
+  findings and made the viewer crawl. Sources update smallest first.
   An unversioned component gets no findings, only a count and the `U` hint.
   Database findings are per `Component` (shared across ports), scan-reported
   ones (`vulners`, NSE `vuln`) per service - `Lookup.of(c, where)` merges them.

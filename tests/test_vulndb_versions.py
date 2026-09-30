@@ -65,3 +65,21 @@ def test_undecidable_is_never_an_answer():
     assert in_range("4.1", end_excl="4.x") is None
     assert in_range("5.0", start_incl="4.x", end_excl="4.2") is False, \
         "a decidable bound that excludes still excludes"
+
+
+@pytest.mark.parametrize(("version", "bound", "expected"), [
+    ("4", "4.4.1", True), ("7.4", "7.4.33", True), ("4.19", "4.19.1", True),
+    ("4.4.1", "4.4.1", False), ("4", "5.0", False), ("1.0", "1.0.0", False),
+    ("8.9", "8.9p1", True), ("4.4.1", "4", False)])
+def test_less_precise(version, bound, expected):
+    from seek.vulndb.versions import less_precise
+    assert less_precise(version, bound) is expected
+
+
+def test_a_version_family_is_never_inside_a_range_it_straddles():
+    """Linux `4` (an OS-detection family) against a range ending inside 4.x:
+    it may be 4.0 or 4.19 - undecided, not affected."""
+    assert in_range("4", start_incl="3.2", end_excl="4.4.1") is None
+    assert in_range("4", exact="4.4.1") is None
+    assert in_range("4", end_excl="3.10") is False, "wholly past the range is still past"
+    assert in_range("4", start_incl="5.0") is False

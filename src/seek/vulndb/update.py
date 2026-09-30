@@ -34,7 +34,9 @@ from seek.vulndb import eol, sources, store
 
 Progress = Callable[[str, int, int, str], None]     # source, done, total, unit
 USER_AGENT = "seek-vulndb (+https://github.com/uss-zerodata)"
-SOURCES = ("nvd", "osv", "eol")
+# Smallest first: endoflife.date is seconds, NVD is minutes. An update that is
+# interrupted, cancelled or fails part-way still leaves the quick answers in.
+SOURCES = ("eol", "osv", "nvd")
 # Stated before the first update is confirmed; replaced by what was measured.
 FIRST_DOWNLOAD_ESTIMATE_MB = 600
 

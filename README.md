@@ -175,7 +175,11 @@ The viewer offers the update when the database is missing or older than
 For an offline machine, copy the file and point `vulndb_path` at it. The CVEs
 the scan's own `vulners` script reported are kept and shown with their source.
 Matching is by version: a version the ranges cannot place is shown as
-*undecided*, never as safe; a product without a version gets no findings, only
+*undecided*, never as safe — so is a version that names only a family (`4`
+against a range ending at `4.4.1`); operating systems from nmap's fingerprint
+get their support status but no CVE list, since a guessed kernel family would
+bury everything else under thousands of kernel CVEs; a product without a
+version gets no findings, only
 how many exist for it (and `U` to scan for the version); and a distribution
 that backports a fix without changing the version number (`8.9p1
 Ubuntu-3ubuntu0.6`) is still listed — every record says so. The inventory
