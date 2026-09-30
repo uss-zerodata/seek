@@ -43,10 +43,11 @@ async def test_the_inventory_tab_lists_products_and_versions():
         assert app.view.kind == "inventory"
         rows = {(r.cells[0], r.cells[1]): r for r in app._rows}
         assert ("nginx", "1.16.1") in rows
-        assert rows[("nginx", "1.16.1")].cells[4:6] == ("1", "1")
+        assert rows[("nginx", "1.16.1")].cells[5:7] == ("1", "1")
         assert ("Postfix", "—") in rows, "an unversioned product is a row of its own"
-        assert rows[("Linux", "—")].cells[2] == "os"
-        assert rows[("websockets", "8.1")].cells[3] == "no CPE"
+        assert rows[("Linux", "—")].cells[9] == "os"
+        assert rows[("websockets", "8.1")].cells[8] == "no CPE"
+        assert rows[("nginx", "1.16.1")].cells[2] == "no vulndb", "no database is a state"
 
 
 async def test_drilling_into_a_version_and_going_back():
@@ -89,7 +90,7 @@ async def test_sorting_by_the_conflict_column_brings_conflicts_together():
         await pilot.pause(0.2)
         await pilot.press("8")
         await pilot.pause(0.2)
-        flags = [r.cells[7] for r in app._rows]
+        flags = [r.cells[7] for r in app._rows]  # Conflict
         first = flags.index("conflict")
         assert flags[first:first + flags.count("conflict")] == ["conflict"] * flags.count(
             "conflict")

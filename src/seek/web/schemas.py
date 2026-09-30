@@ -421,6 +421,26 @@ class InventoryObservation(BaseModel):
     detail: str = ""
 
 
+class InventorySupport(BaseModel):
+    status: str
+    cycle: str | None = None
+    eol_date: str | None = None
+    latest: str | None = None
+    ending_soon: bool = False
+    reason: str | None = None
+
+
+class InventoryFinding(BaseModel):
+    id: str
+    sources: list[str] = []
+    severity: str | None = None
+    score: float | None = None
+    vector: str | None = None
+    url: str | None = None
+    summary: str | None = None
+    undecided: bool = False
+
+
 class InventoryEntry(BaseModel):
     address: str
     names: list[str] = []
@@ -436,6 +456,8 @@ class InventoryEntry(BaseModel):
     confidence: str
     conflicting: bool = False
     observations: list[InventoryObservation] = []
+    support: InventorySupport | None = None
+    findings: list[InventoryFinding] = []
 
 
 class InventoryDocument(BaseModel):
@@ -446,4 +468,37 @@ class InventoryDocument(BaseModel):
     version: int
     generated_from: list[str] = []
     unplaced_captures: int = 0
+    vulndb_date: str | None = None
     entries: list[InventoryEntry] = []
+
+
+# --- the vulnerability database (`/api/v1/vulndb`, `/api/v1/findings`) ------------
+
+
+class VulndbOut(BaseModel):
+    label: str
+    missing: bool
+    age_days: float | None = None
+    stale: bool = True
+    updating: bool = False
+    progress: str = ""
+    path: str = ""
+
+
+class FindingPlace(BaseModel):
+    address: str
+    protocol: str | None = None
+    port: int | None = None
+
+
+class FindingOut(BaseModel):
+    id: str
+    severity: str | None = None
+    score: float | None = None
+    summary: str | None = None
+    url: str | None = None
+    sources: list[str] = []
+    product: str | None = None
+    version: str | None = None
+    support: str | None = None
+    places: list[FindingPlace] = []

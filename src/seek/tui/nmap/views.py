@@ -19,6 +19,7 @@ from seek.nmap.merge import addr_key as _addr
 from seek.nmap.models import Host, ScanSet, Service
 from seek.nmap.progress import HOSTS, Report, counted
 from seek.tui.cells import width_of
+from seek.vulndb import match as vmatch
 
 ABSENT = "—"
 
@@ -615,8 +616,10 @@ def service_everywhere(svc: Service, hosts: list[Host]) -> View:
 
 # --- the software inventory ----------------------------------------------------
 
-INVENTORY_COLUMNS = ("Product", "Version", "Kind", "CPE", "Hosts", "Svcs",
-                     "Confidence", "Conflict")
+INVENTORY_COLUMNS = ("Product", "Version", "Support", "Vulns", "Max", "Hosts", "Svcs",
+                     "Conflict", "CPE", "Kind", "Confidence")
+NO_DB = "no vulndb"
+SUPPORT_RANK = {"eol": 3, "behind": 2, "current": 1, "unknown": 0}
 NO_CPE = "no CPE"
 KIND_SHORT = {"a": "app", "o": "os", "h": "hw"}
 
@@ -635,22 +638,73 @@ def cpe_cell(uris: list[str]) -> str:
     return uris[0] + (f" +{len(uris) - 1}" if len(uris) > 1 else "")
 
 
-def _entry_row(e: inv_mod.Entry) -> Row:
+def support_cell(a: vmatch.Assessment | None, missing: bool) -> str:
+    if missing:
+        return NO_DB
+    if a is None or a.support.status == "unknown":
+        return ABSENT
+    return a.support.label() + (" (ending soon)" if a.support.ending_soon else "")
+
+
+def vulns_cell(a: vmatch.Assessment | None, versioned: bool, missing: bool) -> str:
+    """How many findings - `? · 12` when the version is unknown and the product
+    has twelve CVEs in some version, `+2?` for ranges that could not be decided."""
+    if missing or a is None or not a.looked_up:
+        return ABSENT
+    if not versioned:
+        return f"? · {a.product_cves}" if a.product_cves else "?"
+    text = str(len(a.findings))
+    return text + (f" +{len(a.undecided)}?" if a.undecided else "")
+
+
+def max_cell(a: vmatch.Assessment | None) -> str:
+    if a is None or not a.findings:
+        return ""
+    score = a.max_score
+    sev = a.max_severity.lower()
+    return f"{score:.1f} {sev}" if score is not None else sev
+
+
+def lookup_words(a: vmatch.Assessment | None) -> list[str]:
+    """What the filter finds a looked-up row by: its support state, the
+    severities it has, and every finding's id."""
+    if a is None:
+        return []
+    words = [a.support.status if a.support.status != "unknown" else ""]
+    if a.support.status in ("eol", "behind"):
+        words.append("unsupported")
+    if a.support.ending_soon:
+        words.append("ending-soon")
+    words += sorted({f.severity.lower() for f in a.findings if f.severity})
+    words += [f.id for f in a.findings]
+    if a.undecided:
+        words.append("undecided")
+    return words
+
+
+def _entry_row(e: inv_mod.Entry, a: vmatch.Assessment | None = None,
+               missing: bool = True) -> Row:
     hosts = e.hosts
     records = tuple(Record(h, s) for h, s, _c in e.places)
     words = [e.product, e.version or "unversioned", inv_mod.KIND_NAMES.get(e.kind, ""),
              *e.cpe22, *e.sources, e.confidence,
-             "conflict" if e.conflicting else "", "" if e.cpe22 else "no-cpe"]
+             "conflict" if e.conflicting else "", "" if e.cpe22 else "no-cpe",
+             *lookup_words(None if missing else a)]
+    count = len(a.findings) if a is not None and not missing else -1
+    score = (a.max_score or 0.0) if a is not None and not missing else -1.0
     return Row(
-        cells=(e.product, e.version or ABSENT, KIND_SHORT.get(e.kind, e.kind),
-               cpe_cell(e.cpe22), str(len(hosts)), str(e.service_count), e.confidence,
-               "conflict" if e.conflicting else ""),
+        cells=(e.product, e.version or ABSENT, support_cell(a, missing),
+               vulns_cell(a, bool(e.version), missing), "" if missing else max_cell(a),
+               str(len(hosts)), str(e.service_count), "conflict" if e.conflicting else "",
+               cpe_cell(e.cpe22), KIND_SHORT.get(e.kind, e.kind), e.confidence),
         text=" ".join(w for w in words if w),
         target=e,
         records=records,
         addresses=tuple(h.address for h in hosts),
-        sort_key=(e.product.casefold(), version_key(e.version), e.kind, e.cpe22[:1],
-                  len(hosts), e.service_count, -e.rank, e.conflicting),
+        sort_key=(e.product.casefold(), version_key(e.version),
+                  SUPPORT_RANK.get(a.support.status, 0) if a is not None and not missing
+                  else -1, count, score, len(hosts), e.service_count, e.conflicting,
+                  e.cpe22[:1], e.kind, -e.rank),
     )
 
 
@@ -658,12 +712,89 @@ def inventory_view(session) -> View:
     """Every product and version, from every source the session has read."""
     def build(scans: ScanSet, report: Report | None = None) -> list[Row]:
         inv = session.inventory(report)
-        return [_entry_row(e) for e in inv_mod.entries(inv, scans.hosts)]
+        lookup = session.lookup()
+        return [_entry_row(e, lookup.of_entry(e), lookup.db_missing)
+                for e in inv_mod.entries(inv, scans.hosts)]
 
     return View(
         title="Inventory", columns=INVENTORY_COLUMNS, build=build, kind="inventory",
         tab="inventory", reports=True, default_sort=(4, True),
-        stamp=lambda: session.shots.generation,
+        stamp=lambda: (session.shots.generation, session.vulndb().generation),
+    )
+
+
+FINDINGS_COLUMNS = ("Finding", "Severity", "Score", "Product", "Version", "Hosts", "Svcs",
+                    "Sources", "Support")
+
+
+def _affected_row(a: vmatch.Affected, assessment: vmatch.Assessment | None) -> Row:
+    f = a.finding
+    hosts = a.hosts
+    support = support_cell(assessment, False) if a.entry is not None else ABSENT
+    words = [f.id, f.severity.lower(), a.product, a.version or "", *f.sources,
+             "undecided" if f.undecided else "", f.summary,
+             *lookup_words(assessment)[:3]]
+    return Row(
+        cells=(f.id, f.severity.lower() or ABSENT,
+               f"{f.score:.1f}" if f.score is not None else ABSENT,
+               a.product or ABSENT, (a.version or ABSENT) if a.entry is not None else ABSENT,
+               str(len(hosts)), str(a.service_count), ", ".join(f.sources), support),
+        text=" ".join(w for w in words if w),
+        target=a,
+        records=tuple(Record(h, s) for h, s, _c in a.places),
+        addresses=tuple(h.address for h in hosts),
+        sort_key=(f.id, f.rank[0], f.score or 0.0, a.product.casefold(),
+                  version_key(a.version), len(hosts), a.service_count, f.sources,
+                  support),
+    )
+
+
+def findings_view(session) -> View:
+    """Every known vulnerability that affects something in the inventory."""
+    def build(scans: ScanSet, report: Report | None = None) -> list[Row]:
+        inv = session.inventory(report)
+        lookup = session.lookup()
+        entries = inv_mod.entries(inv, scans.hosts)
+        by_entry = {id(e): lookup.of_entry(e) for e in entries}
+        return [_affected_row(a, by_entry.get(id(a.entry)) if a.entry is not None else None)
+                for a in vmatch.affected(lookup, entries, scans.hosts)]
+
+    return View(
+        title="Findings", columns=FINDINGS_COLUMNS, build=build, kind="findings",
+        tab="findings", reports=True, default_sort=(2, True),
+        stamp=lambda: (session.shots.generation, session.vulndb().generation),
+    )
+
+
+def findings_detail(a: vmatch.Affected) -> View:
+    """The services one finding affects, reached with `Enter`."""
+    def build(_: ScanSet) -> list[Row]:
+        out = []
+        for host, svc, _c in a.places:
+            port = f"{svc.port}/{svc.protocol}" if svc is not None else "host"
+            out.append(Row(
+                cells=(host.address, name_cell(host), port,
+                       _fmt(svc.name) if svc is not None else ABSENT),
+                text=" ".join(filter(None, [host.address, host.hostname, port,
+                                            svc.name if svc else ""])),
+                target=svc if svc is not None else host,
+                host=host if svc is not None else None,
+                drill=host,
+                records=(Record(host, svc),),
+                addresses=(host.address,),
+                sort_key=(_addr(host.address), host.hostname or "",
+                          proj.port_key(svc.port, svc.protocol) if svc else (-1, 0),
+                          svc.name or "" if svc else ""),
+            ))
+        return out
+
+    label = f"{a.finding.id} · {a.product} {a.version or ''}".strip(" ·")
+    return View(
+        title=f"Finding {label}",
+        subtitle=(f"{a.finding.severity.lower() or 'no severity'} · "
+                  f"{len(a.hosts)} host(s) · {a.service_count} service(s)"),
+        columns=("Address", "Hostname", "Port", "Service"),
+        build=build, kind="findings-detail", tab="findings",
     )
 
 
@@ -715,6 +846,8 @@ def open_row(row: Row, hosts: list[Host], only_open: bool = False) -> View | Non
         return grouping_detail(target)
     if isinstance(target, inv_mod.Entry):
         return inventory_detail(target)
+    if isinstance(target, vmatch.Affected):
+        return findings_detail(target)
     if isinstance(target, Host):
         return host_detail(target, only_open)
     if isinstance(target, Service):

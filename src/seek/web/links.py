@@ -50,4 +50,8 @@ def href(to: object) -> str | None:
         return port(h.address, svc.protocol, svc.port)
     if isinstance(to, ServiceGroup):
         return service(to)
+    if isinstance(to, str) and to.startswith(("https://", "http://")):
+        # An advisory: followed by the reader, never loaded by the page, so the
+        # interface still renders completely offline.
+        return to
     return None

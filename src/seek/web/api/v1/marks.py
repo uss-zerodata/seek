@@ -114,8 +114,10 @@ def export(which: str, fmt: str = "text", fields: list[str] = Query(default=[]),
     records, _source_label = _source(sess, cache, tab, path, q)
     if not records:
         raise HTTPException(422, "nothing to export")
+    wanted = which == "inventory"
     text, used = exporter.produce(records, which, fmt, fields,
-                                  inventory=sess.inventory() if which == "inventory" else None)
+                                  inventory=sess.inventory() if wanted else None,
+                                  lookup=sess.lookup() if wanted else None)
     headers = {}
     if download:
         headers["Content-Disposition"] = (

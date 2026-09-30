@@ -302,6 +302,13 @@ _HINTS = {
                   ("1-9", "sort"), ("/", "filter"), ("U", "scan unversioned"),
                   ("d", "detail"), ("m", "mark"), ("x", "export"), ("w", "web"),
                   ("?", "help"), ("^P", "commands")],
+    "findings": [("↑↓", "select"), ("←→", "read record"), ("↵", "affected services"),
+                 ("1-9", "sort"), ("/", "filter"), ("A", "update vulndb"), ("d", "detail"),
+                 ("m", "mark"), ("x", "export"), ("w", "web"), ("?", "help"),
+                 ("^P", "commands")],
+    "findings-detail": [("↑↓", "select"), ("←→", "read record"), ("↵", "host"),
+                        ("1-9", "sort"), ("/", "filter"), ("d", "detail"), ("m", "mark"),
+                        ("x", "export"), ("w", "web"), ("?", "help"), ("^P", "commands")],
     "inventory-detail": [("↑↓", "select"), ("←→", "read record"), ("↵", "host"),
                          ("1-9", "sort"), ("/", "filter"), ("d", "detail"), ("m", "mark"),
                          ("U", "scan unversioned"), ("x", "export"), ("w", "web"),
@@ -408,6 +415,7 @@ class NmapApp(App[int]):
         Binding("l", "line(1)", "Detail down", show=False),
         Binding("n", "new_scan", "New scan", show=False),
         Binding("U", "scan_unversioned", "Scan unversioned ports", show=False),
+        Binding("A", "update_vulndb", "Update the vulnerability database", show=False),
         Binding("o", "report_mode", "Report view", show=False),
         Binding("p", "freeze_log", "Freeze the log", show=False),
         Binding("c", "cancel_scan", "Cancel the scan", show=False),
@@ -605,6 +613,12 @@ class NmapApp(App[int]):
         """
         if not self.is_running:
             return
+        if event.type == "vulndb":
+            # Every lookup view keys its rows on the database's generation, so
+            # a rebuild picks the new data up; the record follows the cursor.
+            self._reload_rows(preserve=True)
+            self._refresh_status()
+            return
         if event.type == "line":
             self._on_scan_line(event.text)
         elif event.type == "run" and event.run is not None and event.run.running:
@@ -662,6 +676,7 @@ class NmapApp(App[int]):
         self.query_one(Tabs).active = self._active_tab
         self._refresh_view()
         self.call_after_refresh(self._first_layout)
+        self.call_after_refresh(self._offer_vulndb)
         if self._to_read:
             # The screen is up; now pay for the scans. Deferred to after the
             # first refresh so the interface is genuinely on and answering
@@ -905,6 +920,7 @@ class NmapApp(App[int]):
                 if (scans is self.session.scans
                         and len(scans.hosts) > self.session.INLINE_INVENTORY_HOSTS):
                     self.session.inventory()
+                    self.session.lookup()
                 # Measured here too: it is a pass over every cell of every row,
                 # and the event loop should not be the one making it.
                 view.measure()
@@ -1306,6 +1322,9 @@ class NmapApp(App[int]):
         right.append("  ")
         right.append(self.gowitness.label(),
                      style="bold" if self.gowitness.available else "dim")
+        right.append("  ")
+        right.append(self.session.vulndb_label(),
+                     style="dim" if self.session.vulndb_stale() else "bold")
         if self._report_proc is not None:
             right.append(f"  ◉ report :{self.config.gowitness_report_port}",
                          style="bold")
@@ -1723,6 +1742,74 @@ class NmapApp(App[int]):
             self.notify(str(exc), severity="error", timeout=12)
             return
         await self._command_review_run(name, command, note, out_base, targets)
+
+    # --- the vulnerability database -----------------------------------------
+
+    _vulndb_offered = False
+
+    def _offer_vulndb(self) -> None:
+        """Once per session, when the database is missing or stale: say so, and
+        name the key. An offer, never a download - nothing is fetched unless the
+        user presses `A` and then confirms what it will fetch."""
+        if self._vulndb_offered or not self.is_running:
+            return
+        self._vulndb_offered = True
+        if not self.session.vulndb_stale():
+            return
+        store = self.session.vulndb()
+        what = ("No vulnerability database" if store.missing
+                else f"The vulnerability database is {store.age_days():.0f} days old")
+        self.notify(f"{what} - press A to download public NVD, OSV and endoflife.date data. "
+                    "Nothing is fetched unless you confirm.", severity="warning", timeout=15)
+
+    def action_update_vulndb(self) -> None:
+        self._vulndb_flow()
+
+    @work(exclusive=True, group="modal")
+    async def _vulndb_flow(self) -> None:
+        if self.session.vulndb_updating:
+            answer = await self.push_screen_wait(ChoiceScreen(
+                f"Updating the vulnerability database - {self.session.vulndb_progress}",
+                [("keep", "keep going"),
+                 ("cancel", "cancel the update (the data stays as it was)")]))
+            if answer == "cancel":
+                self.session.cancel_vulndb()
+            return
+        from seek.vulndb import update as vulndb_update
+
+        store = self.session.vulndb()
+        if store.missing:
+            size = f"about {vulndb_update.FIRST_DOWNLOAD_ESTIMATE_MB} MB the first time"
+            age = "there is none yet"
+        else:
+            size = "only what changed since the last update"
+            age = f"it is {store.age_days():.0f} days old"
+        answer = await self.push_screen_wait(ChoiceScreen(
+            f"Update the vulnerability database? {age}. Downloads NVD CVE feeds, OSV npm "
+            f"advisories and endoflife.date release data - {size}. Nothing about this "
+            "engagement is sent.",
+            [("update", "download and update now"), ("no", "not now")]))
+        if answer == "update":
+            self._run_vulndb_update()
+
+    @work(thread=True, exclusive=True, group="vulndb")
+    def _run_vulndb_update(self) -> None:
+        def progress(*_args) -> None:
+            self.call_from_thread(self._refresh_status)
+
+        try:
+            results = self.session.update_vulndb(progress)
+        except SessionBusy as exc:
+            self.call_from_thread(self.notify, str(exc), severity="warning")
+            return
+        self.call_from_thread(self._vulndb_done, results)
+
+    def _vulndb_done(self, results: list) -> None:
+        failed = [r for r in results if r.error]
+        summary = ", ".join(f"{r.source} {_update_outcome(r)}" for r in results)
+        self.notify(f"vulnerability database: {summary}",
+                    severity="error" if failed else "information", timeout=12)
+        self.session.emit(SessionEvent("vulndb", "tui", text=summary))
 
     def action_scan_unversioned(self) -> None:
         self._start_gap_scan()
@@ -3054,12 +3141,14 @@ class NmapApp(App[int]):
                 fmt = await self._pick_format()
                 if fmt is None:
                     return
-            inventory = None
+            inventory = lookup = None
             if which == "inventory":
                 # Cached once built; the first build walks every host, which is
                 # not work for the event loop.
                 inventory = await asyncio.to_thread(self.session.inventory)
-            text, fmt = exporter.produce(records, which, fmt, inventory=inventory)
+                lookup = await asyncio.to_thread(self.session.lookup)
+            text, fmt = exporter.produce(records, which, fmt, inventory=inventory,
+                                         lookup=lookup)
 
         dest = await self.push_screen_wait(ChoiceScreen(
             "Send it to:", [("clipboard", "clipboard"), ("file", "file")]))
@@ -3106,6 +3195,12 @@ def _rows_of(renderable: RenderableType, width: int) -> int:
         return 1
     return max(1, sum(max(1, -(-cell_len(part) // width))
                       for part in text.split("\n")))
+
+
+def _update_outcome(result) -> str:
+    if result.error:
+        return f"failed: {result.error}"
+    return "unchanged" if result.skipped else f"{result.records} records"
 
 
 def _fit_hints(items: list[tuple[str, str]], width: int) -> tuple[list[tuple[str, str]], bool]:

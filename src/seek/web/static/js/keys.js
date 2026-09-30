@@ -27,6 +27,7 @@ export const KEYS = [
   [["x"], "export", "export the marks, else the filtered rows"],
   [["n"], "newScan", "new scan"],
   [["U"], "scanGaps", "scan the ports that have no version yet"],
+  [["A"], "updateVulndb", "update the vulnerability database (asks first)"],
   [["c"], "cancel", "cancel the running scan"],
   [["p"], "freeze", "freeze the log view (the scan keeps running)"],
   [["d"], "full", "the record full-width"],

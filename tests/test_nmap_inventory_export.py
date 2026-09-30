@@ -23,12 +23,14 @@ FIX = Path(__file__).parent / "fixtures" / "nmap"
 PATHS = [FIX / "inventory.xml"]
 WEB = "198.51.100.10"
 
-# Version 1 of the document. A change here that is not an addition is a new
-# version: bump `export.INVENTORY_VERSION` together with this list.
-V1_ENTRY_FIELDS = ["address", "names", "port", "protocol", "service", "product", "version",
+# Version 2 of the document (1 plus `support` and `findings` per entry, and
+# `vulndb_date`). A change here that is not an addition is a new version: bump
+# `export.INVENTORY_VERSION` together with this list.
+V2_ENTRY_FIELDS = ["address", "names", "port", "protocol", "service", "product", "version",
                    "kind", "cpe22", "cpe23", "cpe_origin", "confidence", "conflicting",
-                   "observations"]
-V1_OBSERVATION_FIELDS = ["source", "product", "version", "detail"]
+                   "observations", "support", "findings"]
+V2_OBSERVATION_FIELDS = ["source", "product", "version", "detail"]
+V2_CSV_FIELDS = [*V2_ENTRY_FIELDS, "max_severity", "finding_ids"]
 
 
 @pytest.fixture
@@ -49,18 +51,19 @@ def _json(sess, records) -> dict:
 
 def test_the_document_names_its_schema_and_version(sess):
     doc = _json(sess, exporter.records_for(sess.scans.hosts))
-    assert (doc["schema"], doc["version"]) == ("seek.inventory", 1)
+    assert (doc["schema"], doc["version"]) == ("seek.inventory", 2)
+    assert doc["vulndb_date"] is None, "no database: not looked up, not 'none found'"
     assert doc["generated_from"] == ["inventory.xml"]
     assert doc["unplaced_captures"] == 0
 
 
-def test_version_1_fields_are_pinned(sess):
+def test_version_2_fields_are_pinned(sess):
     doc = _json(sess, exporter.records_for(sess.scans.hosts))
-    assert exporter.INVENTORY_VERSION == 1
+    assert exporter.INVENTORY_VERSION == 2
     for entry in doc["entries"]:
-        assert list(entry) == V1_ENTRY_FIELDS
+        assert list(entry) == V2_ENTRY_FIELDS
         for o in entry["observations"]:
-            assert list(o) == V1_OBSERVATION_FIELDS
+            assert list(o) == V2_OBSERVATION_FIELDS
 
 
 def test_every_component_of_the_listed_hosts(sess):
@@ -87,7 +90,7 @@ def test_csv_has_one_row_per_component_and_the_v1_header(sess):
     text, _ = exporter.produce(exporter.records_for(sess.scans.hosts), "inventory", "csv",
                                inventory=sess.inventory())
     rows = list(csv.reader(io.StringIO(text)))
-    assert rows[0] == V1_ENTRY_FIELDS
+    assert rows[0] == V2_CSV_FIELDS
     doc = _json(sess, exporter.records_for(sess.scans.hosts))
     assert len(rows) - 1 == len(doc["entries"])
     ssh = next(r for r in rows if r[5] == "OpenSSH")
@@ -115,3 +118,70 @@ def test_the_web_export_route_offers_and_produces_it(sess):
     text = client.get("/api/v1/export", params={"which": "inventory", "fmt": "json",
                                                 "tab": "hosts"}).text
     assert json.loads(text) == _json(sess, exporter.records_for(sess.scans.hosts))
+
+
+# --- with the vulnerability database (document version 2) -------------------------------
+
+
+@pytest.fixture(scope="module")
+def vdb(tmp_path_factory):
+    import vulndb_fixtures as fx
+    return fx.database(tmp_path_factory.mktemp("vdb"))
+
+
+@pytest.fixture
+def looked_up(tmp_path, vdb) -> Session:
+    return Session(Config(nmap_path="/nonexistent/nmap", vulndb_path=str(vdb)), PATHS,
+                   tmp_path, databases=[], scans=prepare(load(PATHS)))
+
+
+def test_entries_carry_support_and_findings(looked_up):
+    text, _ = exporter.produce(exporter.records_for(looked_up.scans.hosts), "inventory",
+                               "json", inventory=looked_up.inventory(),
+                               lookup=looked_up.lookup())
+    doc = json.loads(text)
+    assert doc["vulndb_date"] is not None
+    nginx = next(e for e in doc["entries"] if e["product"] == "nginx")
+    assert nginx["support"]["status"] == "eol" and nginx["support"]["eol_date"] == "2020-04-21"
+    assert [f["id"] for f in nginx["findings"]] == ["CVE-2099-0001", "CVE-2099-0005"]
+    assert nginx["findings"][0]["sources"] == ["nvd"]
+    tomcat = next(e for e in doc["entries"] if e["product"] == "Apache Tomcat")
+    assert any(f["id"] == "CVE-2020-1938" and f["sources"] == ["vulners"]
+               for f in tomcat["findings"])
+
+
+def test_csv_carries_the_lookup_columns(looked_up):
+    text, _ = exporter.produce(exporter.records_for(looked_up.scans.hosts), "inventory",
+                               "csv", inventory=looked_up.inventory(),
+                               lookup=looked_up.lookup())
+    rows = list(csv.DictReader(io.StringIO(text)))
+    nginx = next(r for r in rows if r["product"] == "nginx")
+    assert (nginx["support"], nginx["findings"], nginx["max_severity"]) == ("eol", "2", "HIGH")
+    assert nginx["finding_ids"] == "CVE-2099-0001 CVE-2099-0005"
+
+
+def test_the_api_serves_the_v2_document_and_the_findings(looked_up):
+    client = TestClient(create_app(CachedSource(lambda: looked_up.scans,
+                                                lambda: looked_up.shots), looked_up))
+    served = client.get("/api/v1/inventory").json()
+    exported = json.loads(exporter.produce(
+        exporter.records_for(looked_up.scans.hosts), "inventory", "json",
+        inventory=looked_up.inventory(), lookup=looked_up.lookup())[0])
+    assert served == exported
+    findings = {f["id"]: f for f in client.get("/api/v1/findings").json()}
+    assert findings["CVE-2099-0001"]["product"] == "nginx"
+    assert findings["CVE-2099-0001"]["places"] == [
+        {"address": WEB, "protocol": "tcp", "port": 80}]
+    state = client.get("/api/v1/vulndb").json()
+    assert state["missing"] is False and state["label"].startswith("◈ vulndb")
+
+
+def test_the_browser_update_is_refused_while_one_runs(looked_up):
+    client = TestClient(create_app(CachedSource(lambda: looked_up.scans,
+                                                lambda: looked_up.shots), looked_up))
+    assert looked_up._vulndb_lock.acquire()
+    try:
+        assert client.post("/api/v1/vulndb/update").status_code == 409
+    finally:
+        looked_up._vulndb_lock.release()
+    assert client.post("/api/v1/vulndb/cancel").status_code == 409

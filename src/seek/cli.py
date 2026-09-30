@@ -15,7 +15,7 @@ from typing import Annotated
 
 import typer
 
-from seek.config import ConfigError, load_config
+from seek.config import Config, ConfigError, load_config
 from seek.engine.engine import Modes
 from seek.paths import config_file
 from seek.scope import ScopeError, build_scope
@@ -28,7 +28,7 @@ app = typer.Typer(
     help="Interactive terminal search for files, directories, and file contents.",
 )
 
-_KNOWN_SUBCOMMANDS = {"search", "init", "nmap"}
+_KNOWN_SUBCOMMANDS = {"search", "init", "nmap", "vulndb"}
 
 
 @contextmanager
@@ -212,8 +212,55 @@ def nmap(
 _OTHER_COMMANDS = (
     "Other commands (run `seek <command> --help`):\n"
     "  seek nmap [files|dirs]  browse or run nmap scans, several merged into one\n"
-    "  seek init <bash|zsh>    print shell-integration code"
+    "  seek init <bash|zsh>    print shell-integration code\n"
+    "  seek vulndb update      download public vulnerability and end-of-life data\n"
+    "  seek vulndb status      where the vulnerability database is, and how old"
 )
+
+
+def _load_config() -> Config:
+    """The config, or exit 2 naming what is wrong with it - as `nmap` does."""
+    try:
+        return load_config()
+    except ConfigError as exc:
+        typer.echo(f"seek: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+
+
+vulndb_app = typer.Typer(
+    help="The local vulnerability database: public NVD, OSV and endoflife.date data. "
+         "Only `update` uses the network; the viewer only ever reads the file.",
+    no_args_is_help=True,
+)
+app.add_typer(vulndb_app, name="vulndb")
+
+
+@vulndb_app.command("update")
+def vulndb_update(
+    source: Annotated[
+        list[str] | None,
+        typer.Option("--source", help="Only this source: nvd, osv or eol (repeatable)."),
+    ] = None,
+    full: Annotated[
+        bool, typer.Option("--full", help="Download everything again, not just what changed.")
+    ] = False,
+) -> None:
+    """Download or refresh the database. The first run fetches several hundred MB."""
+    from seek.vulndb import commands, update
+
+    which = source or list(update.SOURCES)
+    unknown = [s for s in which if s not in update.SOURCES]
+    if unknown:
+        raise typer.BadParameter(f"unknown source(s): {', '.join(unknown)}")
+    raise typer.Exit(code=commands.run_update(_load_config(), sys.stderr, which, full))
+
+
+@vulndb_app.command("status")
+def vulndb_status() -> None:
+    """Where the database is, how old it is, and what it holds."""
+    from seek.vulndb import commands
+
+    raise typer.Exit(code=commands.status(_load_config(), sys.stdout))
 
 
 @app.command(epilog=_OTHER_COMMANDS)

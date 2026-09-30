@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from seek.web import media
-from seek.web.api.v1 import captures, hosts, inventory, services
+from seek.web.api.v1 import captures, hosts, inventory, services, vulndb
 from seek.web.api.v1 import marks as marks_api
 from seek.web.api.v1 import records as records_api
 from seek.web.api.v1 import runs as runs_api
@@ -34,6 +34,7 @@ ROUTERS = [
     services.router,
     captures.router,
     inventory.router,
+    vulndb.router,
     views_api.router,
     records_api.router,
     marks_api.router,

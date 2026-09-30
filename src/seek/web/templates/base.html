@@ -17,6 +17,7 @@
     <a href="/" data-tab="gallery" {% if nav == "gallery" %}aria-current="page"{% endif %}>Screenshots</a>
   </nav>
   <span id="status" class="status" aria-live="polite"></span>
+  <button type="button" id="vulndb" class="vulndb dim" title="the vulnerability database - A updates it">◈ vulndb</button>
   <form class="global-search" action="/search" method="get" role="search">
     <input id="global-q" name="q" type="search" autocomplete="off" value="{{ q if nav == '' and q is defined else '' }}"
            placeholder="Search everything  (Ctrl+K)" aria-label="search everything"

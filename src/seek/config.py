@@ -126,6 +126,11 @@ class Config:
     # no way to tell. Set false when the size of a capture directory matters
     # more than its completeness. Affects collection only, never reading.
     gowitness_collect_all: bool = True
+    # The vulnerability database (`seek vulndb update`). Empty: `vulndb.sqlite3`
+    # in the state directory. Point it at a copy to use one built elsewhere.
+    vulndb_path: str = ""
+    # Older than this, the viewer offers to update it - asks, never fetches.
+    vulndb_stale_days: int = 7
     # name -> nmap arguments. Unlike the other tables this one *replaces* the
     # default when the user defines any: a curated list of the commands you
     # actually run should be exactly what the app offers.
@@ -170,6 +175,8 @@ _SCALAR_KEYS: dict[str, type | tuple[type, ...]] = {
     "web_port": int,
     "gowitness_chrome_path": str,
     "gowitness_collect_all": bool,
+    "vulndb_path": str,
+    "vulndb_stale_days": int,
 }
 # Minimum (and where one is meaningful, maximum) for each numeric key.
 # Types alone were checked before, which let values through that quietly break
@@ -190,6 +197,7 @@ _RANGES: dict[str, tuple[int, int | None]] = {
     "content_cache_budget": (0, None),
     "gowitness_report_port": (1, 65_535),
     "web_port": (1, 65_535),
+    "vulndb_stale_days": (1, 3650),
 }
 
 # Keys whose value must be one of a fixed set. A typo in one of these is not a
@@ -400,6 +408,8 @@ _EXAMPLE_COMMENTS = {
     "web_port": "port the viewer's web interface listens on",
     "gowitness_chrome_path": "a Chrome binary for gowitness to use; empty lets it fetch its own",
     "gowitness_collect_all": "record network logs, cookies and response bodies too (large)",
+    "vulndb_path": "the vulnerability database; empty means vulndb.sqlite3 in the state dir",
+    "vulndb_stale_days": "offer an update when the vulnerability database is older than this",
 }
 
 

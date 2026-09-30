@@ -61,7 +61,7 @@ after them, so a five-scan engagement is on screen immediately and a hundred
 and twenty scans fill in as they are read.
 
 The overviews are tabs — **Hosts**, **Services**, **Statistics**, **By service**,
-**By product**, **By port**, **Inventory**, **Names**, **Scans** — clickable, or `v`/`V` to
+**By product**, **By port**, **Inventory**, **Findings**, **Names**, **Scans** — clickable, or `v`/`V` to
 cycle and `s`/`b`/`u` to jump. Hosts shows address, hostname, OS and service count; Services shows port,
 protocol, name, product, version, extra info, host count and vulnerabilities,
 grouped across every host. `Enter` drills in both directions and keeps going:
@@ -97,6 +97,7 @@ yourself replaces the drill-down. The filter box uses the same fuzzy grammar (`'
 | `m` `M` | mark the selected row · clear every mark |
 | `n` | new scan · `o` report view · `p` freeze log · `c` cancel |
 | `U` | scan the open ports that have no version yet (`-sV --version-all`) |
+| `A` | update the local vulnerability database (asks first, says what it downloads) |
 | `x` | export, or capture the URLs with gowitness · `?` help |
 | `i` | open a capture's screenshot · `W` serve gowitness's report · `w` open the web interface |
 | `Ctrl+P` | command palette — every action above, searchable by name |
@@ -148,6 +149,38 @@ serves the same document at `/api/v1/inventory`. `U` drafts one
 `-sV --version-all` scan of the open ports nothing has versioned yet — over the
 marks, or the rows on screen — and says how many extra host/port pairs the
 shared port list adds before you review it.
+
+**Vulnerabilities and end of life.** With a local vulnerability database, the
+Inventory tab answers the two questions a review asks of every product at a
+glance: **Support** (`EOL 2022-11-28`, `behind · 2.4.62`, `current`, with
+`(ending soon)` inside 90 days of the end date) and **Vulns** / **Max** (how many
+known vulnerabilities affect *this* version, and the worst of them). It opens
+sorted worst first. The **Findings** tab lists every CVE or advisory that
+affects something in the engagement, and `Enter` lists the services it affects.
+Filter by `eol`, `behind`, `unsupported`, `critical`, `high`, or a CVE id.
+
+The data is public and local: NVD's CVE feeds, OSV advisories for client-side
+libraries (jQuery, Lodash, Vue.js, …) and endoflife.date release cycles, stored
+in one SQLite file in the state directory. Only an explicit update touches the
+network, and it never sends anything about the engagement — every request is a
+whole public feed:
+
+```bash
+seek vulndb update          # first run: several hundred MB; later runs: what changed
+seek vulndb status          # where it is, how old, what it holds
+```
+
+The viewer offers the update when the database is missing or older than
+`vulndb_stale_days` (7), and `A` runs it after saying what it will download.
+For an offline machine, copy the file and point `vulndb_path` at it. The CVEs
+the scan's own `vulners` script reported are kept and shown with their source.
+Matching is by version: a version the ranges cannot place is shown as
+*undecided*, never as safe; a product without a version gets no findings, only
+how many exist for it (and `U` to scan for the version); and a distribution
+that backports a fix without changing the version number (`8.9p1
+Ubuntu-3ubuntu0.6`) is still listed — every record says so. The inventory
+export (document version 2) and `/api/v1/inventory` carry support and findings
+per entry; `/api/v1/findings` lists them by finding.
 
 When a filter leaves nothing, the list says what matched nothing and how to get
 back — `Esc` clears it. Modals (export, fields, format) move with `↑`/`↓`, choose

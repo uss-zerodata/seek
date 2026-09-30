@@ -160,6 +160,51 @@ async function newScan() {
   });
 }
 
+// --- the vulnerability database ----------------------------------------------------
+
+const vulndbButton = document.getElementById("vulndb");
+
+async function showVulndb() {
+  if (!vulndbButton) return null;
+  try {
+    const state = await send("GET", "/api/v1/vulndb");
+    vulndbButton.textContent = state.label;
+    vulndbButton.classList.toggle("dim", state.stale);
+    if (state.updating) setTimeout(showVulndb, 2000);
+    return state;
+  } catch { return null; }
+}
+
+// Nothing is ever downloaded without this dialog being confirmed: the page asks
+// the server for the state, says what an update fetches, and only then posts.
+async function updateVulndb() {
+  const state = await showVulndb();
+  if (!state) { say("the vulnerability database is not available here"); return; }
+  if (state.updating) {
+    const d = dialog(`<form method="dialog"><h2>Updating the vulnerability database</h2>
+      <p>${esc(state.progress)}</p>
+      <p class="buttons"><button value="cancel">Cancel the update</button> <button value="keep" class="primary">Keep going</button>
+      <span class="dim small">a cancelled update leaves the data as it was</span></p></form>`);
+    d.addEventListener("close", async () => {
+      if (d.returnValue === "cancel") { try { await send("POST", "/api/v1/vulndb/cancel"); say("cancelling"); } catch (e) { say(e.message); } }
+    });
+    return;
+  }
+  const age = state.missing ? "There is none yet - about 600 MB the first time." : `It is ${Math.round(state.age_days)} days old; only what changed is downloaded.`;
+  const d = dialog(`<form method="dialog"><h2>Update the vulnerability database?</h2>
+    <p>${esc(age)}</p>
+    <p class="dim small">Downloads NVD CVE feeds, OSV npm advisories and endoflife.date release data. Nothing about this engagement is sent.</p>
+    <p class="buttons"><button value="update" class="primary">Download and update</button> <button value="no">Not now</button>
+    <span class="dim small">Esc leaves</span></p></form>`);
+  d.addEventListener("close", async () => {
+    if (d.returnValue !== "update") return;
+    try { await send("POST", "/api/v1/vulndb/update"); say("updating the vulnerability database"); showVulndb(); }
+    catch (e) { say(e.message); }
+  });
+}
+
+if (vulndbButton) { vulndbButton.addEventListener("click", updateVulndb); showVulndb(); }
+
 async function scanGaps() {
   let plan;
   try { plan = await send("POST", "/api/v1/scans/gaps", view()); } catch (e) { say(e.message); return; }
@@ -237,4 +282,4 @@ export function help(keys) {
     <p><button value="close">Close</button> <span class="dim small">Esc leaves</span></p></form>`);
 }
 
-export const handlers = { mark, clearMarks, export: exportDialog, newScan, scanGaps, cancel, freeze, shots };
+export const handlers = { mark, clearMarks, export: exportDialog, newScan, scanGaps, updateVulndb, cancel, freeze, shots };

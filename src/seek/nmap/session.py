@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,6 +44,8 @@ from seek.nmap.export import Record, export_ports, export_urls, records_for, ser
 from seek.nmap.models import ScanSet
 from seek.nmap.runner import ScanRun
 from seek.runner import Run, Runner
+from seek.vulndb import match as vulndb_match
+from seek.vulndb import store as vulndb_store
 
 # How many events a slow listener may fall behind before `line` events are
 # dropped for it. A run must never wait for a browser tab.
@@ -54,7 +57,8 @@ class Event:
     """Something every front end may want to show.
 
     `type` is one of `model` (a new model was published), `run` (a run started
-    or ended - `run.state` says which), `line` (a run wrote a line), `marks`.
+    or ended - `run.state` says which), `line` (a run wrote a line), `marks`,
+    `vulndb` (the vulnerability database was updated; `text` summarises it).
     `origin` is who caused it, so a front end can tell its own actions from
     another's - the viewer switches to the Scans tab for a run *it* started,
     never for one started in a browser.
@@ -148,6 +152,14 @@ class Session:
         self._unplaced = 0
         self._inventory: inventory_mod.Inventory | None = None
         self._inventory_for: tuple = (None, None)
+        self._store: vulndb_store.Store | None = None
+        self._lookup: vulndb_match.Lookup | None = None
+        self._lookup_for: tuple = (None, None)
+        # One update at a time, from whichever front end asked; what it is doing
+        # now, for a status line to show.
+        self._vulndb_lock = threading.Lock()
+        self.vulndb_progress = ""
+        self.vulndb_cancel: threading.Event | None = None
         self._row_texts: dict[int, tuple] = {}
         # What each finished scan added to what was known, by run.
         self.diffs: dict[int, object] = {}
@@ -246,6 +258,106 @@ class Session:
             self._inventory.sources = list(self.scans.sources)
             self._inventory_for = (self.scans, self.shots.generation)
         return self._inventory
+
+    # --- the vulnerability lookup ---------------------------------------------------
+
+    def vulndb(self) -> vulndb_store.Store:
+        """The database, opened read-only - reopened when it has appeared or
+        been replaced since, so an update run from anywhere is picked up."""
+        path = vulndb_store.resolve(self.config.vulndb_path)
+        if self._store is None or (self._store.missing and path.exists()):
+            if self._store is not None:
+                self._store.close()
+            self._store = vulndb_store.Store(path)
+        return self._store
+
+    def reload_vulndb(self) -> None:
+        """After an update: read the file afresh and forget the old answers."""
+        if self._store is not None:
+            self._store.close()
+        self._store = None
+        self._lookup = None
+
+    @property
+    def vulndb_updating(self) -> bool:
+        return self._vulndb_lock.locked()
+
+    def update_vulndb(self, progress=None) -> list:
+        """Run the database update - blocking, so call it from a thread. The only
+        way this application touches the network, and only when asked. Each
+        front end emits the `vulndb` event on its own loop afterwards.
+
+        Raises `Busy` when an update is already running.
+        """
+        from seek.vulndb import update as vulndb_update
+
+        if not self._vulndb_lock.acquire(blocking=False):
+            raise Busy("the vulnerability database is already being updated")
+        self.vulndb_cancel = threading.Event()
+
+        def report(source: str, done: int, total: int, unit: str) -> None:
+            self.vulndb_progress = (f"{source} {done}/{total} {unit}" if total
+                                    else f"{source} {done} {unit}")
+            if progress is not None:
+                progress(source, done, total, unit)
+
+        try:
+            results = vulndb_update.run(vulndb_store.resolve(self.config.vulndb_path),
+                                        report, self.vulndb_cancel)
+        finally:
+            self.vulndb_progress = ""
+            self.vulndb_cancel = None
+            self._vulndb_lock.release()
+        self.reload_vulndb()
+        return results
+
+    def cancel_vulndb(self) -> bool:
+        if self.vulndb_cancel is None:
+            return False
+        self.vulndb_cancel.set()
+        return True
+
+    def vulndb_label(self) -> str:
+        """`◈ vulndb 3d`, `◈ vulndb updating …`, or `◈ no vulndb`."""
+        if self.vulndb_updating:
+            return f"◈ vulndb updating {self.vulndb_progress}".rstrip()
+        store = self.vulndb()
+        if store.missing:
+            return "◈ no vulndb"
+        age = store.age_days()
+        if age is None:
+            return "◈ vulndb (never completed)"
+        return f"◈ vulndb {age * 24:.0f}h" if age < 1 else f"◈ vulndb {age:.0f}d"
+
+    def vulndb_stale(self) -> bool:
+        store = self.vulndb()
+        age = store.age_days()
+        return store.missing or age is None or age > self.config.vulndb_stale_days
+
+    def lookup(self) -> vulndb_match.Lookup:
+        """Findings and support status for the inventory as it stands, rebuilt
+        when the inventory or the database changes."""
+        inv = self.inventory()
+        store = self.vulndb()
+        key = (inv, store.generation)
+        if self._lookup is None or self._lookup_for[0] is not inv \
+                or self._lookup_for[1] != key[1]:
+            self._lookup = vulndb_match.build(inv, self.scans.hosts, store)
+            self._lookup_for = key
+        return self._lookup
+
+    def lookup_ready(self) -> vulndb_match.Lookup | None:
+        """The lookup if current, or cheap enough to make now - as `inventory_ready`."""
+        inv = self.inventory_ready()
+        if inv is None:
+            return None
+        store = self.vulndb()
+        if (self._lookup is not None and self._lookup_for[0] is inv
+                and self._lookup_for[1] == store.generation):
+            return self._lookup
+        if len(self.scans.hosts) <= self.INLINE_INVENTORY_HOSTS:
+            return self.lookup()
+        return None
 
     # Below this many hosts a record may build the inventory itself; above it
     # only the projection worker does, and a record shows it once it is there.

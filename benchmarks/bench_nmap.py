@@ -53,6 +53,13 @@ it into the tab's rows - 582 ms. Both were 1.9 s and 5.6 s before memoising
 the CPE bindings and per-place reconciliation (a corpus repeats a few
 identifications across 342 557 services) and summarising each entry once.
 
+The vulnerability lookup (`openspec/changes/vulnerability-lookup/`) adds three
+more, against the test suite's feed fixtures built into a throwaway database:
+`vuln lookup` 200 ms (each distinct product and version evaluated once),
+`inventory tab` 751 ms with its Support / Vulns / Max columns, and `findings
+tab` 1187 ms. The lookup's cost grows with distinct versions, not with hosts;
+the tabs' with the places each product runs on.
+
 Note that "to the first screen" has no row any more, because there no longer is
 one: the viewer opens on the candidate files and reads them with the screen
 already up. What the user waits for is the first publication, not the last -
@@ -127,13 +134,35 @@ class _Inventoried:
     class _Shots:
         generation = 0
 
-    def __init__(self, scans) -> None:
+    def __init__(self, scans, store=None) -> None:
         self.scans, self.shots, self._inventory = scans, self._Shots(), None
+        self._store, self._lookup = store, None
 
     def inventory(self, report=None):
         if self._inventory is None:
             self._inventory = inventory.build(self.scans.hosts, report=report)
         return self._inventory
+
+    def vulndb(self):
+        return self._store
+
+    def lookup(self):
+        if self._lookup is None:
+            from seek.vulndb import match
+            self._lookup = match.build(self.inventory(), self.scans.hosts, self._store)
+        return self._lookup
+
+
+def _fixture_store():
+    """The test suite's feed fixtures, built into a throwaway database - small,
+    but every code path of the matcher runs against it."""
+    import tempfile
+
+    sys.path.insert(0, str(Path(__file__).parents[1] / "tests"))
+    import vulndb_fixtures as fx
+
+    from seek.vulndb.store import Store
+    return Store(fx.database(Path(tempfile.mkdtemp(prefix="seek-bench-"))))
 
 
 def pipeline(root: Path, policy: bool = True) -> None:
@@ -173,9 +202,11 @@ def pipeline(root: Path, policy: bool = True) -> None:
             split.time(label, lambda view=view: view.rows(scans))
         # The inventory is built once per model (a session projection), then
         # the tab groups it - two phases, timed apart.
-        owner = _Inventoried(scans)
+        owner = _Inventoried(scans, _fixture_store())
         split.time("inventory", owner.inventory)
+        split.time("vuln lookup", owner.lookup)
         split.time("inventory tab", lambda: vdefs.inventory_view(owner).rows(scans))
+        split.time("findings tab", lambda: vdefs.findings_view(owner).rows(scans))
 
     size = sum(p.stat().st_size for p in paths)
     print(f"\n{len(paths)} files, {size / 1e6:.1f} MB, {len(scans.hosts)} hosts, "

@@ -20,6 +20,7 @@ import io
 import json
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from seek.nmap import inventory as inv_mod
 from seek.nmap import names
@@ -291,13 +292,37 @@ EXPORTS: dict[str, tuple[str, Callable[[Iterable[Record]], list[str]], str | Non
 # renaming a field or changing what one means increases it.
 
 INVENTORY_SCHEMA = "seek.inventory"
-INVENTORY_VERSION = 1
+# 2: each entry gained `support` and `findings`, the document `vulndb_date`.
+INVENTORY_VERSION = 2
 INVENTORY_FIELDS = ["address", "names", "port", "protocol", "service", "product", "version",
                     "kind", "cpe22", "cpe23", "cpe_origin", "confidence", "conflicting",
-                    "observations"]
+                    "observations", "support", "findings"]
+# The CSV flattens `support` to its state and `findings` to a count, and adds
+# the two columns a spreadsheet sorts and filters by.
+INVENTORY_CSV_FIELDS = [*INVENTORY_FIELDS, "max_severity", "finding_ids"]
 
 
-def _entry(host: Host, svc: Service | None, c: inv_mod.Component) -> dict:
+def _support(a) -> dict:
+    s = a.support
+    return {"status": s.status, "cycle": s.cycle or None, "eol_date": s.eol_date or None,
+            "latest": s.latest or None, "ending_soon": s.ending_soon,
+            "reason": s.reason or None}
+
+
+def _finding(f) -> dict:
+    return {"id": f.id, "sources": list(f.sources), "severity": f.severity or None,
+            "score": f.score, "vector": f.vector or None, "url": f.url or None,
+            "summary": f.summary or None, "undecided": f.undecided}
+
+
+def _entry(host: Host, svc: Service | None, c: inv_mod.Component, lookup=None) -> dict:
+    if lookup is not None and not lookup.db_missing:
+        where = (host.address, svc.protocol, svc.port) if svc is not None else None
+        a = lookup.of(c, where)
+        support = _support(a)
+        findings = [_finding(f) for f in [*a.findings, *a.undecided]]
+    else:
+        support, findings = None, []
     return {
         "address": host.address,
         "names": names.names_of(host),
@@ -314,10 +339,13 @@ def _entry(host: Host, svc: Service | None, c: inv_mod.Component) -> dict:
         "conflicting": c.conflicting,
         "observations": [{"source": o.source, "product": o.product, "version": o.version,
                           "detail": o.detail} for o in c.observations],
+        "support": support,
+        "findings": findings,
     }
 
 
-def inventory_entries(records: Iterable[Record], inventory: inv_mod.Inventory) -> list[dict]:
+def inventory_entries(records: Iterable[Record], inventory: inv_mod.Inventory,
+                      lookup=None) -> list[dict]:
     """One entry per component per service, and per host for the components
     that describe the host. A host record covers its open services and its
     own components; a service record covers that service only."""
@@ -326,26 +354,49 @@ def inventory_entries(records: Iterable[Record], inventory: inv_mod.Inventory) -
         host = record.host
         if record.service is None:
             for c in inventory.of_host(host):
-                out.setdefault((host.address, None, c.key, c.version), _entry(host, None, c))
+                out.setdefault((host.address, None, c.key, c.version),
+                               _entry(host, None, c, lookup))
         for svc in record.services:
             for c in inventory.of_service(host, svc):
                 out.setdefault((host.address, (svc.protocol, svc.port), c.key, c.version),
-                               _entry(host, svc, c))
+                               _entry(host, svc, c, lookup))
     return list(out.values())
 
 
-def inventory_document(records: Iterable[Record], inventory: inv_mod.Inventory) -> dict:
+def inventory_document(records: Iterable[Record], inventory: inv_mod.Inventory,
+                       lookup=None) -> dict:
+    """The versioned document. `lookup` (a `vulndb.match.Lookup`) adds each
+    entry's support status and findings; without a database both are empty and
+    `vulndb_date` is null, which is how a reader tells "none found" from "not
+    looked up"."""
+    updated = None
+    if lookup is not None and not lookup.db_missing and lookup.db_updated:
+        updated = datetime.fromtimestamp(lookup.db_updated, UTC).isoformat(timespec="seconds")
     return {
         "schema": INVENTORY_SCHEMA,
         "version": INVENTORY_VERSION,
         "generated_from": list(inventory.sources),
         "unplaced_captures": inventory.unplaced,
-        "entries": inventory_entries(records, inventory),
+        "vulndb_date": updated,
+        "entries": inventory_entries(records, inventory, lookup),
     }
 
 
+_SEVERITY_ORDER = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
+
+
 def _flat(entry: dict, field: str) -> str:
+    if field == "max_severity":
+        found = [f["severity"] for f in entry["findings"] if f["severity"]
+                 and not f["undecided"]]
+        return max(found, key=lambda s: _SEVERITY_ORDER.get(s, 0), default="")
+    if field == "finding_ids":
+        return " ".join(f["id"] for f in entry["findings"] if not f["undecided"])
     value = entry[field]
+    if field == "support":
+        return value["status"] if value else ""
+    if field == "findings":
+        return str(sum(1 for f in value if not f["undecided"])) if entry["support"] else ""
     if field == "observations":
         return "; ".join(f"{o['source']}={o['version'] or ''}" for o in value)
     if isinstance(value, list):
@@ -356,22 +407,23 @@ def _flat(entry: dict, field: str) -> str:
 
 
 def render_inventory(records: Iterable[Record], inventory: inv_mod.Inventory,
-                     fmt: str) -> str:
+                     fmt: str, lookup=None) -> str:
     """The inventory as a versioned JSON document, a CSV table, or text lines."""
-    document = inventory_document(records, inventory)
+    document = inventory_document(records, inventory, lookup)
     if fmt == "json":
         return json.dumps(document, indent=2)
-    table = [tuple(_flat(e, f) for f in INVENTORY_FIELDS) for e in document["entries"]]
+    table = [tuple(_flat(e, f) for f in INVENTORY_CSV_FIELDS) for e in document["entries"]]
     if fmt == "text":
-        picked = [INVENTORY_FIELDS.index(f) for f in
-                  ("address", "port", "protocol", "product", "version", "cpe23")]
+        picked = [INVENTORY_CSV_FIELDS.index(f) for f in
+                  ("address", "port", "protocol", "product", "version", "cpe23", "support",
+                   "finding_ids")]
         return "\n".join(" ".join(row[i] for i in picked if row[i]) for row in table)
-    return _write(table, INVENTORY_FIELDS, fmt)
+    return _write(table, INVENTORY_CSV_FIELDS, fmt)
 
 
 def produce(records: Iterable[Record], which: str, fmt: str = "text",
             fields: Iterable[str] = (),
-            inventory: inv_mod.Inventory | None = None) -> tuple[str, str]:
+            inventory: inv_mod.Inventory | None = None, lookup=None) -> tuple[str, str]:
     """An export as text, and the format actually used - for every front end.
 
     `which` is a key of `EXPORTS`, or `custom` with `fields`. The port list is
@@ -384,7 +436,7 @@ def produce(records: Iterable[Record], which: str, fmt: str = "text",
     if which == "inventory":
         if inventory is None:
             raise ValueError("the inventory export needs the inventory")
-        return render_inventory(records, inventory, fmt), fmt
+        return render_inventory(records, inventory, fmt, lookup), fmt
     _label, recipe, column = EXPORTS[which]
     items = recipe(records)
     if column is None:

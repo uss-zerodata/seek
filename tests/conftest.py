@@ -45,3 +45,11 @@ def symlink_loop(tmp_path: Path) -> Path:
     except (OSError, NotImplementedError):
         pytest.skip("symlinks not supported here")
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def _private_state_dir(tmp_path_factory, monkeypatch):
+    """Every test gets an empty state directory: nothing reads or writes the
+    user's own - above all not a real vulnerability database, whose contents
+    would make lookups depend on the machine the tests ran on."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path_factory.mktemp("state")))

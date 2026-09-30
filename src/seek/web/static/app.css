@@ -67,6 +67,8 @@ td.ports { font-variant-numeric: tabular-nums; }
 /* --- the viewer: list beside record ------------------------------------------ */
 nav#tabs { flex-wrap: wrap; }
 .status { margin-left: auto; color: var(--dim); font-size: .85rem; }
+.vulndb { background: none; border: none; color: var(--fg); font: inherit; font-size: .85rem; cursor: pointer; margin-left: .75rem; }
+.vulndb.dim { color: var(--dim); }
 .viewer { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; }
 @media (max-width: 1000px) { .viewer { grid-template-columns: 1fr; } }
 .pane-record { border-left: 1px solid var(--line); padding-left: 16px; min-width: 0;

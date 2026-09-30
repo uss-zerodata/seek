@@ -33,6 +33,7 @@ from seek.nmap.export import service_urls
 from seek.nmap.models import Host, Service, Vulnerability
 from seek.nmap.views import ServiceGroup
 from seek.tui.nmap.views import Grouping
+from seek.vulndb import match as vmatch
 
 ABSENT = "—"
 _LABEL_W = 11
@@ -400,7 +401,8 @@ def _state_text(host: Host) -> tuple[str, str]:
 
 def host_detail(host: Host, shots: Captures | None = None, full: bool = False,
                 scanned: rawlog.Scanned | None = None,
-                inventory: inv_mod.Inventory | None = None) -> list[Line]:
+                inventory: inv_mod.Inventory | None = None,
+                lookup: vmatch.Lookup | None = None) -> list[Line]:
     state, style = _state_text(host)
     os_text = host.os or ABSENT
     if host.os and host.osclass:
@@ -439,7 +441,7 @@ def host_detail(host: Host, shots: Captures | None = None, full: bool = False,
         for svc in host.open_services:
             parts.append(Line(_bullet(svc.label()), to=(host, svc)))
     if inventory is not None:
-        parts.extend(_host_software(host, inventory))
+        parts.extend(_host_software(host, inventory, lookup))
     every_url = [url for svc in host.open_services
                  for url in service_urls(svc, host)]
     captures = _capture_rows(list(dict.fromkeys(every_url)), shots)
@@ -461,7 +463,8 @@ def host_detail(host: Host, shots: Captures | None = None, full: bool = False,
 def service_detail(svc: Service, host: Host | None = None,
                    shots: Captures | None = None, full: bool = False,
                    scanned: rawlog.Scanned | None = None,
-                   inventory: inv_mod.Inventory | None = None) -> list[Line]:
+                   inventory: inv_mod.Inventory | None = None,
+                   lookup: vmatch.Lookup | None = None) -> list[Line]:
     state_line = Text()
     state_line.append(f"  {'state':<{_LABEL_W}}", style=_KEY)
     state_line.append(str(svc.state or ABSENT), style="bold green" if svc.is_open else _KEY)
@@ -495,10 +498,15 @@ def service_detail(svc: Service, host: Host | None = None,
             parts.append(line)
     if inventory is not None and host is not None:
         comps = inventory.of_service(host, svc)
+        where = (host.address, svc.protocol, svc.port)
         if comps:
             parts.append(Text(""))
             parts.append(_section("Software", len(comps)))
-            parts.extend(_software_block(comps))
+            parts.extend(_software_block(comps, lookup, where))
+        if lookup is not None:
+            parts.extend(_known_block(
+                [(c, lookup.of(c, where)) for c in comps], lookup.service_only(where),
+                lookup))
     urls = service_urls(svc, host)
     if urls:
         parts.append(Text(""))
@@ -651,7 +659,86 @@ def _component_line(c: inv_mod.Component, indent: int = 4) -> Text:
     return line
 
 
-def _software_block(comps: list[inv_mod.Component]) -> list[Text]:
+def _support_line(a: vmatch.Assessment, missing: bool, indent: int = 8) -> Text:
+    line = Text(" " * indent)
+    line.append(f"{'support':<10}", style=_KEY)
+    if missing:
+        line.append("no vulnerability database - run seek vulndb update", style=_KEY)
+        return line
+    s = a.support
+    if s.status == "eol":
+        line.append(f"end of life since {s.eol_date}" if s.eol_date else "end of life",
+                    style="bold red")
+        line.append(f"  (cycle {s.cycle}, last release {s.latest or ABSENT})", style=_KEY)
+    elif s.status == "behind":
+        line.append(f"behind - {s.latest} is the latest {s.cycle}", style="yellow")
+    elif s.status == "current":
+        line.append(f"current {s.cycle} release", style="green")
+    else:
+        line.append(f"unknown - {s.reason}" if s.reason else "unknown", style=_KEY)
+    if s.ending_soon and s.eol_date:
+        line.append(f"  · support ends {s.eol_date}", style="yellow")
+    return line
+
+
+_SEVERITY_STYLE = {"CRITICAL": "bold red", "HIGH": "red", "MEDIUM": "yellow",
+                   "MODERATE": "yellow", "LOW": ""}
+
+
+def _finding_line(f: vmatch.Finding, indent: int = 4, product: str = "") -> Line:
+    line = Text(" " * indent)
+    line.append("• ", style=_KEY)
+    line.append(f"{f.id:<20}", style="bold")
+    sev = f.severity.lower() or ABSENT
+    line.append(f"{sev:<9}", style=_SEVERITY_STYLE.get(f.severity.upper(), _KEY))
+    line.append(f"{f.score:>4.1f}  " if f.score is not None else "   —  ", style=_KEY)
+    if product:
+        line.append(f"{product}  ", style=_KEY)
+    if f.summary:
+        line.append(f.summary[:160] + ("…" if len(f.summary) > 160 else ""))
+    line.append(f"   {', '.join(f.sources)}", style=_KEY)
+    return Line(line, to=f.url or None)
+
+
+_CAVEAT = ("matched by version: a distribution that backports a fix keeps the old "
+           "version number, and is still listed")
+
+
+def _known_block(assessed: list[tuple[inv_mod.Component, vmatch.Assessment]],
+                 loose: list[vmatch.Finding], lookup: vmatch.Lookup) -> list[RenderableType]:
+    """Every finding for a service's components, most severe first."""
+    if lookup.db_missing and not loose and not any(a.findings for _c, a in assessed):
+        return []
+    rows: list[tuple[vmatch.Finding, str]] = []
+    undecided: list[tuple[vmatch.Finding, str]] = []
+    unknown: list[tuple[inv_mod.Component, int]] = []
+    for c, a in assessed:
+        rows += [(f, c.label()) for f in a.findings]
+        undecided += [(f, c.label()) for f in a.undecided]
+        if not c.versioned and a.product_cves:
+            unknown.append((c, a.product_cves))
+    rows += [(f, "") for f in loose]
+    if not rows and not undecided and not unknown:
+        return []
+    parts: list[RenderableType] = [Text("")]
+    parts.append(_section("Known vulnerabilities", len(rows),
+                          "bold red" if rows else _SECTION))
+    parts.append(Text(f"    {_CAVEAT}", style=_KEY))
+    for f, label in sorted(rows, key=lambda r: (-r[0].rank[0], -r[0].rank[1], r[0].id)):
+        parts.append(_finding_line(f, product=label))
+    if undecided:
+        parts.append(Text(f"    undecided - the version cannot be placed in these ranges "
+                          f"({len(undecided)}):", style=_KEY))
+        for f, label in undecided[:20]:
+            parts.append(_finding_line(f, 6, label))
+    for c, n in unknown:
+        parts.append(Text(f"    {c.product}: version unknown · {n} CVE(s) for this product "
+                          "in some version - U scans for the version", style="yellow"))
+    return parts
+
+
+def _software_block(comps: list[inv_mod.Component], lookup: vmatch.Lookup | None = None,
+                    where: inv_mod.ServiceKey | None = None) -> list[Text]:
     """Each component, its CPE, and - dimmed under it - who said so.
 
     Every observation is listed, the ones that lost included: a conflict is a
@@ -670,6 +757,8 @@ def _software_block(comps: list[inv_mod.Component]) -> list[Text]:
         else:
             cpe.append("no CPE", style="yellow")
         out.append(cpe)
+        if lookup is not None:
+            out.append(_support_line(lookup.of(c, where), lookup.db_missing))
         for o in c.observations:
             line = Text(" " * 8, style=_KEY)
             line.append(f"{o.source:<20}", style=_KEY)
@@ -682,7 +771,8 @@ def _software_block(comps: list[inv_mod.Component]) -> list[Text]:
     return out
 
 
-def _host_software(host: Host, inventory: inv_mod.Inventory) -> list[RenderableType]:
+def _host_software(host: Host, inventory: inv_mod.Inventory,
+                   lookup: vmatch.Lookup | None = None) -> list[RenderableType]:
     """The host's own components in full, and one line per service summarising
     its stack - each service's own record has the evidence."""
     parts: list[RenderableType] = []
@@ -693,7 +783,7 @@ def _host_software(host: Host, inventory: inv_mod.Inventory) -> list[RenderableT
         return parts
     parts.append(Text(""))
     parts.append(_section("Software", len(own) + sum(len(c) for _s, c in per_service)))
-    parts.extend(_software_block(own))
+    parts.extend(_software_block(own, lookup))
     for svc, comps in per_service:
         line = Text(" " * 4)
         line.append("• ", style=_KEY)
@@ -701,12 +791,25 @@ def _host_software(host: Host, inventory: inv_mod.Inventory) -> list[RenderableT
         line.append(", ".join(c.label() for c in comps))
         if any(c.conflicting for c in comps):
             line.append("  conflicting versions", style="yellow")
+        if lookup is not None:
+            where = (host.address, svc.protocol, svc.port)
+            found = [lookup.of(c, where) for c in comps]
+            count = sum(len(a.findings) for a in found)
+            if count:
+                worst = max((a.worst for a in found if a.worst), key=lambda f: f.rank)
+                line.append(f"  {count} known vuln(s), worst {worst.severity.lower()}",
+                            style=_SEVERITY_STYLE.get(worst.severity.upper(), _KEY))
+            if any(a.support.status == "eol" for a in found):
+                line.append("  end of life", style="bold red")
         parts.append(Line(line, to=(host, svc)))
+    if lookup is not None and own:
+        parts.extend(_known_block([(c, lookup.of(c)) for c in own], [], lookup))
     return parts
 
 
-def entry_detail(entry: inv_mod.Entry) -> list[Line]:
+def entry_detail(entry: inv_mod.Entry, lookup: vmatch.Lookup | None = None) -> list[Line]:
     """One product at one version across the model: identity, then where."""
+    assessed = lookup.of_entry(entry) if lookup is not None else None
     parts: list[RenderableType] = [
         _heading(entry.label(), inv_mod.KIND_NAMES.get(entry.kind, entry.kind)),
         _pair("hosts", f"{len(entry.hosts)} host(s), {entry.service_count} service(s)",
@@ -720,6 +823,11 @@ def entry_detail(entry: inv_mod.Entry) -> list[Line]:
     else:
         parts.append(_pair("cpe", "no CPE - not in the alias table, and nmap gave none",
                            "yellow"))
+    if assessed is not None:
+        parts.append(_support_line(assessed, lookup.db_missing, indent=2))
+        if assessed.findings or assessed.undecided or assessed.product_cves:
+            first = next(iter({id(c): c for _h, _s, c in entry.places}.values()))
+            parts.extend(_known_block([(first, assessed)], [], lookup))
     conflicts = [(h, s, c) for h, s, c in entry.places if c.conflicting]
     if conflicts:
         parts.append(Text(""))
@@ -741,10 +849,41 @@ def entry_detail(entry: inv_mod.Entry) -> list[Line]:
     return lines_of(parts)
 
 
+def affected_detail(a: vmatch.Affected, lookup: vmatch.Lookup | None = None) -> list[Line]:
+    """One finding on one product version: what it is, then where."""
+    f = a.finding
+    parts: list[RenderableType] = [
+        _heading(f.id, f"{f.severity.lower() or 'no severity'}"
+                       + (f" {f.score:.1f}" if f.score is not None else "")),
+        _pair("affects", f"{a.product} {a.version or ''}".strip() or "(named by a script)"),
+        _pair("hosts", f"{len(a.hosts)} host(s), {a.service_count} service(s)", "bold"),
+        _pair("sources", ", ".join(f.sources)),
+    ]
+    if f.vector:
+        parts.append(_pair("vector", f.vector))
+    if f.url:
+        parts.append(Line(_pair("advisory", f.url), to=f.url))
+    if f.summary:
+        parts.append(Text(""))
+        parts.append(Text(f"  {f.summary}"))
+    if a.entry is not None and lookup is not None:
+        parts.append(Text(""))
+        parts.append(_support_line(lookup.of_entry(a.entry), lookup.db_missing, indent=2))
+    parts.append(Text(f"  {_CAVEAT}", style=_KEY))
+    parts.append(Text(""))
+    parts.append(_section("Affected", len(a.places)))
+    for host, svc, _c in a.places[:_MEMBER_LIMIT]:
+        where = f"{host.address} {svc.port}/{svc.protocol}" if svc else host.address
+        parts.append(Line(_bullet(where), to=(host, svc) if svc else host))
+    parts.extend(_more(_MEMBER_LIMIT, len(a.places)))
+    return lines_of(parts)
+
+
 def render(target: object, host: Host | None = None,
            shots: Captures | None = None, full: bool = False,
            scanned: rawlog.Scanned | None = None,
-           inventory: inv_mod.Inventory | None = None) -> list[Line]:
+           inventory: inv_mod.Inventory | None = None,
+           lookup: vmatch.Lookup | None = None) -> list[Line]:
     """The record for one row, as the lines it is made of.
 
     `full` is the reader's depth: the same record, with everything a capture
@@ -764,9 +903,11 @@ def render(target: object, host: Host | None = None,
     if isinstance(target, Grouping):
         return grouping_detail(target, shots)
     if isinstance(target, inv_mod.Entry):
-        return entry_detail(target)
+        return entry_detail(target, lookup)
+    if isinstance(target, vmatch.Affected):
+        return affected_detail(target, lookup)
     if isinstance(target, Service):
-        return service_detail(target, host, shots, full, scanned, inventory)
+        return service_detail(target, host, shots, full, scanned, inventory, lookup)
     if isinstance(target, Host):
-        return host_detail(target, shots, full, scanned, inventory)
+        return host_detail(target, shots, full, scanned, inventory, lookup)
     return [Line(Text(""))]

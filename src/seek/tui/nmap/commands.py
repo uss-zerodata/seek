@@ -46,6 +46,8 @@ _STATIC: list[tuple[str, str, str, object]] = [
     ("New scan", "Scope, preset, command, review, run (n)", "action_new_scan", None),
     ("Scan unversioned ports", "-sV --version-all on the open ports with no version (U)",
      "action_scan_unversioned", None),
+    ("Update the vulnerability database", "Download NVD, OSV and endoflife.date data (A)",
+     "action_update_vulndb", None),
     ("Cancel the running scan", "Ends the process (c)", "action_cancel_scan", None),
     ("Freeze the log", "Stops the view, not the scan (p)", "action_freeze_log", None),
     ("Report view", "Overview, diff or raw output (o)", "action_report_mode", None),

@@ -951,7 +951,7 @@ async def test_the_overviews_are_shown_as_tabs():
         await pilot.pause(0.3)
         labels = [str(t.label) for t in app.query_one(Tabs).query(Tab)]
         assert labels == ["Hosts", "Services", "Statistics", "By service",
-                          "By product", "By port", "Inventory", "Names", "Scans"]
+                          "By product", "By port", "Inventory", "Findings", "Names", "Scans"]
         assert app.query_one(Tabs).active == "hosts"
 
 

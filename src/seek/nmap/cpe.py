@@ -244,20 +244,29 @@ def normal(name: str) -> str:
     return " ".join(name.casefold().split())
 
 
-def _build() -> tuple[dict[str, Product], dict[str, Product]]:
+def _build() -> tuple[dict[str, Product], dict[str, Product], dict[str, tuple[str, ...]]]:
     by_name: dict[str, Product] = {}
     by_cpe: dict[str, Product] = {}
+    keys: dict[str, tuple[str, ...]] = {}
     for key, display, kind, cpe_key, more_cpes, spellings in _TABLE:
         vendor, product = cpe_key.split(":", 1)
         entry = Product(key, display, kind, vendor, product)
+        keys[key] = (cpe_key, *more_cpes)
         for cpe_name in (cpe_key, *more_cpes):
             by_cpe[cpe_name] = entry
         for spelling in (key, display, *spellings):
             by_name[normal(spelling)] = entry
-    return by_name, by_cpe
+    return by_name, by_cpe, keys
 
 
-ALIASES, _BY_CPE = _build()
+ALIASES, _BY_CPE, _CPE_KEYS = _build()
+
+
+def cpe_keys(product_key: str) -> tuple[str, ...]:
+    """Every `vendor:product` a product is known by - NVD renames vendors
+    (`igor_sysoev:nginx` became `f5:nginx`), and records under the old name
+    still describe the same software."""
+    return _CPE_KEYS.get(product_key, ())
 
 
 @lru_cache(maxsize=8192)

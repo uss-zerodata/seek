@@ -103,6 +103,15 @@ _GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("U", "scan the ports that have no version yet (-sV --version-all),"),
         ("", "through the usual review; x exports the inventory as CSV / JSON"),
     ]),
+    ("Vulnerabilities and end of life", [
+        ("Inventory tab", "Support (EOL / behind / current), Vulns and Max per version;"),
+        ("", "sort by Max to see the worst first; filter eol, behind, unsupported,"),
+        ("", "critical, high, a CVE id - `+2?` are ranges that could not be decided"),
+        ("Findings tab", "every CVE / advisory that affects something here; ↵ lists where"),
+        ("A", "update the local vulnerability database - asks first, says what it"),
+        ("", "downloads; the viewer itself never uses the network"),
+        ("", "matching is by version: a backported distro fix is not visible"),
+    ]),
     ("Scan", [
         ("n", "new scan: scope, preset, command, then a review before it runs"),
         ("o", "cycle a scan's report: overview, what it added, raw output"),

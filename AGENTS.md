@@ -116,6 +116,14 @@ src/seek/
     capture.py      one argv for both backends, output layout, the CaptureRun
     results.py      the capture database -> Capture records, indexed by URL
   runner.py         supervision shared by every tool: stream, cancel, settle
+  vulndb/           the local vulnerability database - public data only, no Textual
+    versions.py     release-order comparison; `None` = undecidable, never "safe"
+    store.py        SQLite schema, read-only `Store` for sessions, `open_write` for updates
+    sources.py      the fixed URL set; NVD 2.0 / OSV / endoflife.date parsers (streamed)
+    update.py       download + ingest, one transaction per source, incremental
+    eol.py          product key -> endoflife.date slug / npm package; support status
+    match.py        inventory + store -> findings and support per component
+    commands.py     `seek vulndb update` / `status`
   nmap/session.py   the shared session: model, runners, marks, events, scan planning
   tui/nmap/tabs.py  the tab list and tab_view() - both front ends build tabs here
   tui/nmap/record.py  record_lines(): what a row's record is, for pane, reader and web
@@ -553,6 +561,25 @@ stdout, `cd`) cannot run while Textual owns the screen. They set
   `test_version_1_fields_are_pinned` holds it. `U` drafts `-sV --version-all`
   over the union of the unversioned ports (one command has one port list) and
   states the extra pairs that costs.
+- **The vulnerability database is reference data, and only an explicit update
+  writes it.** `seek vulndb update`, or `A` confirmed in the viewer or the
+  browser - never a session on its own: the viewer *offers* once (a notice
+  naming `A`), and `A` states sources, size and age before anything runs. The
+  URL set is fixed (`sources.Urls`, every slug in `eol.SLUGS`) so no request
+  can carry session data - `test_requests_are_exactly_the_fixed_url_set` holds
+  it. Sessions open the file read-only; each source ingests in one transaction,
+  so a failed or cancelled update leaves the old data; the WAL is checkpointed
+  on close so the file alone can be copied to an offline machine. Matching: a
+  product is looked up under **every** CPE name it is known by
+  (`cpe.cpe_keys` - NVD renamed nginx's vendor), only `vulnerable: true`
+  criteria are stored (that is what drops "running on Linux"), and a version
+  that cannot be ordered makes a CVE *undecided* - never affected, never safe.
+  An unversioned component gets no findings, only a count and the `U` hint.
+  Database findings are per `Component` (shared across ports), scan-reported
+  ones (`vulners`, NSE `vuln`) per service - `Lookup.of(c, where)` merges them.
+  `Session.lookup()` is keyed on the inventory *and* `store.generation`, and the
+  lookup views put the generation in `View.stamp`. Tests get a private
+  `XDG_STATE_HOME` (conftest) so a real database never leaks into them.
 - **Freezing the log is not pausing the scan.** nmap's timers run against the
   wall clock, so `SIGSTOP` can time hosts out on resume; `p` is a view state and
   the pane header says the scan is still running. `runner` only runs or cancels.
