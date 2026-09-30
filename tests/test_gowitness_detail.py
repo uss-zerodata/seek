@@ -1,7 +1,7 @@
 """Capture results in the record they belong to.
 
 Rendered against real scan data rather than stub hosts: the join between a
-capture and a service is made on the URL, and `_service_urls` is what produces
+capture and a service is made on the URL, and `service_urls` is what produces
 those URLs - a stub that invents them would test the test, not the join.
 """
 
@@ -13,6 +13,7 @@ import pytest
 from rich.console import Console
 
 from seek.gowitness import results as gw
+from seek.nmap.export import service_urls
 from seek.nmap.merge import load
 from seek.nmap.views import prepare
 from seek.tui.nmap import detail
@@ -21,6 +22,10 @@ FIX = Path(__file__).parent / "fixtures" / "nmap"
 
 
 def _text(renderable, width: int = 110) -> str:
+    if isinstance(renderable, list):
+        # A record's lines, as the terminal shows them - not the list's repr,
+        # which now carries what each line is about (a capture, headers and all).
+        renderable = detail.as_group(renderable)
     console = Console(width=width, record=True, file=open("/dev/null", "w"))
     console.print(renderable)
     return console.export_text()
@@ -32,7 +37,7 @@ def http_service():
     scans = prepare(load([FIX / "basic.xml"]))
     for host in scans.hosts:
         for svc in host.open_services:
-            urls = detail._service_urls(svc, host)
+            urls = service_urls(svc, host)
             if urls:
                 return host, svc, urls
     pytest.skip("no HTTP service in the fixture")
@@ -283,7 +288,7 @@ def _grouped(shots):
 
     scans = prepare(load([FIX / "basic.xml"]))
     members = [(h, s) for h in scans.hosts for s in h.open_services
-               if detail._service_urls(s, h)]
+               if service_urls(s, h)]
     return Grouping(key="service", label="http", members=members), members
 
 
@@ -292,7 +297,7 @@ def test_a_grouping_record_shows_its_members_captures():
     thing to look at gets chosen; a bucket that says nothing about what its
     members served is where a capture is least use."""
     grouping, members = _grouped(None)
-    url = detail._service_urls(members[0][1], members[0][0])[0]
+    url = service_urls(members[0][1], members[0][0])[0]
     shots = gw.Captures([gw.Capture(url=url, status=200, reason="OK", title="Home")])
     text = _text(detail.grouping_detail(grouping, shots))
     assert "Captures" in text
@@ -310,9 +315,9 @@ def test_a_service_group_record_shows_its_captures():
 
     scans = prepare(load([FIX / "basic.xml"]))
     group = next(g for g in service_groups(scans.hosts) if g.members
-                 and detail._service_urls(g.members[0][1], g.members[0][0]))
+                 and service_urls(g.members[0][1], g.members[0][0]))
     host, svc = group.members[0]
-    url = detail._service_urls(svc, host)[0]
+    url = service_urls(svc, host)[0]
     shots = gw.Captures([gw.Capture(url=url, status=200, reason="OK", title="Home")])
     text = _text(detail.group_detail(group, shots))
     assert "Captures" in text and "Home" in text

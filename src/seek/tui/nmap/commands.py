@@ -55,6 +55,8 @@ _STATIC: list[tuple[str, str, str, object]] = [
      "action_export", None),
     ("Open a screenshot", "The selected row's capture, in an image viewer (i)",
      "action_open_shot", None),
+    ("Web interface", "Hosts, services and every screenshot in a browser (w)",
+     "action_open_web", None),
     ("Web report", "Serve the report at the selected capture (W)",
      "action_report_server", None),
     ("Help", "Key reference (?)", "action_help", None),

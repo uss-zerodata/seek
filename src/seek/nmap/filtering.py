@@ -9,11 +9,14 @@ Ranges combine as a union and the fuzzy terms as an AND: `10.0.0.0/8
 192.168.0.0/16 apache` is "in either network, and matching apache". A negated
 range subtracts from whatever the positive ones admitted.
 
-A complete address counts as a range of one: `10.10.10.5` means `10.10.10.5/32`.
-An *incomplete* one does not - `10.10.10` is not a valid address, so it stays a
-fuzzy term and still finds `.5`, `.21` and `.250` while you are typing. The
-switch from "finds many" to "finds exactly one" therefore happens at the moment
-the address becomes complete.
+A complete address is a *beginning*: `10.10.10.1` finds `.1`, then `.10`-`.19`
+and `.100`-`.199`, so the list narrows smoothly as it is typed instead of
+jumping to one host at the last digit. `=10.10.10.1` or `10.10.10.1/32` is that
+host alone. An incomplete one (`10.10.10`) stays a fuzzy term.
+
+Ports are written as nmap and URLs write them: `:443`, `443/tcp`, `53/udp` (or
+`port:443`) is a port with that number, whatever its state; `10.10.10.10:8080`
+is that host with that port. `open:`/`closed:` still ask for the state as well.
 """
 
 from __future__ import annotations
@@ -47,6 +50,9 @@ class FilterSpec:
     query: ParsedQuery | None = None
     include: list[Network] = field(default_factory=list)
     exclude: list[Network] = field(default_factory=list)
+    # Complete addresses as typed: beginnings. In the same union as `include`.
+    prefixes: list[str] = field(default_factory=list)
+    exclude_prefixes: list[str] = field(default_factory=list)
     # Set only when the filter uses field terms, operators or parentheses; the
     # plain path above is then not consulted for matching (see `parse_filter`).
     expr: Node | None = None
@@ -55,11 +61,14 @@ class FilterSpec:
     # cell matches one alternative, and highlighting with all of them ANDed
     # would mark nothing at all.
     highlights: tuple[ParsedQuery, ...] = ()
+    # `~` in the filter: list the scattered-letter matches too, rather than
+    # only the rows that contain the words (`prefer_firm`).
+    loose: bool = False
 
     @property
     def is_empty(self) -> bool:
-        return (self.expr is None and self.query is None
-                and not self.include and not self.exclude)
+        return (self.expr is None and self.query is None and not self.include
+                and not self.exclude and not self.prefixes and not self.exclude_prefixes)
 
     @property
     def networks(self) -> list[Network]:
@@ -75,27 +84,43 @@ def parse_filter(text: str) -> FilterSpec:
     rule is behaviour people rely on, so it is kept rather than re-derived. Any
     of the new syntax builds an expression tree instead (`_parse_expr`).
     """
+    loose = "~" in text.split()
+    if loose:
+        text = " ".join(t for t in text.split() if t != "~")
+    spec = _parse(text)
+    spec.loose = loose
+    return spec
+
+
+def _parse(text: str) -> FilterSpec:
     tokens = _tokens(text)
-    if any(_is_structured(t) for t in tokens):
+    if any(_is_structured(t) or _is_port_term(t) for t in tokens):
         return _parse_expr(tokens)
     include: list[Network] = []
     exclude: list[Network] = []
+    prefixes: list[str] = []
+    exclude_prefixes: list[str] = []
     rest: list[str] = []
     for token in text.split():
         negated = token.startswith("!")
         body = token[1:] if negated else token
-        network = _as_network(body)
-        if network is None:
-            rest.append(token)
-        elif negated:
-            exclude.append(network)
+        exact = body.startswith("=") and _complete_address(body[1:])
+        if exact or "/" in body:
+            network = _as_network(body[1:] if exact else body)
+            if network is None:
+                rest.append(token)
+            else:
+                (exclude if negated else include).append(network)
+        elif _complete_address(body):
+            (exclude_prefixes if negated else prefixes).append(body)
         else:
-            include.append(network)
+            rest.append(token)
     remainder = " ".join(rest).strip()
     query = parse_query(remainder) if remainder else None
     if query is not None and query.is_empty:
         query = None
-    return FilterSpec(query=query, include=include, exclude=exclude)
+    return FilterSpec(query=query, include=include, exclude=exclude, prefixes=prefixes,
+                      exclude_prefixes=exclude_prefixes)
 
 
 def _in(network: Network, addresses: tuple[str, ...]) -> bool:
@@ -124,11 +149,15 @@ def matches(spec: FilterSpec, text: str, addresses: tuple[str, ...] = (),
     # every one of them, as this used to, asks for an address in both at once -
     # which for two distinct networks is nothing at all, so a second range could
     # only ever empty the list.
-    if spec.include and not any(_in(n, addresses) for n in spec.include):
+    if (spec.include or spec.prefixes) and not (
+            any(_in(n, addresses) for n in spec.include)
+            or any(a.startswith(p) for p in spec.prefixes for a in addresses)):
         return False
     for network in spec.exclude:
         if _in(network, addresses):
             return False
+    if any(a.startswith(p) for p in spec.exclude_prefixes for a in addresses):
+        return False
     if spec.query is not None and match_score(spec.query, text) is None:
         return False
     return True
@@ -141,8 +170,9 @@ def describe(spec: FilterSpec) -> str:
         if spec.ignored:
             shown += ("  ·  " if shown else "") + "ignored: " + ", ".join(spec.ignored)
         return shown
-    bits = [" or ".join(str(n) for n in spec.include)] if spec.include else []
-    bits += [f"!{n}" for n in spec.exclude]
+    union = [str(n) for n in spec.include] + [f"{p}…" for p in spec.prefixes]
+    bits = [" or ".join(union)] if union else []
+    bits += [f"!{n}" for n in spec.exclude] + [f"!{p}…" for p in spec.exclude_prefixes]
     if spec.query is not None:
         bits.append(spec.query.raw.strip())
     return " ".join(b for b in bits if b)
@@ -168,7 +198,7 @@ def describe(spec: FilterSpec) -> str:
 # a missing `)` is implied, a dangling operator or an empty field is dropped
 # and named in `FilterSpec.ignored`, and nothing half-typed empties the list.
 
-FIELDS = frozenset({"open", "closed", "service", "product"})
+FIELDS = frozenset({"open", "closed", "port", "service", "product"})
 _OPERATORS = frozenset({"AND", "OR", "NOT", "|", "!", "(", ")"})
 
 
@@ -181,8 +211,10 @@ class Fuzzy:
 
 @dataclass(frozen=True, slots=True)
 class Range:
-    """Address ranges; several side by side in one AND are a union, as always."""
-    networks: tuple[Network, ...]
+    """Address ranges and beginnings; several side by side in one AND are a
+    union, as always - `10.0.0.1 10.0.0.9` is either host, not both."""
+    networks: tuple[Network, ...] = ()
+    prefixes: tuple[str, ...] = ()        # complete addresses, as typed: a beginning
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +229,9 @@ class Field:
     end: bool = False                   # `value$`
 
     def test(self, svc) -> bool:
+        if self.key == "port":
+            # Any port a scan recorded with this number - whatever its state.
+            return svc.port == self.port and (not self.proto or svc.protocol == self.proto)
         if self.key in ("open", "closed"):
             if svc.port != self.port or (self.proto and svc.protocol != self.proto):
                 return False
@@ -267,11 +302,46 @@ def _is_structured(token: str) -> bool:
     return _field_key(token[1:] if token.startswith("!") else token) is not None
 
 
+_PROTOCOLS = ("tcp", "udp", "sctp")
+
+
+def _port_of(token: str) -> Field | None:
+    """`:443`, `443/tcp`, `53/udp` - a port as nmap and URLs write it."""
+    if token.startswith(":"):
+        return _field("port", token[1:])
+    number, slash, proto = token.partition("/")
+    if slash and number.isdigit() and proto.lower() in _PROTOCOLS:
+        return _field("port", token)
+    return None
+
+
+def _complete_address(text: str) -> bool:
+    try:
+        ipaddress.ip_address(text)
+    except ValueError:
+        return False
+    return True
+
+
+def _address_port(token: str) -> tuple[str, str] | None:
+    """`10.10.10.10:8080` - an IPv4 address with a port after it."""
+    address, colon, port = token.rpartition(":")
+    if colon and port.isdigit() and address.count(".") == 3 and _complete_address(address):
+        return address, port
+    return None
+
+
+def _is_port_term(token: str) -> bool:
+    """A port, or a host with a port - what the plain path cannot express."""
+    body = token[1:] if token.startswith("!") else token
+    return _port_of(body) is not None or _address_port(body) is not None
+
+
 def _field(key: str, value: str) -> Field | None:
     """A field term, or None when its value cannot be used (yet)."""
     if not value:
         return None
-    if key in ("open", "closed"):
+    if key in ("open", "closed", "port"):
         port, _, proto = value.partition("/")
         if not port.isdigit():
             return None
@@ -291,7 +361,8 @@ def _and(parts: list[Node]) -> Node | None:
     if len(ranges) > 1:
         first = parts.index(ranges[0])
         rest = [p for p in parts if not isinstance(p, Range)]
-        rest.insert(first, Range(tuple(n for r in ranges for n in r.networks)))
+        rest.insert(first, Range(tuple(n for r in ranges for n in r.networks),
+                                 tuple(p for r in ranges for p in r.prefixes)))
         parts = rest
     if not parts:
         return None
@@ -388,14 +459,34 @@ class _Parser:
                 self.ignored.append(token)
                 return None
             return Not(node) if negated else node
-        network = _as_network(body)
-        if network is not None:
-            node = Range((network,))
+        node = _address_term(body)
+        if node is not None:
             return Not(node) if negated else node
         query = parse_query(token)
         if query.is_empty:
             return None
         return Fuzzy(query, token)
+
+
+def _address_term(body: str) -> Node | None:
+    """Ports, `host:port`, `=host`, ranges and address beginnings - or None."""
+    port = _port_of(body)
+    if port is not None:
+        return port
+    pair = _address_port(body)
+    if pair is not None:
+        address, number = pair
+        port = _field("port", number)
+        exact = Range((ipaddress.ip_network(ipaddress.ip_address(address)),))
+        return And((exact, port)) if port is not None else exact
+    if body.startswith("=") and _complete_address(body[1:]):
+        return Range((ipaddress.ip_network(ipaddress.ip_address(body[1:])),))
+    if "/" in body:
+        network = _as_network(body)
+        return Range((network,)) if network is not None else None
+    if _complete_address(body):
+        return Range(prefixes=(body,))
+    return None
 
 
 def _positive_fuzzy(node: Node | None, negated: bool = False) -> list[str]:
@@ -480,7 +571,8 @@ class _Row:
         if isinstance(node, Fuzzy):
             return match_score(node.query, self.text) is not None
         if isinstance(node, Range):
-            return any(_in(n, self.addresses) for n in node.networks)
+            return (any(_in(n, self.addresses) for n in node.networks)
+                    or any(a.startswith(p) for p in node.prefixes for a in self.addresses))
         if isinstance(node, Field):
             return any(node.test(s) for s in self.services())
         if isinstance(node, Not):
@@ -502,9 +594,10 @@ def _show(node: Node, inside: type | None = None) -> str:
     if isinstance(node, Field):
         return f"{node.key}:{node.value}"
     if isinstance(node, Range):
-        if len(node.networks) == 1:
-            return str(node.networks[0])
-        return "(" + " OR ".join(str(n) for n in node.networks) + ")"
+        items = [str(n) for n in node.networks] + [f"{p}…" for p in node.prefixes]
+        if len(items) == 1:
+            return items[0]
+        return "(" + " OR ".join(items) + ")"
     if isinstance(node, Not):
         child = _show(node.child, Not)
         return f"NOT {child}"
@@ -513,3 +606,109 @@ def _show(node: Node, inside: type | None = None) -> str:
     # Parenthesised wherever the reading depends on precedence: a group under
     # a NOT, and an OR inside an AND (or the reverse, for clarity).
     return f"({text})" if inside is not None and inside is not type(node) else text
+
+
+# --- saying what a filter was understood as -------------------------------------
+
+
+def explain(spec: FilterSpec) -> list[str]:
+    """What a filter will do, in words - shown under the box as it is typed.
+
+    One phrase per condition, top-level ANDs listed side by side; anything
+    ignored because it is half-typed is said too, so a filter that "does
+    nothing" says why.
+    """
+    if spec.is_empty:
+        return ([f"ignored while incomplete: {' '.join(spec.ignored)}"]
+                if spec.ignored else [])
+    if spec.loose:
+        return [*explain(FilterSpec(spec.query, spec.include, spec.exclude, spec.prefixes,
+                                    spec.exclude_prefixes, spec.expr, spec.ignored,
+                                    spec.highlights)), "looser matches included (~)"]
+    if spec.expr is None:
+        parts = []
+        if spec.include or spec.prefixes:
+            parts.append(_say(Range(tuple(spec.include), tuple(spec.prefixes))))
+        parts += [f"not: {_say(Range((n,)))}" for n in spec.exclude]
+        parts += [f"not: address beginning {p}" for p in spec.exclude_prefixes]
+        if spec.query is not None:
+            parts += [_say_term(t) for t in spec.query.terms]
+        return parts
+    nodes = spec.expr.children if isinstance(spec.expr, And) else (spec.expr,)
+    parts = [_say(n) for n in nodes]
+    if spec.ignored:
+        parts.append("ignored while incomplete: " + " ".join(spec.ignored))
+    return parts
+
+
+def _say_term(term) -> str:
+    kind = term.type.value
+    text = term.text
+    said = {"fuzzy": f"text like “{text}”", "exact": f"text containing “{text}”",
+            "prefix": f"text starting “{text}”", "suffix": f"text ending “{text}”",
+            "equal": f"text exactly “{text}”"}.get(kind, text)
+    return f"not {said}" if term.negated else said
+
+
+def _say(node: Node) -> str:
+    if isinstance(node, Fuzzy):
+        return " and ".join(_say_term(t) for t in node.query.terms)
+    if isinstance(node, Range):
+        said = []
+        for n in node.networks:
+            text = str(n)
+            said.append("host " + text.rsplit("/", 1)[0]
+                        if n.num_addresses == 1 else f"address in {text}")
+        said += [f"address beginning {p}" for p in node.prefixes]
+        return " or ".join(said)
+    if isinstance(node, Field):
+        port = f"{node.port}/{node.proto}" if node.proto else f"{node.port}"
+        return {"port": f"port {port} (any state)", "open": f"port {port} open",
+                "closed": f"port {port} not open (closed or filtered)",
+                "service": f"a service named like “{node.value}”",
+                "product": f"a product like “{node.value}”"}[node.key]
+    if isinstance(node, Not):
+        return "not: " + _say(node.child)
+    joiner = " and " if isinstance(node, And) else " or "
+    return "(" + joiner.join(_say(c) for c in node.children) + ")"
+
+
+def strong(spec: FilterSpec, text: str) -> bool:
+    """Whether every plain word of the filter occurs in `text` as written.
+
+    The fuzzy grammar lets `401` match "4…0…1" scattered through a long line,
+    which is right for narrowing a list while typing and wrong for "where is
+    X": a search ranks the rows that contain its words above the ones that only
+    contain their letters, and drops the latter when there are any of the
+    former. Terms that are not plain words - exact, prefix, negated, fields,
+    ranges - decide membership already and are not second-guessed here.
+    """
+    if spec.query is None:
+        return True
+    folded = text.lower()
+    for term in spec.query.terms:
+        if term.negated or term.type.value != "fuzzy":
+            continue
+        if term.text.lower() not in folded:
+            return False
+    return True
+
+
+def prefer_firm(spec: FilterSpec, rows: list, text_of) -> tuple[list, int]:
+    """The rows that contain the filter's words, when any do - and how many
+    matched only by scattered letters and were left out.
+
+    A filter narrows by the fuzzy grammar; this is the second step both front
+    ends take so that `synology` lists the host whose page says Synology and not
+    the ones that merely contain s…y…n…o…l…o…g…y. With no firm match the fuzzy
+    rows stand, so a typo still finds something. `~` in the filter turns it off.
+    Heading rows are kept for the caller to prune.
+    """
+    if spec.loose or spec.query is None:
+        return rows, 0
+    firm = [r for r in rows if getattr(r, "heading", False) or strong(spec, text_of(r))]
+    body = sum(1 for r in rows if not getattr(r, "heading", False))
+    kept = sum(1 for r in firm if not getattr(r, "heading", False))
+    if not kept or kept == body:
+        return rows, 0
+    return firm, body - kept

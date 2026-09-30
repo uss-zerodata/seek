@@ -385,7 +385,7 @@ async def test_a_finished_scan_is_merged_and_diffed(tmp_path):
         assert run.state is State.DONE, run.result
         after = {h.address for h in app.scans.hosts}
         assert after > before, "the new host is in the model"
-        changes = app._diffs[id(run)]
+        changes = app.session.diffs[id(run)]
         assert changes.new_hosts and "new host" in changes.summary()
 
 

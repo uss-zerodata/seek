@@ -44,6 +44,11 @@ def _render(renderable) -> list[str]:
     """The record as the lines a terminal would be given."""
     from rich.console import Console
 
+    if isinstance(renderable, list):
+        # A record is a list of lines; what a terminal is given is the lines
+        # joined, not the list's repr - which grows with every field a line
+        # carries and says nothing about the record's size.
+        renderable = detail_pane.as_group(renderable)
     console = Console(width=100, no_color=True)
     with console.capture() as captured:
         console.print(renderable)

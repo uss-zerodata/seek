@@ -46,8 +46,10 @@ compare against the baseline recorded in the script's docstring.
 If a stale-virtualenv warning is noisy, prefix commands with `env -u VIRTUAL_ENV`.
 
 Python **3.11+** (uses `tomllib`, `enum.StrEnum`). Runtime deps are kept minimal:
-`typer`, `textual`, `rich` (via textual), `pyperclip`; `pathspec` is an optional
-extra used only for `.gitignore` support.
+`typer`, `textual`, `rich` (via textual), `pyperclip`, and `fastapi`, `uvicorn`,
+`jinja2` for the nmap viewer's web interface (shipped in the package on purpose -
+one application, no extra install); `pathspec` is an optional extra used only
+for `.gitignore` support. Tests use `httpx2` for FastAPI's `TestClient`.
 
 ## Before you finish a change
 
@@ -112,6 +114,24 @@ src/seek/
     capture.py      one argv for both backends, output layout, the CaptureRun
     results.py      the capture database -> Capture records, indexed by URL
   runner.py         supervision shared by every tool: stream, cancel, settle
+  nmap/session.py   the shared session: model, runners, marks, events, scan planning
+  tui/nmap/tabs.py  the tab list and tab_view() - both front ends build tabs here
+  tui/nmap/record.py  record_lines(): what a row's record is, for pane, reader and web
+  web/
+    source.py       ModelSource protocol; WebModel (indexes, capture ids); CachedSource
+    views.py        every overview and drill-down by URL; step names; ViewCache
+    record.py       Rich record -> HTML by style attribute; raw-text links
+    serve.py        `seek nmap serve`: headless build, owner and signal handling
+    api/v1/         + views, records/raw, marks/export, runs/scans/captures/events (SSE)
+    static/js/      viewer.js (list/record), keys.js (the key table), actions.js, events.js
+    schemas.py      pydantic shapes - the API returns them, the templates render them
+    query.py        list/filter/sort/page over the TUI's own view projections
+    api/v1/         JSON routers: hosts, services, captures
+    pages/routes.py HTML routers (same query functions), `fragment=1` for filtering
+    media.py        screenshots by capture id - no route takes a path
+    app.py          create_app(source); ROUTERS is the one registration list
+    server.py       WebServer: loopback check, port probe, uvicorn on a thread; path_for(row)
+    templates/ static/   Jinja2 + one stylesheet + ~30 lines of JS; nothing from a CDN
 tests/              pytest; conftest.py has the `tree` / `symlink_loop` fixtures
 tests/fixtures/nmap/  synthetic scan XML (no real addresses)
 ```
@@ -262,7 +282,7 @@ stdout, `cd`) cannot run while Textual owns the screen. They set
   directories' common parent for two or more. Merging unions `sources` *as
   strings*, so two `scan.xml` labelled alike were one source and a host seen in
   both read as seen once. The naming rides on `Pending` and the viewer keeps it
-  (`NmapApp._name`) so a re-read after a finished scan names every file exactly
+  (`Session.name`, `NmapApp._naming`) so a re-read after a finished scan names every file exactly
   as the first read did. Anything that shows a scan uses `ScanFile.name` /
   `.stem`, never `path.name`. Output goes to the first directory, and the
   status line says so when there are several.
@@ -445,6 +465,65 @@ stdout, `cd`) cannot run while Textual owns the screen. They set
   Names surface in the Names tab, the hostname column (`name +N`), both detail
   panes, `host_search_text` (so the filter finds them) and the URL export; the
   `url` *field* stays address-only, so both forms remain reachable.
+- **The web interface is a second consumer of the viewer's model, never a
+  second loader.** `w` starts `seek.web` in-process as a task on the viewer's
+  event loop (see the session rule below); it reads the model through a
+  `CachedSource` over the session, and `seek.web` imports neither Textual nor
+  the app - `seek nmap serve` runs the same server with no app at all. Lists are the TUI's own projections filtered with
+  `filtering.parse_filter`/`matches` and sorted with `vdefs.key_at` - the path
+  `_narrow` takes - so the browser and the tab cannot disagree; do not re-derive
+  a list in `seek.web`. `WebModel` is rebuilt only when the `ScanSet` identity
+  or `Captures.generation` changes (2.9 s at 24 200 hosts / 95 000 captures,
+  under `bulk.responsive()`). Three traps: FastAPI's `/docs` loads from a CDN
+  and is off; uvicorn logs to stderr, over the viewer's terminal, so its
+  loggers are silenced before it starts; and FastAPI is imported on the first
+  `w` only - `seek` and `seek nmap` must not pay for it. Screenshots are served
+  by capture id (`sha1(database, url, time)`), never by path. `Captures.all()`
+  keeps every capture (two databases, one URL, two pictures) while `get()`
+  stays newest-wins for the TUI. The browser opener is `app._open_browser`, a
+  module function, so tests can replace it without patching `subprocess`.
+- **One session, many front ends; one loop owns it.** `nmap/session.py` holds
+  the model, both `Runner`s, the marks, capture discovery, the scan history and
+  the per-run diffs - no Textual, no FastAPI. `NmapApp` keeps its old attribute
+  names as properties onto it (`app.scans`, `app.runner`, `app._marked`, ...), so
+  code and tests read as before; `_naming` is not `_name` because Textual's
+  `DOMNode` owns that attribute. A finished run is folded back by the session's
+  `owner` - the viewer's reading pipeline, or `web.serve.HeadlessOwner` - never
+  by the session itself. Every change carries an `origin` so a front end can
+  tell its own actions from another's: the viewer switches to the Scans tab for
+  a run *it* started, never for a browser's. The web server runs on the same
+  loop as the session because the `Runner`s are asyncio: a changing endpoint is
+  `async def` and calls the session directly; anything that reads the model is a
+  plain `def` (the threadpool) - `test_no_route_on_the_loop_reads_the_model`
+  enforces it, and a blocking test must fetch via `asyncio.to_thread`, or it
+  deadlocks against a server on its own loop. uvicorn's `capture_signals` is
+  switched off; it would take SIGINT from Textual.
+- **The browser's position is its URL.** Tab, drill path, filter, sort, toggles
+  and selected row are query parameters (`/v/<tab>?path=h:10.0.0.5|p:...`), so
+  back is the browser's history and two windows are independent. A drill step is
+  named by what its row *is* (`web.views.step_of`), resolved by rebuilding the
+  parent view and finding the same name - robust to a grown model. Lists,
+  records, exports and scan plans all come from the functions the TUI uses
+  (`tabs.tab_view`, `views.open_row`, `record.record_lines`, `export.produce`,
+  `Session.draft_command`/`plan_scan`/`plan_capture`), and the record is
+  converted to HTML *by style attribute* (`web/record.py`), so it cannot drift
+  from the terminal's. **Parity rule: a viewer feature lands with its API
+  endpoint**, and `keys.js` carries every viewer binding -
+  `test_every_terminal_key_has_a_browser_key` fails otherwise.
+  **Links come from the record, not from parsing it.** `detail.Line.to` says
+  what a line is about (a `Host`, a `(Host, Service)`, a `Capture`); the web
+  turns it into a link through `web/links.py` - the one place that says where a
+  thing lives - and puts a capture's thumbnail after the last line about it.
+  Never regex addresses or URLs out of rendered text to link them.
+- **Search is one grammar and one rule set, everywhere.** `filtering` parses;
+  a complete address is a *beginning* (`Range.prefixes`, or `FilterSpec.prefixes`
+  on the fast path), `=addr`/`/32` is one host, `:443`/`443/tcp` are `port:`
+  fields. After matching, both front ends call `filtering.prefer_firm` so rows
+  holding the words beat scattered-letter matches (`~` opts out), and both match
+  against `Session.row_text(row)` - the row's text plus its screenshots' titles,
+  URLs, technologies and status. `filtering.explain` is the filter in words;
+  every web list shows it. A list, the header search group and the TUI must list
+  the same rows for the same text - `test_every_overview_lists_what_the_terminal_lists`.
 - **Freezing the log is not pausing the scan.** nmap's timers run against the
   wall clock, so `SIGSTOP` can time hosts out on resume; `p` is a view state and
   the pane header says the scan is still running. `runner` only runs or cancels.

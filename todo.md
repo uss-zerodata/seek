@@ -21,6 +21,7 @@
 - [x] allow the user to specify multiple directories for the nmap subcommand. `seek nmap dir1 dir2 dir3` should scan all three directories and merge the results into a single view.
 - [x] please make sure the nmap subcommand does not only search recursively for nmap XML files, but also for gowhitness databases. currently gowhitness data is only being parsed if it is in a very strict location relative to the nmap XML file. please make sure this works indipendently of the location of the nmap file and can still resolve the image path correctly.
 - [ ] every identified smb share could be opened and browsed using the "smb browse" command. for this the user would have to provide some smb credentials or use anonymous access, if available.
+- [x] to view the gowhitness images from multiple sources, the gowhitness server cannot be used as it cannot handle multiple database files at the same time. please implement a webinterface based on fastapi which can be used to view the gowhitness images from multiple sources together with the hosts and ports from the nmap scan results. the user should be able to launch this interface from within the seek nmap subcommand and it should be accessible on localhost. make sure this initial webinterface version is modular enough to support further extensions. in the future this may be a full fledged alternative to the seek nmap tui.
 
 ## bugs
 
@@ -31,3 +32,17 @@
 - [x] when going back from one view to the previous, search filters are not being preserved. please make sure the user can always return to the previous view with the same search filters applied and with the curser being at the same position as it was when leaving the view. this should be true for all views, including the main view, host list, service list and port list.
 - [x] when opening a nmap scan result directly within the detail view, but not in fullscreen mode, the scan cannot be scrolled, as scrolling here collides with the switching between the nmap scan results. please make sure that in this detail view, the user can scroll through the result using left and right arrow keys. switching between the nmap scan results should only be possible when the user is in fullscreen mode. here the scrolling is then done using up and down arrow keys, while left and right arrow keys are used to switch between the nmap scan results. the separation of these modes is really important here to make it work.
 - [x] gowhittness results are not being loaded for all provided paths. please check how the gowhitness results are being loaded and make sure that all provided paths are being considered and scanned recursively for gowhitness results.
+- [ ] check version numbers for known vulnerabilities against a vulnerability database and highlight the vulnerable services in the service list. this way the user can easily identify application version with known vulnerabilities. 
+- [ ] check version numbers for out of date software against the endoflife.date database and highlight the out of date services in the service list. this way the user can easily identify application version which are no longer supported by the vendor and may have known vulnerabilities.
+
+# seek nmap webinterface
+
+## bugs
+
+- [x] when launching the webinterface and the port is already being used, increment the port number by one and try again until a free port is found. this should be done automatically without user interaction.
+
+## features
+
+- [x] allow the webinterface to use the full width of the browser window. currently the webinterface is limited in width.
+- [x] allow grouping of hosts by host, service, website title and similarity of the image. this should be done in a way that the user can select which grouping to use and can switch between the different groupings easily.
+- [ ] for services where multiple screenshots were taken, summarize them in a single screenshot page where the user can switch between the different screenshots.

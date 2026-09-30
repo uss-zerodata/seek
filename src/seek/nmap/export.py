@@ -21,6 +21,7 @@ import json
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
+from seek.nmap import names
 from seek.nmap.models import Host, Service
 
 # Services nmap names that are HTTP(S) in practice, for URL construction.
@@ -252,6 +253,21 @@ def url_for(host_name: str, svc: Service) -> str:
     return f"{scheme}://{host_name}:{svc.port}"
 
 
+def service_urls(svc: Service, host: Host | None) -> list[str]:
+    """Every address the service answers on - the one scanned and every name.
+
+    Virtual hosting means these can serve different things, so a list that shows
+    only the address hides half of what was found.
+    """
+    if host is None:
+        return [u for u in [url_for(n, svc) for n, _ in svc.names] if u]
+    base = service_url(host, svc)
+    if not base:
+        return []
+    known = [n for n, _ in names.host_names(host)]
+    return list(dict.fromkeys([base, *(url_for(n, svc) for n in known)]))
+
+
 # (label, recipe, the column its items are - or None when the shape is fixed and
 # a format choice would be a lie about what was written).
 EXPORTS: dict[str, tuple[str, Callable[[Iterable[Record]], list[str]], str | None]] = {
@@ -262,3 +278,21 @@ EXPORTS: dict[str, tuple[str, Callable[[Iterable[Record]], list[str]], str | Non
     "host-ports": ("host:port pairs", export_host_ports, "host_port"),
     "urls": ("HTTP/HTTPS URLs", export_urls, "url"),
 }
+
+
+def produce(records: Iterable[Record], which: str, fmt: str = "text",
+            fields: Iterable[str] = ()) -> tuple[str, str]:
+    """An export as text, and the format actually used - for every front end.
+
+    `which` is a key of `EXPORTS`, or `custom` with `fields`. The port list is
+    one comma-separated line whatever format is asked for, so that recipe
+    reports `text` back rather than pretending to honour the choice.
+    """
+    records = list(records)
+    if which == "custom":
+        return render(records, fields, fmt), fmt
+    _label, recipe, column = EXPORTS[which]
+    items = recipe(records)
+    if column is None:
+        fmt = "text"
+    return render_items(items, column or "ports", fmt), fmt

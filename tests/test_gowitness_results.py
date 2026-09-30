@@ -321,3 +321,78 @@ def test_network_logs_are_read_when_the_capture_recorded_them():
     assert any(c.network for c in captures), "no network log rows were read"
     url, label = next(c.network[0] for c in captures if c.network)
     assert isinstance(url, str) and isinstance(label, str)
+
+
+# --- every capture, and where it came from -------------------------------------
+
+
+def test_a_capture_knows_its_database():
+    captures, _ = _read()
+    assert {c.database for c in captures} == {FIX}
+
+
+def test_two_databases_with_the_same_url_are_both_kept(tmp_path):
+    import shutil
+
+    second = tmp_path / "other.sqlite3"
+    shutil.copy(FIX, second)
+    con = sqlite3.connect(second)
+    con.execute("update results set probed_at = '2026-09-03 10:00:00+00:00'")
+    con.commit()
+    con.close()
+
+    shots = res.Captures()
+    shots.add(res.read_database(FIX)[0])
+    shots.add(res.read_database(second)[0])
+    assert len(shots.all()) == 14, "both pictures of every URL"
+    assert {c.database for c in shots.all()} == {FIX, second}
+    url = shots.all()[0].url
+    assert shots.get(url).database == second, "the newest still wins for a lookup"
+    assert len(shots) == 7
+
+
+def test_reading_a_database_again_does_not_double_it():
+    shots = res.Captures()
+    before = shots.generation
+    shots.add(_read()[0])
+    shots.add(_read()[0])
+    assert len(shots.all()) == 7
+    assert shots.generation > before
+
+
+def test_a_failure_from_a_log_is_listed_too():
+    shots = res.Captures()
+    shots.add_failures({"http://192.0.2.9": "timeout"})
+    (only,) = shots.all()
+    assert only.failed and only.database is None
+
+
+@pytest.mark.parametrize("url", [
+    "http://fritz.box", "http://fritz.box:80", "https://Fritz.Box", "https://a.b:8443",
+    "HTTP://X.Y", "http://192.0.2.1", "https://192.0.2.1:443", "ftp://h", "ftp://h:21",
+    "http://h:0080", "http://h:99999", "http://h:", "http://:80", "http://h/", "http://h/p",
+    "http://u@h", "http://[::1]:80", "http://h?q", "http://h#f", "http://h:x", "gopher://h",
+    "http://h:65535", "https://sso.hektor.cc:80", "",
+])
+def test_the_fast_canonical_form_agrees_with_the_parser(url):
+    """The string fast path must give exactly what `urlsplit` would."""
+    from urllib.parse import urlsplit
+
+    def slow(u):
+        if not u:
+            return u
+        split = urlsplit(u)
+        if not split.scheme or not split.hostname:
+            return u.rstrip("/")
+        port = split.port or res._DEFAULT_PORT.get(split.scheme.lower())
+        if port is None:
+            return f"{split.scheme}://{split.hostname}".rstrip("/")
+        return f"{split.scheme}://{split.hostname}:{port}"
+
+    try:
+        expected = slow(url)
+    except ValueError:
+        expected = None
+    fast = res._canonical_plain(url)
+    if fast is not None:
+        assert fast == expected, url

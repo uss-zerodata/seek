@@ -153,6 +153,13 @@ def _term_score(term: Term, text: str):
         if hay != needle:
             return None
         return (_score_positions(text, list(range(len(text)))) + 40, list(range(len(text))))
+    if term.type is TermType.EXACT:
+        # Not frozen: the original fell back to a subsequence match here, a bug
+        # in what `'term` means rather than an optimisation to preserve.
+        hay = text if term.case_sensitive else text.lower()
+        needle = term.text if term.case_sensitive else term.text.lower()
+        if needle not in hay:
+            return None
     return score(term.text, text, case_sensitive=term.case_sensitive)
 
 

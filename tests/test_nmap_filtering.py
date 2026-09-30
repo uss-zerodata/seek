@@ -20,13 +20,23 @@ def test_a_prefix_makes_a_token_a_network():
     assert spec.query is None
 
 
-def test_a_complete_address_is_its_own_single_host_network():
-    """`10.10.10.5` means `10.10.10.5/32` - an exact host lookup."""
+def test_a_complete_address_is_a_beginning():
+    """`10.10.10.5` finds `.5` and `.50`-`.59`: the list narrows as it is typed,
+    rather than jumping to one host at the last digit."""
     spec = _spec("10.10.10.5")
-    assert [str(n) for n in spec.include] == ["10.10.10.5/32"]
+    assert spec.prefixes == ["10.10.10.5"] and spec.include == []
     assert spec.query is None
     assert matches(spec, "x", ("10.10.10.5",)) is True
-    assert matches(spec, "x", ("10.10.10.50",)) is False
+    assert matches(spec, "x", ("10.10.10.50",)) is True
+    assert matches(spec, "x", ("10.10.10.6",)) is False
+
+
+def test_equals_or_slash_32_is_exactly_that_host():
+    for text in ("=10.10.10.5", "10.10.10.5/32"):
+        spec = _spec(text)
+        assert [str(n) for n in spec.include] == ["10.10.10.5/32"], text
+        assert matches(spec, "x", ("10.10.10.5",)) is True
+        assert matches(spec, "x", ("10.10.10.50",)) is False
 
 
 def test_an_incomplete_address_stays_a_fuzzy_term():
@@ -44,16 +54,17 @@ def test_an_invalid_address_stays_a_fuzzy_term():
     assert spec.query is not None
 
 
-def test_a_complete_ipv6_address_is_a_slash_128():
+def test_a_complete_ipv6_address_is_a_beginning_too():
     spec = _spec("2001:db8::1")
-    assert [str(n) for n in spec.include] == ["2001:db8::1/128"]
+    assert spec.prefixes == ["2001:db8::1"]
     assert matches(spec, "x", ("2001:db8::1",)) is True
     assert matches(spec, "x", ("2001:db8::2",)) is False
+    assert [str(n) for n in _spec("=2001:db8::1").include] == ["2001:db8::1/128"]
 
 
-def test_an_exact_address_composes_with_fuzzy_terms():
+def test_an_address_composes_with_fuzzy_terms():
     spec = _spec("10.10.10.5 http")
-    assert [str(n) for n in spec.include] == ["10.10.10.5/32"]
+    assert spec.prefixes == ["10.10.10.5"]
     assert matches(spec, "nginx http", ("10.10.10.5",)) is True
     assert matches(spec, "ssh", ("10.10.10.5",)) is False
 
@@ -174,3 +185,64 @@ def test_ipv6_networks_are_supported():
     spec = _spec("2001:db8::/32")
     assert matches(spec, "x", ("2001:db8::1",)) is True
     assert matches(spec, "x", ("2001:dead::1",)) is False
+
+
+# --- ports, as nmap and URLs write them -------------------------------------------
+
+
+class _Svc:
+    def __init__(self, port, protocol="tcp", state="open"):
+        self.port, self.protocol, self.state = port, protocol, state
+        self.name = self.product = None
+
+
+class _Host:
+    def __init__(self, address, *services):
+        self.address, self.services = address, list(services)
+
+
+class _Rec:
+    def __init__(self, host, service=None):
+        self.host, self.service = host, service
+
+
+def _row(address, *services):
+    host = _Host(address, *services)
+    return ("text", (address,), (_Rec(host),))
+
+
+@pytest.mark.parametrize("text, port, proto", [
+    (":443", 443, None), ("443/tcp", 443, "tcp"), ("53/udp", 53, "udp"),
+    ("port:8080", 8080, None), ("port:80/tcp", 80, "tcp"),
+])
+def test_a_port_is_a_port_whatever_its_state(text, port, proto):
+    spec = _spec(text)
+    for state in ("open", "closed", "filtered"):
+        assert matches(spec, *_row("10.0.0.1", _Svc(port, proto or "tcp", state))), state
+    assert not matches(spec, *_row("10.0.0.1", _Svc(port + 1)))
+    if proto:
+        other = "udp" if proto == "tcp" else "tcp"
+        assert not matches(spec, *_row("10.0.0.1", _Svc(port, other)))
+
+
+def test_a_host_with_a_port_is_that_host_and_that_port():
+    spec = _spec("10.10.10.10:8080")
+    assert matches(spec, *_row("10.10.10.10", _Svc(8080)))
+    assert not matches(spec, *_row("10.10.10.10", _Svc(80))), "the port too"
+    assert not matches(spec, *_row("10.10.10.100", _Svc(8080))), "that host, exactly"
+
+
+def test_open_and_closed_still_ask_for_the_state():
+    assert matches(_spec("open:80/udp"), *_row("h", _Svc(80, "udp", "open")))
+    assert not matches(_spec("open:80/udp"), *_row("h", _Svc(80, "udp", "closed")))
+    assert matches(_spec("closed:8080"), *_row("h", _Svc(8080, "tcp", "filtered")))
+
+
+def test_what_a_filter_was_understood_as_is_said():
+    from seek.nmap.filtering import explain
+
+    assert explain(_spec(":443 nginx")) == ["port 443 (any state)", "text like “nginx”"]
+    assert explain(_spec("10.10.10.1")) == ["address beginning 10.10.10.1"]
+    assert explain(_spec("=10.10.10.1")) == ["host 10.10.10.1"]
+    assert explain(_spec("10.0.0.0/8 !ssh")) == ["address in 10.0.0.0/8", "not text like “ssh”"]
+    assert explain(_spec("open:")) == ["ignored while incomplete: open:"]

@@ -1,0 +1,20 @@
+{% if found.understood %}<p class="understood">Searching for: {{ found.understood | join(" · ") }}</p>{% endif %}
+{% if not found.groups %}
+<p class="empty">{% if q %}Nothing matches “{{ q }}”. <button type="button" class="linkish syntax-help" data-for="global-q">How to search</button>{% else %}Type to search hosts, services, names and screenshots.{% endif %}</p>
+{% endif %}
+{% for g in found.groups %}
+<section class="hit-group" data-kind="{{ g.kind }}">
+  <h3>{{ g.label }} <span class="dim">{{ g.total }}</span>
+    {% if g.loose %}<span class="dim small" title="rows that only contain the letters, scattered">+{{ g.loose }} looser</span>{% endif %}
+    <a class="small all" href="{{ g.more }}">all →</a></h3>
+  <ul class="hits">
+  {% for h in g.hits %}
+    <li><a class="hit" href="{{ h.href }}">
+      {% if h.image %}<img class="hit-shot" src="{{ h.image }}" alt="" loading="lazy">{% endif %}
+      <span class="hit-title">{{ h.title }}</span>
+      {% if h.subtitle %}<span class="hit-sub dim small">{{ h.subtitle }}</span>{% endif %}
+    </a></li>
+  {% endfor %}
+  </ul>
+</section>
+{% endfor %}

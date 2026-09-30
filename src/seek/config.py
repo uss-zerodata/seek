@@ -114,6 +114,10 @@ class Config:
     gowitness_image: str = "ghcr.io/sensepost/gowitness"
     gowitness_report_host: str = "127.0.0.1"
     gowitness_report_port: int = 7171
+    # The viewer's own web interface (`w`). Loopback only: anything else is
+    # refused when it starts, not silently honoured.
+    web_host: str = "127.0.0.1"
+    web_port: int = 7272
     # Empty: let gowitness fetch its own browser. Set when Chrome is already
     # installed and the download is unwanted.
     gowitness_chrome_path: str = ""
@@ -162,6 +166,8 @@ _SCALAR_KEYS: dict[str, type | tuple[type, ...]] = {
     "gowitness_image": str,
     "gowitness_report_host": str,
     "gowitness_report_port": int,
+    "web_host": str,
+    "web_port": int,
     "gowitness_chrome_path": str,
     "gowitness_collect_all": bool,
 }
@@ -183,6 +189,7 @@ _RANGES: dict[str, tuple[int, int | None]] = {
     "format_min_line": (1, None),
     "content_cache_budget": (0, None),
     "gowitness_report_port": (1, 65_535),
+    "web_port": (1, 65_535),
 }
 
 # Keys whose value must be one of a fixed set. A typo in one of these is not a
@@ -389,6 +396,8 @@ _EXAMPLE_COMMENTS = {
     "gowitness_image": "the container image to run, for the docker backend",
     "gowitness_report_host": "address the gowitness report server binds to",
     "gowitness_report_port": "port the gowitness report server listens on",
+    "web_host": "address the viewer's web interface binds to (loopback only)",
+    "web_port": "port the viewer's web interface listens on",
     "gowitness_chrome_path": "a Chrome binary for gowitness to use; empty lets it fetch its own",
     "gowitness_collect_all": "record network logs, cookies and response bodies too (large)",
 }

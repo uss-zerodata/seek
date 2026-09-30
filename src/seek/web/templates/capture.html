@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% from "_macros.html" import status %}
+{% block title %}{{ capture.url }}{% endblock %}
+{% block content %}
+<h1>{{ status(capture) }} {{ capture.url }}
+  <a class="small" href="{{ capture.url }}" target="_blank" rel="noopener noreferrer" title="opens the target itself">open ↗</a></h1>
+{% if capture.title %}<p class="lead">{{ capture.title }}</p>{% endif %}
+<dl class="facts">
+  {% if capture.redirected %}<dt>final URL</dt><dd><a href="{{ capture.final_url }}" target="_blank" rel="noopener noreferrer">{{ capture.final_url }}</a></dd>{% endif %}
+  {% if capture.address %}<dt>host</dt><dd><a href="{{ links.host(capture.address) }}">{{ capture.address }}</a>{% if capture.port %} · <a href="{{ links.port(capture.address, capture.protocol, capture.port) }}">{{ capture.port }}/{{ capture.protocol }}</a>
+      · <a href="/?{{ {"address": capture.address, "protocol": capture.protocol, "port": capture.port} | urlencode }}">every capture of this port</a>{% endif %}</dd>{% endif %}
+  {% if capture.failed %}<dt>failed</dt><dd>{{ capture.failure }}</dd>{% endif %}
+  {% if capture.reason %}<dt>reason</dt><dd>{{ capture.reason }}</dd>{% endif %}
+  {% if capture.http_protocol %}<dt>protocol</dt><dd>{{ capture.http_protocol }}</dd>{% endif %}
+  {% if capture.probed_at %}<dt>taken</dt><dd>{{ capture.probed_at }}</dd>{% endif %}
+  {% if capture.content_length is not none %}<dt>length</dt><dd>{{ capture.content_length }}</dd>{% endif %}
+  {% if capture.technologies %}<dt>technologies</dt><dd>{{ capture.technologies | join(", ") }}</dd>{% endif %}
+  {% if capture.tls %}<dt>TLS</dt><dd>{{ capture.tls }}</dd>{% endif %}
+  {% if capture.sans %}<dt>TLS names</dt><dd>{{ capture.sans | join(", ") }}</dd>{% endif %}
+  {% if capture.database %}<dt>database</dt><dd>{{ capture.database }}</dd>{% endif %}
+</dl>
+{% if capture.image %}<a href="{{ capture.image }}"><img class="full" src="{{ capture.image }}" alt="screenshot of {{ capture.url }}"></a>{% endif %}
+{% for label, pairs in [("Headers", capture.headers), ("Cookies", capture.cookies), ("Console", capture.console), ("Network", capture.network)] %}
+{% if pairs %}
+<h2>{{ label }} <span class="dim">{{ pairs | length }}</span></h2>
+<table class="pairs">{% for k, v in pairs %}<tr><th>{{ k }}</th><td>{{ v }}</td></tr>{% endfor %}</table>
+{% endif %}
+{% endfor %}
+{% endblock %}

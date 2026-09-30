@@ -18,6 +18,7 @@ from seek.config import Config
 from seek.gowitness import results as gw
 from seek.gowitness.capture import CaptureRun, capture_dir
 from seek.gowitness.detect import Probe
+from seek.nmap.export import service_urls
 from seek.nmap.merge import load
 from seek.nmap.runner import ScanRun
 from seek.nmap.views import prepare
@@ -234,11 +235,10 @@ async def test_i_offers_a_picker_when_a_record_has_several(tmp_path):
     app = _app(tmp_path)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause(0.3)
-        from seek.tui.nmap import detail as detail_pane
         host = next(h for h in app.scans.hosts for s in h.open_services
-                    if detail_pane._service_urls(s, h))
+                    if service_urls(s, h))
         urls = [u for s in host.open_services
-                for u in detail_pane._service_urls(s, host)]
+                for u in service_urls(s, host)]
         app.shots.add([gw.Capture(url=u, status=200, reason="OK",
                                   shot=tmp_path / "a.jpeg") for u in urls[:2]])
         app._select_target(host)
@@ -251,10 +251,9 @@ async def test_a_failed_capture_offers_no_screenshot(tmp_path):
     app = _app(tmp_path)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause(0.3)
-        from seek.tui.nmap import detail as detail_pane
         host, svc = next((h, s) for h in app.scans.hosts for s in h.open_services
-                         if detail_pane._service_urls(s, h))
-        url = detail_pane._service_urls(svc, host)[0]
+                         if service_urls(s, h))
+        url = service_urls(svc, host)[0]
         app.shots.add_failures({url: "connection refused"})
         capture = app.shots.get(url)
         assert capture.failed and capture.shot is None
@@ -339,10 +338,9 @@ async def test_one_selected_result_deep_links_to_itself(tmp_path):
     app = _app(tmp_path)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause(0.3)
-        from seek.tui.nmap import detail as detail_pane
         host, svc = next((h, s) for h in app.scans.hosts for s in h.open_services
-                         if detail_pane._service_urls(s, h))
-        url = detail_pane._service_urls(svc, host)[0]
+                         if service_urls(s, h))
+        url = service_urls(svc, host)[0]
         app.shots.add([gw.Capture(url=url, row_id=42, status=200)])
         app._select_target(svc)
         await pilot.pause(0.2)
@@ -354,11 +352,10 @@ async def test_several_results_open_the_gallery(tmp_path):
     app = _app(tmp_path)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause(0.3)
-        from seek.tui.nmap import detail as detail_pane
         host = next(h for h in app.scans.hosts for s in h.open_services
-                    if detail_pane._service_urls(s, h))
+                    if service_urls(s, h))
         urls = [u for s in host.open_services
-                for u in detail_pane._service_urls(s, host)][:3]
+                for u in service_urls(s, host)][:3]
         app.shots.add([gw.Capture(url=u, row_id=i + 1, status=200)
                        for i, u in enumerate(urls)])
         app._select_target(host)
@@ -372,10 +369,9 @@ async def test_a_failure_with_no_id_opens_the_gallery(tmp_path):
     app = _app(tmp_path)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause(0.3)
-        from seek.tui.nmap import detail as detail_pane
         host, svc = next((h, s) for h in app.scans.hosts for s in h.open_services
-                         if detail_pane._service_urls(s, h))
-        url = detail_pane._service_urls(svc, host)[0]
+                         if service_urls(s, h))
+        url = service_urls(svc, host)[0]
         app.shots.add_failures({url: "connection refused"})
         app._select_target(svc)
         await pilot.pause(0.2)

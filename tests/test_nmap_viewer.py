@@ -823,11 +823,14 @@ async def test_the_resolved_range_is_shown_in_the_status():
         assert "in 198.51.100.4/30" in _render(app.query_one("#status"))
 
 
-async def test_a_complete_address_selects_exactly_that_host():
+async def test_a_complete_address_is_a_beginning_and_equals_is_exact():
     app = _app("pn-asserted")
     async with app.run_test(size=(120, 40)) as pilot:
         await _type(pilot, "198.51.100.1")
-        assert _cells(app) == ["198.51.100.1"], "a complete address is a /32"
+        assert _cells(app)[:2] == ["198.51.100.1", "198.51.100.10"], "a beginning"
+        await pilot.press("escape")
+        await _type(pilot, "=198.51.100.1")
+        assert _cells(app) == ["198.51.100.1"], "= is that host alone"
 
 
 async def test_an_incomplete_address_still_matches_many():
@@ -2338,3 +2341,15 @@ async def test_a_tab_left_from_a_drill_down_keeps_its_overview():
         await pilot.pause(0.3)
         assert len(app.stack) == 1 and app.view.kind == "hosts"
         assert _filter_text(app) == "'alpha.example" and _cells(app) == ["192.0.2.1"]
+
+
+async def test_the_terminal_prefers_rows_containing_the_words_and_says_so():
+    """The same rule as the browser: firm matches alone, the rest counted."""
+    app = _app("basic", "vuln")
+    async with app.run_test(size=(200, 40)) as pilot:
+        await _type(pilot, "alpha")
+        assert _cells(app) == ["192.0.2.1"], "192.0.2.30 only has the letters"
+        assert "+1 looser (add ~)" in _render(app.query_one("#status"))
+        await pilot.press("escape")
+        await _type(pilot, "alpha ~")
+        assert _cells(app) == ["192.0.2.1", "192.0.2.30"]

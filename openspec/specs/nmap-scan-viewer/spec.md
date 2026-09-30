@@ -60,6 +60,7 @@ appears in only one of them the user can tell which scan it came from.
 #### Scenario: An observed host state beats an asserted one
 - **WHEN** one scan asserts a host `up` with reason `user-set` and another records it `up` for an observed reason
 - **THEN** the consolidated host carries the observed state and reason
+
 ### Requirement: Malformed input is reported and skipped
 A file that cannot be parsed SHALL NOT abort the run. The system SHALL report
 which files failed and continue with those that succeeded.
@@ -90,6 +91,7 @@ to be an engagement with no hosts in it.
 #### Scenario: Nothing to read and nothing to run
 - **WHEN** the given paths hold no candidate scan file and no scan can be started
 - **THEN** the system reports that and exits without opening the viewer
+
 ### Requirement: Host overview
 The system SHALL provide a view listing every host in the merged model with at
 least its address, its hostname, its operating system, and the number of services
@@ -108,6 +110,7 @@ scanned but found down SHALL be distinguishable from hosts that are up.
 #### Scenario: Down hosts are distinguishable
 - **WHEN** a scan contains both up and down hosts
 - **THEN** the view distinguishes them
+
 ### Requirement: Service overview
 The system SHALL provide a view listing services aggregated across all hosts,
 with at least port, protocol, service name, product, version, extra information,
@@ -121,6 +124,7 @@ SHALL be grouped into one row carrying the number of hosts that run it.
 #### Scenario: The same service on many hosts is one row
 - **WHEN** twenty hosts run `tcp/80 Apache httpd 2.4.52`
 - **THEN** the service view shows one row for it, indicating twenty hosts
+
 ### Requirement: Drill down from a host to its services
 Selecting a host SHALL show every service on that host together with the details
 of each, and SHALL allow returning to the view it was opened from.
@@ -136,6 +140,7 @@ of each, and SHALL allow returning to the view it was opened from.
 #### Scenario: Each level has its own filter
 - **WHEN** the host list is filtered and the user opens a host, filters its ports, opens one of those services and then goes back twice
 - **THEN** the host's port list opened unfiltered and comes back with its own filter, the host list comes back with its filter, and each is shown at the row it was left on
+
 ### Requirement: Going back is not quitting
 `q` SHALL do exactly what `Esc` does: leave the filter, then clear it, then go
 back one level, and quit only from the first overview with nothing left to
@@ -154,6 +159,7 @@ unless the reader is typing into a text box. Quitting from anywhere SHALL be
 #### Scenario: Quitting from a drill-down
 - **WHEN** the user presses `Ctrl+Q` or `Ctrl+C` on a drill-down
 - **THEN** the application quits, asking first if a scan is running
+
 ### Requirement: Drill down from a service to its hosts
 Selecting a service SHALL show every host running it, with that host's specific
 details for the service — its version, extra information and any vulnerabilities
@@ -162,6 +168,7 @@ recorded on that host — and SHALL allow returning to the view it was opened fr
 #### Scenario: Service detail lists its hosts
 - **WHEN** the user selects `tcp/80 apache` in the service view
 - **THEN** every host running it is listed with that host's specifics for that service
+
 ### Requirement: Drilling continues from wherever the user is
 Every row that stands for hosts or services SHALL be openable, and the
 destinations SHALL chain, so that the user can keep going down instead of
@@ -229,6 +236,7 @@ statistics view with its selection intact.
 #### Scenario: A port that is open nowhere
 - **WHEN** the user opens a service whose port is closed or filtered on every host
 - **THEN** the hosts that report that port are listed rather than nothing happening
+
 ### Requirement: Fuzzy filtering
 Each view SHALL provide a filter that narrows the listed rows as the user types,
 using the same query grammar as the search session — space-separated terms
@@ -282,6 +290,7 @@ visible, since a prefix is resolved to the network containing it.
 #### Scenario: The applied range is visible
 - **WHEN** a range term is active
 - **THEN** the interface shows the range being applied
+
 ### Requirement: Sorting
 Each view SHALL allow sorting by any of its columns, in ascending and descending
 order, and SHALL indicate which column is sorted and in which direction, both on
@@ -333,6 +342,7 @@ without knowing a key.
 #### Scenario: Sorting respects the filter
 - **WHEN** a filter is active and the user sorts
 - **THEN** only the filtered rows are ordered, and the filter stays applied
+
 ### Requirement: Script results are captured
 The system SHALL capture every `<script>` result attached to a host or a service,
 preserving its identifier, its free-text output, and — where the script emits
@@ -350,6 +360,7 @@ results SHALL be visible in the detail view of whatever they were attached to.
 #### Scenario: Host-level scripts are attached to the host
 - **WHEN** a scan contains `<hostscript>` results
 - **THEN** they appear in that host's detail view rather than against a service
+
 ### Requirement: Vulnerabilities are extracted from script results
 The system SHALL recognise vulnerability-bearing script results and lift them
 into typed vulnerability records carrying at least an identifier, a title, and
@@ -383,6 +394,7 @@ vulnerabilities rather than failing or showing an empty section as an error.
 #### Scenario: A scan without vulnerability scripts
 - **WHEN** a scan contains only scripts such as `http-title` and `ssl-cert` that carry no vulnerability information
 - **THEN** every vulnerability count is zero and the viewer operates normally
+
 ### Requirement: Entry point
 The system SHALL provide a `nmap` subcommand taking one or more file paths, or a
 directory, and opening the viewer on them. The viewer is a purpose-built
@@ -416,6 +428,7 @@ files were given.
 #### Scenario: A directory with no scans, and no nmap
 - **WHEN** the subcommand is run on a directory holding no readable scan and nmap is not available
 - **THEN** the system reports that there is nothing to read and exits
+
 ### Requirement: Host reachability is reported by evidence, not by asserted state
 When a scan was run with host discovery disabled (`-Pn`), nmap marks every target
 `up` regardless of whether it responded, with the status reason `user-set`. The
@@ -464,6 +477,7 @@ port.
 #### Scenario: A host with no open port
 - **WHEN** the port list is restricted to open ports and the host has none
 - **THEN** the list says that no port is open and that `u` lists every port
+
 ### Requirement: Aggregate statistics
 The system SHALL provide a statistics view over the current (filtered) model
 giving at least: the number of targets, how many were asserted up, how many show
@@ -506,6 +520,7 @@ truncated list inside another line's detail.
 #### Scenario: Statistics follow the filter
 - **WHEN** a filter is active and the statistics view is shown
 - **THEN** the figures describe the filtered subset
+
 ### Requirement: Grouping views
 The system SHALL be able to group open services by service name, by product, and
 by port, listing the hosts in each group with the port and any product and
@@ -526,6 +541,7 @@ version detail. Groups SHALL be ordered by size by default.
 #### Scenario: A group opens the hosts behind it
 - **WHEN** the user opens a group
 - **THEN** its hosts are listed, and each of those opens that host's record
+
 ### Requirement: Derived lists can be exported
 The output of this viewer is frequently the input to another command, so the
 system SHALL let the user export derived lists: at least the host addresses, the
@@ -585,6 +601,7 @@ selected.
 #### Scenario: Scanning is offered only when it can be done
 - **WHEN** nmap is unavailable
 - **THEN** the export dialog does not offer scanning as a destination
+
 ### Requirement: Stateless operation
 The system SHALL hold everything it needs for a run in memory for the duration of
 that run. It SHALL NOT require an import or indexing step before files can be
@@ -608,6 +625,7 @@ was run before them.
 #### Scenario: Removing a file removes its data
 - **WHEN** a file is omitted from a subsequent invocation
 - **THEN** nothing it contributed persists into that run
+
 ### Requirement: The selected row's full record is shown
 The table can only show what fits in its columns, so the system SHALL display the
 complete record for the row the cursor is on, and SHALL update it as the cursor
@@ -657,6 +675,7 @@ terminal is too short to show it and a usable list at once.
 #### Scenario: The pane is dropped on a short terminal
 - **WHEN** the terminal is too short to show both the list and the detail
 - **THEN** the detail is hidden and the list stays usable
+
 ### Requirement: List navigation
 The system SHALL let the user move through a list with the up and down arrow
 keys, page through it, and jump to its first and last row, so that a scan of
@@ -696,6 +715,7 @@ the full-screen reader.
 #### Scenario: Opening and collapsing the detail
 - **WHEN** the user invokes the open-detail action
 - **THEN** the selected row's record opens full-screen, and a separate action collapses or restores the inline pane
+
 ### Requirement: The overviews are presented as tabs
 The available overviews SHALL be shown as a row of tabs, so that what can be
 looked at is visible rather than something the user has to know a key for. The
@@ -742,6 +762,7 @@ column currently sorted SHALL show the direction.
 #### Scenario: Columns are headed and the sort is marked
 - **WHEN** a list is sorted by one of its columns
 - **THEN** every column shows its name and the sorted one shows the direction
+
 ### Requirement: Every action is reachable by name
 Keys are quick but easy to forget, so every action the viewer offers — changing
 overview, moving through a list, sorting by any column of the overview currently
@@ -761,6 +782,7 @@ actually present.
 #### Scenario: The list is browsable without typing
 - **WHEN** the user opens the command list and types nothing
 - **THEN** the available actions are listed
+
 ### Requirement: The list is the thing being operated on
 The selected row SHALL be visibly marked in the list at all times, so the user
 can see what the detail below refers to and what an action will apply to. The
@@ -790,6 +812,7 @@ The selection cursor and a mark SHALL remain distinguishable from each other.
 #### Scenario: Actions avoid keys the terminal claims
 - **WHEN** the viewer's actions are inspected
 - **THEN** none of them require `Tab`, `Alt`+digit, or a control combination the terminal intercepts
+
 ### Requirement: Detail is laid out as a report
 The record shown for the selected row SHALL be laid out for reading: labelled
 values for single facts, and bulleted lists wherever there can be several
@@ -804,6 +827,7 @@ entry over its full supporting detail when space is short.
 #### Scenario: Single facts are labelled
 - **WHEN** the detail shows a host's operating system and state
 - **THEN** each is presented with a label identifying it
+
 ### Requirement: The interface matches the rest of the application
 The viewer SHALL follow the same visual conventions as a search session: regions
 separated by thin rules rather than filled bands, since the terminal palette
@@ -813,6 +837,7 @@ highlight style for characters matched by a filter.
 #### Scenario: Regions are separated by rules
 - **WHEN** the viewer is open
 - **THEN** the list and the detail are fenced by rules, and no region is drawn on a filled background band
+
 ### Requirement: The list fits the terminal
 No row SHALL extend beyond the width of the terminal. Where the columns cannot
 all be shown at their natural width, values SHALL be shortened with an
@@ -826,6 +851,7 @@ value is available in the detail below. The layout SHALL follow a resize.
 #### Scenario: Widening restores detail
 - **WHEN** the terminal is made wider
 - **THEN** the columns are laid out again to use the space
+
 ### Requirement: A long record is navigated by a line cursor
 When the record for the selected row is taller than the space available, the user
 SHALL be able to move through it without leaving the list or losing the selection.
@@ -868,6 +894,7 @@ next row are read in the full-screen reader, or by moving the list.
 #### Scenario: A record that is one block of text
 - **WHEN** the record is a single block, such as a scan's report, and the user presses the right arrow
 - **THEN** the record scrolls a line
+
 ### Requirement: An empty list explains itself
 A list with no rows SHALL say why it is empty and how to leave that state. It
 SHALL keep the column headers, which say what would be there, and place the
@@ -906,6 +933,7 @@ to report, and the message SHALL sit inside the same region the rows occupy.
 #### Scenario: The empty state ends
 - **WHEN** the filter is cleared and rows return
 - **THEN** the message is gone and the record pane is shown again
+
 ### Requirement: A modal fits the terminal and says how to leave
 A modal offering choices SHALL present them so that every choice is reachable in
 a terminal of 24 rows: it SHALL NOT require more rows than the terminal has, and
@@ -925,6 +953,7 @@ Every modal SHALL state, in itself, how to choose and how to cancel.
 #### Scenario: A modal says how to leave
 - **WHEN** any modal is open
 - **THEN** it shows how to choose and that `Esc` cancels
+
 ### Requirement: The key hints degrade by priority
 The hint bar SHALL NOT be cut off mid-item. When the hints do not fit the
 terminal width, the system SHALL drop hints by priority rather than by position:
@@ -943,6 +972,7 @@ bar SHALL indicate that more exist.
 #### Scenario: No hint is cut in half
 - **WHEN** the bar is rendered at any width
 - **THEN** every hint it shows is shown whole
+
 ### Requirement: Records can be marked across the whole viewer
 The set of records worth exporting is assembled while reading a scan, across
 several views, and is rarely what any single view is showing. The system SHALL
@@ -984,6 +1014,7 @@ and the number of marked records SHALL be shown while any exist.
 #### Scenario: Marks are cleared in one action
 - **WHEN** the user invokes the clear-marks action
 - **THEN** no record is marked and the list shows none
+
 ### Requirement: An export names its own fields and format
 An exported list is read by another tool, so its shape matters as much as its
 contents. Alongside the named derived lists, the system SHALL let the user
@@ -1019,6 +1050,7 @@ written once.
 #### Scenario: Repeated rows collapse
 - **WHEN** the chosen fields are the address alone and several marked services belong to one host
 - **THEN** that address is written once
+
 ### Requirement: Every name a host is known by is visible
 A scan learns a host's names from several kinds of evidence — a reverse lookup,
 the certificate a TLS service presents, where an HTTP service redirects, what a
@@ -1073,6 +1105,7 @@ where it came from, and the hosts and ports behind it, opening to those hosts.
 #### Scenario: The names overview
 - **WHEN** the user opens the names overview
 - **THEN** every name found is listed with its source and the hosts behind it, and opening one shows those hosts
+
 ### Requirement: The detail can be read full-screen and searched
 The record shown for the selected row SHALL be openable in a full-screen reader
 that uses the whole height, for records too tall for the inline pane — a host
@@ -1165,6 +1198,7 @@ act on the reader, never on the list underneath it.
 #### Scenario: Jumping to the reader's own ends
 - **WHEN** the user presses the jump-to-first or jump-to-last key while the reader is open
 - **THEN** the reader scrolls to its own top or bottom and the list selection does not move
+
 ### Requirement: Reading an engagement does not block the viewer
 An engagement of a hundred or more scan files takes seconds to read, and a
 terminal application that shows nothing for that long is indistinguishable from
@@ -1208,6 +1242,7 @@ visible as it grows.
 #### Scenario: The read finishes
 - **WHEN** the last file has been read
 - **THEN** the progress report is gone and the model is the same one a blocking read would have produced
+
 ### Requirement: Long work reports its progress and can be abandoned
 Any work that keeps the user waiting SHALL say what it is doing, and SHALL say
 how far it has got whenever the work can count itself — reading files, folding
@@ -1250,6 +1285,7 @@ a true list with a progress report.
 #### Scenario: A re-read keeps the list it is replacing
 - **WHEN** a scan finishes and the whole engagement is re-read to fold it in
 - **THEN** the rows already on screen stay, and the progress is reported outside the list
+
 ### Requirement: The interface stays responsive while work runs
 Moving work off the interface's own thread is not enough on its own: the work
 still competes for the interpreter, and a memory-management pause during it
@@ -1282,6 +1318,7 @@ over the system SHALL say how much of it has arrived.
 #### Scenario: Returning from a drill-down
 - **WHEN** the user opens a host's record and goes back to the overview
 - **THEN** the overview is shown again without being projected a second time
+
 ### Requirement: A record can show the raw scan output for its own subject
 Everything the viewer shows is derived from the XML, and a derived value can
 only be trusted as far as the derivation is. The system SHALL therefore make
@@ -1334,6 +1371,7 @@ second source the parsed record is reconciled against.
 #### Scenario: A scan whose output file cannot be read
 - **WHEN** the output file exists but cannot be read
 - **THEN** the entry says so, rather than showing an empty report
+
 ### Requirement: The record pane shows either the record or one raw entry
 The pane SHALL have two states for the row the cursor is on: the parsed record,
 and the raw output of one scan of that record's subject. Opening an entry SHALL
@@ -1360,3 +1398,53 @@ state, because the raw output on screen belongs to the row that was left.
 #### Scenario: Moving the list while raw output is shown
 - **WHEN** the user moves the list cursor to another row while raw output is on screen
 - **THEN** the pane shows the new row's record rather than output belonging to the row that was left
+
+### Requirement: The web interface is opened from the viewer
+The viewer SHALL open the web interface with a bare key and from the command
+palette by name. The first use SHALL start the interface; later uses SHALL reuse
+the running one. Each use SHALL open the browser at the page for the selected
+row: a host row at the host's page, a service row at that service across hosts,
+a row whose record identifies exactly one capture at that capture's page, and
+anything else at the gallery. Opening the web interface SHALL NOT change the
+list, its selection or its filter.
+
+While the interface is running, the status bar SHALL say so and give its
+address. Quitting the viewer SHALL stop it. The existing way of starting
+gowitness's own report server SHALL remain available alongside it.
+
+Where the user asks to look at the screenshot of a row that has several
+captures, the choice SHALL offer to open all of them together in the web
+interface - narrowed to that row - before offering each one alone.
+
+#### Scenario: Opening at the selected host
+- **WHEN** the cursor is on host `192.0.2.1` and the user opens the web interface
+- **THEN** the interface is started and the browser is opened at that host's page
+
+#### Scenario: A second use reuses the server
+- **WHEN** the interface is already running and the user opens it again on another row
+- **THEN** no second server is started and the browser is opened at that row's page
+
+#### Scenario: Nothing specific selected
+- **WHEN** the selected row is a statistic
+- **THEN** the browser is opened at the gallery
+
+#### Scenario: The status bar says it is running
+- **WHEN** the interface is running
+- **THEN** the status bar shows that it is running and its address
+
+#### Scenario: Reachable by name
+- **WHEN** the user searches the command palette for "web"
+- **THEN** the action that opens the web interface is listed
+
+#### Scenario: Quitting stops it
+- **WHEN** the user quits the viewer while the interface is running
+- **THEN** the interface stops and its port is free again
+
+#### Scenario: Several captures of the selected row
+- **WHEN** the user asks to open the screenshot of a row with three captures
+- **THEN** the choice offers all three side by side in the web interface first, and each one alone after it
+
+#### Scenario: Both servers
+- **WHEN** the user has opened the web interface and then starts gowitness's report server
+- **THEN** both are running, each on its own port
+

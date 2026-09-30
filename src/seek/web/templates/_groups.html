@@ -1,0 +1,15 @@
+{% from "_macros.html" import shot_card %}
+{% if understood %}<p class="understood">Showing screenshots with: {{ understood | join(" · ") }}{% if page.loose %} · <a class="loose" href="?{{ dict(keep, q=q ~ " ~", group=group) | urlencode }}">+{{ page.loose }} looser - show them</a>{% endif %}</p>{% endif %}
+<p class="count">{{ page.captures }} screenshot(s) in {{ page.total }} group(s) by {{ groupings[group] | lower }}</p>
+{% for g in page.groups %}
+<section class="shot-group">
+  <h2><span class="group-label">{{ g.label }}</span> <span class="dim">{{ g.count }}</span>
+    {% if g.count > g.items | length %}<a class="small" href="/?{{ g.more }}">all {{ g.count }} →</a>{% else %}<a class="small" href="/?{{ g.more }}">only these →</a>{% endif %}</h2>
+  <div class="grid">{% for c in g.items %}{{ shot_card(c, show_host=(group not in ("host", "service"))) }}{% endfor %}</div>
+</section>
+{% else %}
+<p class="empty">{% if q %}nothing matches “{{ q }}”{% else %}no captures found{% endif %}</p>
+{% endfor %}
+{% if page.offset + page.groups | length < page.total %}
+<p><a class="more" href="?{{ dict(keep, group=group, offset=page.offset + page.limit) | urlencode }}">next {{ page.limit }} groups →</a></p>
+{% endif %}

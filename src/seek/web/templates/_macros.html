@@ -1,0 +1,37 @@
+{% macro service_link(sv) -%}
+/services/{{ sv.protocol }}/{{ sv.port }}?{{ {"name": sv.name or "", "product": sv.product or "", "version": sv.version or ""} | urlencode }}
+{%- endmacro %}
+
+{% macro status(c) -%}
+{% if c.failed %}<span class="pill bad">failed</span>
+{% elif c.status %}<span class="pill {{ 'ok' if c.status < 400 else 'warn' }}">{{ c.status }}</span>{% endif %}
+{%- endmacro %}
+
+{% macro shot_card(c, show_host=true) -%}
+<figure class="card">
+  <a class="thumb" href="/captures/{{ c.id }}">
+    {% if c.image %}<img src="{{ c.image }}" alt="screenshot of {{ c.url }}" loading="lazy">
+    {% else %}<span class="noshot">{{ c.failure or "no screenshot" }}</span>{% endif %}
+  </a>
+  <figcaption>
+    <div class="line">{{ status(c) }} <a href="/captures/{{ c.id }}" class="url">{{ c.url }}</a></div>
+    {% if c.title %}<div class="line dim">{{ c.title }}</div>{% endif %}
+    {% if c.redirected %}<div class="line dim">→ {{ c.final_url }}</div>{% endif %}
+    {% if show_host and c.address %}<div class="line"><a href="{{ links.host(c.address) }}">{{ c.address }}</a>{% if c.port %} · <a href="{{ links.port(c.address, c.protocol, c.port) }}">{{ c.port }}/{{ c.protocol }}</a>{% endif %}</div>{% endif %}
+    {% if show_host and c.siblings > 1 %}<div class="line"><a class="siblings" href="/?{{ {"address": c.address, "protocol": c.protocol, "port": c.port} | urlencode }}">all {{ c.siblings }} for this service →</a></div>{% endif %}
+    {% if c.database %}<div class="line dim small" title="{{ c.database }}">{{ c.database.rsplit('/', 2)[-2:] | join('/') }}</div>{% endif %}
+  </figcaption>
+</figure>
+{%- endmacro %}
+
+{% macro more(page, keep) -%}
+<p class="count">{{ page.total }} total{% if page.total > page.items|length %} · showing {{ page.offset + 1 }}–{{ page.offset + page.items|length }}{% endif %}</p>
+{% if page.offset + page.items|length < page.total %}
+<p><a class="more" href="?{{ dict(keep, offset=page.offset + page.limit, limit=page.limit) | urlencode }}">next {{ page.limit }} →</a></p>
+{% endif %}
+{%- endmacro %}
+
+{% macro filter(target, q, hint) -%}
+<input class="filter" type="search" name="q" value="{{ q }}" placeholder="{{ hint }}"
+       data-filter="{{ target }}" autocomplete="off" autofocus>
+{%- endmacro %}

@@ -97,7 +97,7 @@ yourself replaces the drill-down. The filter box uses the same fuzzy grammar (`'
 | `m` `M` | mark the selected row · clear every mark |
 | `n` | new scan · `o` report view · `p` freeze log · `c` cancel |
 | `x` | export, or capture the URLs with gowitness · `?` help |
-| `i` | open a capture's screenshot · `W` serve the capture gallery |
+| `i` | open a capture's screenshot · `W` serve gowitness's report · `w` open the web interface |
 | `Ctrl+P` | command palette — every action above, searchable by name |
 | `Esc` `q` | leave filter → clear it → back one level → quit · `Ctrl+Q`/`Ctrl+C` quit from anywhere |
 
@@ -393,6 +393,88 @@ gowitness records results under the port it probed, spelling the port out is
 also what lets a result be matched back to the service it came from. Captures
 are matched on `scheme://host:port` with the default port made explicit, so a
 capture made by hand under either spelling still links up.
+
+**The web interface.** gowitness's report server reads one database at a time;
+an engagement usually has several. `w` opens seek's own web interface instead:
+every capture from every database the viewer found, beside the hosts, ports and
+services they show. It runs inside the viewer's own process, on `127.0.0.1:7272` by default
+(`web_host` / `web_port`; anything but a loopback address is refused), reads the
+same model the terminal shows - a scan or capture that finishes while it is open
+appears on the next reload - and stops when the viewer quits. `w` opens the
+browser at the selected row: a host at its page, a service at that service
+across hosts, a port with exactly one capture at that capture. When `i` finds
+several captures for a row, its first choice opens them side by side in the
+gallery instead of one at a time in an image viewer.
+
+| Page | What it shows |
+| --- | --- |
+| `/` | every screenshot, with URL, status, title and the database it came from; failures say why. Sortable by address, host name, port, HTTP status, URL, title, time taken or database, either way; groupable by host, service, page title or look (screenshots that look alike, from gowitness's perceptual grouping) - one click or `b` switches; a card whose service was captured more than once links to all of them together |
+| `/hosts`, `/hosts/<address>` | hosts; one host's ports with each port's screenshots beside it |
+| `/services`, `/services/<proto>/<port>` | services by port number; one service with every host's screenshot |
+| `/captures/<id>` | the screenshot full size, headers, cookies, console log, technologies, TLS names |
+
+Every filter box takes the viewer's own filter syntax (`'8443`, `open:443`,
+`10.0.0.0/24`, `AND`/`OR`/`NOT`) and filters on the server as you type. Everything
+a page shows is also JSON under `/api/v1/` (`hosts`, `services`, `captures`), with
+`q`, `offset` and `limit`; `/api/openapi.json` describes it. Nothing is loaded
+from the internet, so it works on an isolated network, and browsing writes nothing.
+FastAPI, uvicorn and Jinja2 ship with seek; there is nothing extra to install.
+
+**Everything the terminal viewer does, in the browser.** Every overview is a
+tab at `/v/<tab>` - hosts, services, statistics, the three groupings, names and
+scans - with the same columns, order, filter syntax and drill-down, and the
+selected row's record beside the list, rendered from the very same record the
+terminal shows. Links in a record open nmap's own text for that host or port;
+`←`/`→` step to the other scans of it. Marks, export (every recipe, field and
+format, downloaded or copied), new scans (preset, scope, editable command, the
+same review and `sudo -n` rule) and gowitness captures all work from the
+browser, and the Scans tab streams a running scan's log as nmap writes it.
+
+Everything is linked: a host leads to its ports and their state, a port to its
+full record - scripts, vulnerabilities, names, each scan's own text - and a
+screenshot is shown as a thumbnail wherever it is named, in a list row or beside
+the line of a record, opening its capture page, which leads back to the host and
+port it shows.
+
+**Searching.** The box in the header (`Ctrl+K`) searches everything at once -
+hosts, services, names and screenshots - and lists the best matches grouped as
+you type; `↓`/`Enter` opens one. Every list has its own filter with the same
+syntax, and under each the query is said back in words, so you can see how it
+was read. The `?` beside any search box opens the syntax with examples to click:
+
+| Type | Finds |
+| --- | --- |
+| `nginx`, `synology login` | anything mentioning the words - including screenshot titles, URLs, technologies and status |
+| `10.10.10.1` / `=10.10.10.1` / `10.10.10.0/24` | addresses beginning with it / that host alone / a range |
+| `:443`, `443/tcp`, `53/udp` | a port with that number, in any state; `open:443`, `closed:22` ask for the state |
+| `10.10.10.10:8080` | that host with that port |
+| `service:http AND NOT product:nginx` | structured terms, `AND`/`OR`/`NOT`, `( )` |
+| `'exact`, `^start`, `end$`, `!not` | text as written, anchored, or excluded |
+
+Rows containing your words come first and alone; rows that only contain the
+letters, scattered, are counted as "looser" - add `~` to list them too. The
+terminal filter follows exactly the same rules.
+
+The terminal and the browser share one session: a scan started in either shows
+in both, a mark made in either is a mark in both, and quitting the terminal asks
+about a scan the browser started. Each keeps its own tab, filter, sort and
+cursor - the browser keeps them in the URL, so its back button returns to the
+level you left with its filter and row, and two windows are independent.
+
+The keys are the terminal's: `j`/`k` and the arrows move the list, `h`/`l` move
+through the record, `Enter` opens, `Esc` backs out, `/` filters, `1`-`9` sort,
+`v`/`V` switch tabs, `m`/`M` mark, `x` exports, `n` scans, `c` cancels, `p`
+freezes the log, `d` widens the record, `?` lists them all.
+
+`seek nmap serve PATHS…` (or `seek nmap --serve`) runs the same session and
+web interface without the terminal viewer - on a box with no terminal to spare,
+or for a browser on a second screen. `--open` opens the browser once it
+listens; Ctrl+C cancels any scan or capture still running, says which, and
+stops. A directory that happens to be called `serve` is named `./serve`.
+
+State-changing requests are accepted only from the interface's own pages, so a
+page on another site cannot drive it through your browser. There are no
+accounts: it listens on loopback only.
 
 **Export** produces the lists you feed to the next command, from whatever the
 filter has narrowed to: host addresses, open ports comma-separated (the form

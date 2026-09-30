@@ -1,0 +1,8 @@
+{% if understood %}<p class="understood">Showing screenshots with: {{ understood | join(" · ") }}{% if page.loose %} · <a class="loose" href="?{{ dict(keep, q=q ~ " ~") | urlencode }}">+{{ page.loose }} looser - show them</a>{% endif %}</p>{% endif %}
+{% from "_macros.html" import shot_card, more %}
+{% if page.items %}
+<div class="grid">{% for c in page.items %}{{ shot_card(c) }}{% endfor %}</div>
+{% else %}
+<p class="empty">{% if q %}nothing matches “{{ q }}”{% else %}no captures found - run one from the viewer's export dialog, or open the viewer on a directory that holds a gowitness database{% endif %}</p>
+{% endif %}
+{{ more(page, keep) }}

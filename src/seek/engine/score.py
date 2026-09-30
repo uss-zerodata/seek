@@ -160,9 +160,14 @@ def _term_score(
         if hay != needle:
             return None
         return (_score_positions(text, list(range(len(text)))) + 40, list(range(len(text))))
-    # EXACT and FUZZY both handled by the scorer proper.
     if not term.text:
         return (0, [])
+    # An exact term is a substring or nothing. The scorer below falls back to a
+    # subsequence match when the substring is absent, which made `'8080` match
+    # "80 … 80" - right for a fuzzy term, wrong for this one.
+    if term.type is TermType.EXACT and needle not in hay:
+        return None
+    # EXACT and FUZZY are both scored by the scorer proper.
     return _score(needle, text, hay)
 
 
