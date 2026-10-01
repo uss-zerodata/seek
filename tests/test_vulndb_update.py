@@ -31,12 +31,13 @@ def test_first_update_fills_every_source(tmp_path, feeds):
     with fx.serve(feeds) as urls:
         results = {r.source: r for r in _run(db, urls)}
     assert not any(r.error for r in results.values()), results
-    assert results["nvd"].records == 8
+    assert results["nvd"].records == 11
     assert results["osv"].records == 2, "left-pad is not a tracked package"
+    assert results["cpe"].records == 30, "deprecated names and hardware are skipped"
     assert results["eol"].notes == [f"endoflife.date does not know '{fx.UNKNOWN_SLUG}'"]
     s = store.Store(db)
     counts = s.counts()
-    assert counts["cve"] == 7, "the rejected CVE is not stored"
+    assert counts["cve"] == 10, "the rejected CVE is not stored"
     assert counts["osv"] == 2
     assert s.updated_at() == NOW
 
@@ -110,7 +111,7 @@ def test_cancel_rolls_back(tmp_path, feeds):
     with fx.serve(feeds) as urls:
         results = _run(db, urls, progress=progress, cancel=cancel)
     assert results[-1].error == "cancelled"
-    assert [r.source for r in results] == ["eol", "osv", "nvd"], "the small ones went first"
+    assert [r.source for r in results] == ["eol", "cpe", "osv", "nvd"], "small ones first"
     assert store.Store(db).counts()["eol"] > 0, "and are kept when NVD is cancelled"
     assert store.Store(db).counts()["cve"] == 0
 
@@ -123,7 +124,7 @@ def test_requests_are_exactly_the_fixed_url_set(tmp_path, feeds):
         _run(db, urls, fetcher=fetch)
         allowed = {urls.nvd_meta(y) for y in range(2002, 2027)} | \
                   {urls.nvd_year(y) for y in range(2002, 2027)} | \
-                  {urls.osv_npm(), urls.eol_all()} | \
+                  {urls.osv_npm(), urls.eol_all(), urls.cpe_meta(), urls.cpe_dictionary()} | \
                   {urls.eol_product(s) for s in eol.SLUGS.values()}
     assert set(fetch.requested) <= allowed, set(fetch.requested) - allowed
 
@@ -163,7 +164,7 @@ def test_update_then_status(tmp_path, feeds):
     out = io.StringIO()
     with fx.serve(feeds) as urls:
         assert commands.run_update(config, out, urls=urls) == 0
-    assert "nvd: 8 records" in out.getvalue()
+    assert "nvd: 11 records" in out.getvalue()
     assert f"endoflife.date does not know '{fx.UNKNOWN_SLUG}'" in out.getvalue()
     out = io.StringIO()
     assert commands.status(config, out) == 0
@@ -191,3 +192,13 @@ def test_every_slug_is_one_endoflife_date_knows():
     recorded = Path(__file__).parent / "fixtures" / "eol-all.json"
     known = set(json.loads(recorded.read_text()))
     assert set(eol.SLUGS.values()) <= known, set(eol.SLUGS.values()) - known
+
+
+def test_the_dictionary_lists_releases_with_the_update_joined(tmp_path, feeds):
+    db = tmp_path / "db.sqlite3"
+    with fx.serve(feeds) as urls:
+        _run(db, urls, which=["cpe"])
+        [again] = _run(db, urls, which=["cpe"])
+    assert again.skipped, "an unchanged dictionary is not downloaded twice"
+    releases = store.Store(db).releases("python", "python")
+    assert "3.8.20" in releases and "3.8.99" not in releases

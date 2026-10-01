@@ -439,6 +439,10 @@ class InventoryFinding(BaseModel):
     url: str | None = None
     summary: str | None = None
     undecided: bool = False
+    tested: bool = False
+    state: str | None = None
+    releases_known: int | None = None
+    releases_affected: int | None = None
 
 
 class InventoryEntry(BaseModel):
@@ -498,6 +502,11 @@ class FindingOut(BaseModel):
     summary: str | None = None
     url: str | None = None
     sources: list[str] = []
+    tested: bool = False             # nmap ran a check and reported it
+    state: str | None = None
+    likely: bool = False             # a candidate for a version family, not a finding
+    releases_known: int | None = None
+    releases_affected: int | None = None
     product: str | None = None
     version: str | None = None
     support: str | None = None

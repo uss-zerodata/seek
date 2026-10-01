@@ -42,6 +42,8 @@ create table if not exists osv_range (
     exact text);
 create index if not exists osv_range_pkg on osv_range (package);
 create index if not exists osv_range_id on osv_range (osv_id);
+create table if not exists rel (vendor text, product text, version text);
+create index if not exists rel_vp on rel (vendor, product);
 create table if not exists eol (
     slug text, cycle text, released text, eol text, latest text, latest_date text,
     lts text, primary key (slug, cycle));
@@ -178,7 +180,7 @@ class Store:
 
     def counts(self) -> dict[str, int]:
         return {table: (self._rows(f"select count(*) from {table}") or [(0,)])[0][0]
-                for table in ("cve", "osv", "eol")}
+                for table in ("cve", "osv", "eol", "rel")}
 
     # --- lookups ----------------------------------------------------------------
 
@@ -219,6 +221,13 @@ class Store:
                 aliases = tuple(a for a in (r[1] or "").split(",") if a)
                 out[r[0]] = OsvRecord(r[0], aliases, r[2] or "", r[3] or "", r[4], r[5] or "")
         return out
+
+    def releases(self, vendor: str, product: str) -> list[str]:
+        """Every version NVD's CPE dictionary knows for a product - what a
+        version family (`3.8`) is expanded into to see how much of it a range
+        covers. The CPE `update` field is already joined on (`8.9p1`)."""
+        return [r[0] for r in self._rows(
+            "select version from rel where vendor = ? and product = ?", (vendor, product))]
 
     def cycles(self, slug: str) -> list[Cycle]:
         return [Cycle(*r) for r in self._rows(

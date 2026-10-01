@@ -654,7 +654,8 @@ def vulns_cell(a: vmatch.Assessment | None, versioned: bool, missing: bool) -> s
     if not versioned:
         return f"? · {a.product_cves}" if a.product_cves else "?"
     text = str(len(a.findings))
-    return text + (f" +{len(a.undecided)}?" if a.undecided else "")
+    likely = sum(1 for f in a.undecided if f.known)
+    return text + (f" +{likely} likely" if likely else "")
 
 
 def max_cell(a: vmatch.Assessment | None) -> str:
@@ -723,19 +724,31 @@ def inventory_view(session) -> View:
     )
 
 
-FINDINGS_COLUMNS = ("Finding", "Severity", "Score", "Product", "Version", "Hosts", "Svcs",
-                    "Sources", "Support")
+FINDINGS_COLUMNS = ("Finding", "Basis", "Severity", "Score", "Product", "Version", "Hosts",
+                    "Svcs", "Sources", "Support")
+
+
+def basis(f: vmatch.Finding) -> tuple[str, float]:
+    """How a finding was arrived at, in words and as a sort weight: nmap ran
+    a test (3), the version is in the range (2), or the version names a family
+    and this share of its known releases is affected (1 + share)."""
+    if f.tested:
+        return f"nmap: {f.state.lower() or 'reported'}", 3.0
+    if f.undecided and f.known:
+        return f"likely {f.covered}/{f.known}", 1.0 + (f.likelihood or 0.0)
+    return "version", 2.0
 
 
 def _affected_row(a: vmatch.Affected, assessment: vmatch.Assessment | None) -> Row:
     f = a.finding
     hosts = a.hosts
     support = support_cell(assessment, False) if a.entry is not None else ABSENT
+    said, weight = basis(f)
     words = [f.id, f.severity.lower(), a.product, a.version or "", *f.sources,
-             "undecided" if f.undecided else "", f.summary,
-             *lookup_words(assessment)[:3]]
+             "likely" if f.undecided else "", "tested confirmed" if f.tested else "",
+             f.summary, *lookup_words(assessment)[:3]]
     return Row(
-        cells=(f.id, f.severity.lower() or ABSENT,
+        cells=(f.id, said, f.severity.lower() or ABSENT,
                f"{f.score:.1f}" if f.score is not None else ABSENT,
                a.product or ABSENT, (a.version or ABSENT) if a.entry is not None else ABSENT,
                str(len(hosts)), str(a.service_count), ", ".join(f.sources), support),
@@ -743,7 +756,8 @@ def _affected_row(a: vmatch.Affected, assessment: vmatch.Assessment | None) -> R
         target=a,
         records=tuple(Record(h, s) for h, s, _c in a.places),
         addresses=tuple(h.address for h in hosts),
-        sort_key=(f.id, f.rank[0], f.score or 0.0, a.product.casefold(),
+        sort_key=(f.id, (weight, f.rank[0], f.score or 0.0), f.rank[0], f.score or 0.0,
+                  a.product.casefold(),
                   version_key(a.version), len(hosts), a.service_count, f.sources,
                   support),
     )
@@ -761,7 +775,7 @@ def findings_view(session) -> View:
 
     return View(
         title="Findings", columns=FINDINGS_COLUMNS, build=build, kind="findings",
-        tab="findings", reports=True, default_sort=(2, True),
+        tab="findings", reports=True, default_sort=(1, True),
         stamp=lambda: (session.shots.generation, session.vulndb().generation),
     )
 

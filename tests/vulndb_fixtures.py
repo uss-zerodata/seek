@@ -11,6 +11,7 @@ import hashlib
 import http.server
 import io
 import json
+import tarfile
 import threading
 import zipfile
 from contextlib import contextmanager
@@ -75,6 +76,18 @@ def nvd_items(year: int) -> list[dict]:
         _cve("CVE-2099-0007", [{"operator": "OR", "cpeMatch": [_match(
             "cpe:2.3:a:jquery:jquery:*:*:*:*:*:*:*:*", versionStartIncluding="1.2",
             versionEndExcluding="3.5.0")]}], score=6.1, severity="MEDIUM"),
+        # Python, for a version family (`3.8` from a Server header):
+        # every known 3.8.x release is in this range ...
+        _cve("CVE-2099-0009", [{"operator": "OR", "cpeMatch": [_match(
+            "cpe:2.3:a:python:python:*:*:*:*:*:*:*:*", versionStartIncluding="3.8.0",
+            versionEndExcluding="3.8.21")]}], score=8.8),
+        # ... 5 of the 21 are in this one ...
+        _cve("CVE-2099-0010", [{"operator": "OR", "cpeMatch": [_match(
+            "cpe:2.3:a:python:python:*:*:*:*:*:*:*:*", versionStartIncluding="3.8.0",
+            versionEndExcluding="3.8.5")]}], score=9.1, severity="CRITICAL"),
+        # ... and none of them are in this one.
+        _cve("CVE-2099-0011", [{"operator": "OR", "cpeMatch": [_match(
+            "cpe:2.3:a:python:python:3.8.99:*:*:*:*:*:*:*")]}]),
         # Samba, to check a scan-reported id meets the database's
         _cve("CVE-2099-0008", [{"operator": "OR", "cpeMatch": [_match(
             "cpe:2.3:a:samba:samba:*:*:*:*:*:*:*:*", versionEndExcluding="4.6.4")]}]),
@@ -119,6 +132,14 @@ EOL = {
         {"cycle": "9", "releaseDate": "2018-01-18", "eol": "2026-12-01", "latest": "9.0.96"},
     ],
 }
+# Releases NVD's CPE dictionary knows - what a version family is expanded into.
+RELEASES = {
+    # with the pre-releases NVD lists too, which a family must leave out
+    ("python", "python"): [f"3.8.{i}" for i in range(0, 21)] + ["3.8.0a1", "3.8.0rc1",
+                                                                 "3.9.0", "3.9.1"],
+    ("f5", "nginx"): ["1.16.0", "1.16.1", "1.20.0", "1.20.1", "1.24.0"],
+}
+
 # One slug endoflife.date does not list, to prove the update says so.
 UNKNOWN_SLUG = "mssqlserver"
 
@@ -138,6 +159,24 @@ def build(root: Path, years=range(2002, 2027), osv=OSV) -> Path:
         sha = hashlib.sha256(gzip.decompress(data)).hexdigest().upper()
         (root / "nvd" / f"nvdcve-2.0-{name}.meta").write_text(
             f"lastModifiedDate:2099-01-02T00:00:00\r\nsize:{len(data)}\r\nsha256:{sha}\r\n")
+    (root / "cpe").mkdir(parents=True, exist_ok=True)
+    products = [{"cpe": {"deprecated": False,
+                         "cpeName": f"cpe:2.3:a:{v}:{p}:{ver}:*:*:*:*:*:*:*"}}
+                for (v, p), versions in RELEASES.items() for ver in versions]
+    products.append({"cpe": {"deprecated": True,
+                             "cpeName": "cpe:2.3:a:python:python:3.8.99:*:*:*:*:*:*:*"}})
+    products.append({"cpe": {"deprecated": False,
+                             "cpeName": "cpe:2.3:h:example:router:1.0:*:*:*:*:*:*:*"}})
+    chunk = json.dumps({"format": "NVD_CPE", "version": "2.0", "products": products}).encode()
+    tar_bytes = io.BytesIO()
+    with tarfile.open(fileobj=tar_bytes, mode="w:gz") as tar:
+        info = tarfile.TarInfo("nvdcpe-2.0-chunks/nvdcpe-2.0-chunk-00001.json")
+        info.size = len(chunk)
+        tar.addfile(info, io.BytesIO(chunk))
+    (root / "cpe" / "nvdcpe-2.0.tar.gz").write_bytes(tar_bytes.getvalue())
+    (root / "cpe" / "nvdcpe-2.0.meta").write_text(
+        f"gzSize:{len(tar_bytes.getvalue())}\r\n"
+        f"sha256:{hashlib.sha256(chunk).hexdigest().upper()}\r\n")
     (root / "osv" / "npm").mkdir(parents=True, exist_ok=True)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
@@ -175,7 +214,8 @@ def serve(root: Path):
     thread.start()
     base = f"http://127.0.0.1:{server.server_address[1]}"
     try:
-        yield Urls(nvd=f"{base}/nvd", osv=f"{base}/osv", eol=f"{base}/eol")
+        yield Urls(nvd=f"{base}/nvd", cpe=f"{base}/cpe", osv=f"{base}/osv",
+                   eol=f"{base}/eol")
     finally:
         server.shutdown()
         server.server_close()

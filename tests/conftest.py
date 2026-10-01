@@ -53,3 +53,21 @@ def _private_state_dir(tmp_path_factory, monkeypatch):
     user's own - above all not a real vulnerability database, whose contents
     would make lookups depend on the machine the tests ran on."""
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path_factory.mktemp("state")))
+
+
+@pytest.fixture(autouse=True)
+def _no_internet(monkeypatch):
+    """No test reaches past loopback. A source added to the update without a
+    fixture would otherwise download the real feed - which is how this guard
+    came to exist."""
+    import socket
+
+    real = socket.create_connection
+
+    def loopback_only(address, *args, **kwargs):
+        host = address[0]
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            raise AssertionError(f"a test tried to connect to {host}")
+        return real(address, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "create_connection", loopback_only)

@@ -81,7 +81,10 @@ def findings(sess=Depends(session)):
         support = lookup.of_entry(a.entry).support.status if a.entry is not None else None
         out.append(s.FindingOut(
             id=f.id, severity=f.severity or None, score=f.score, summary=f.summary or None,
-            url=f.url or None, sources=list(f.sources), product=a.product or None,
+            url=f.url or None, sources=list(f.sources), tested=f.tested,
+            state=f.state or None, likely=f.undecided,
+            releases_known=f.known or None, releases_affected=f.covered or None,
+            product=a.product or None,
             version=a.version, support=support,
             places=[s.FindingPlace(address=h.address,
                                    protocol=svc.protocol if svc is not None else None,

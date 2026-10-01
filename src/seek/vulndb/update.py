@@ -36,9 +36,9 @@ Progress = Callable[[str, int, int, str], None]     # source, done, total, unit
 USER_AGENT = "seek-vulndb (+https://github.com/uss-zerodata)"
 # Smallest first: endoflife.date is seconds, NVD is minutes. An update that is
 # interrupted, cancelled or fails part-way still leaves the quick answers in.
-SOURCES = ("eol", "osv", "nvd")
+SOURCES = ("eol", "cpe", "osv", "nvd")
 # Stated before the first update is confirmed; replaced by what was measured.
-FIRST_DOWNLOAD_ESTIMATE_MB = 600
+FIRST_DOWNLOAD_ESTIMATE_MB = 700
 
 
 class Cancelled(Exception):
@@ -173,6 +173,56 @@ def update_nvd(con, fetch: Fetcher, urls: sources.Urls, progress: Progress,
     return result
 
 
+# --- the CPE dictionary ------------------------------------------------------------
+
+
+def update_cpe(con, fetch: Fetcher, urls: sources.Urls, progress: Progress,
+               full: bool, tmp_dir: Path) -> Result:
+    """Every released version NVD knows, per product - the list a version
+    family is expanded against. One tar of JSON chunks, streamed; skipped when
+    its `.meta` hash is unchanged."""
+    import tarfile
+
+    result = Result("cpe")
+    meta = sources.parse_nvd_meta(fetch.get(urls.cpe_meta()).decode("utf-8", "replace"))
+    sha = meta.get("sha256", "")
+    if sha and not full and _meta_get(con, "cpe.sha") == sha:
+        result.skipped = True
+        return result
+    total = int(meta.get("gzSize") or 0)
+    with tempfile.TemporaryFile(dir=tmp_dir) as archive:
+        with fetch.open(urls.cpe_dictionary()) as response:
+            progress("cpe", 0, total, "bytes")
+            fetch._read(response, archive)
+        result.bytes = archive.tell()
+        archive.seek(0)
+        with _Tx(con), tarfile.open(fileobj=archive, mode="r:gz") as tar:
+            con.execute("delete from rel")
+            batch: list[tuple[str, str, str]] = []
+            for member in tar:
+                if not member.isfile() or not member.name.endswith(".json"):
+                    continue
+                stream = tar.extractfile(member)
+                if stream is None:
+                    continue
+                text = io.TextIOWrapper(stream, encoding="utf-8")
+                for item in sources.iter_json_array(text, "products"):
+                    row = sources.parse_cpe_name(item)
+                    if row is not None:
+                        batch.append(row)
+                    if len(batch) >= 50_000:
+                        con.executemany("insert into rel values (?, ?, ?)", batch)
+                        result.records += len(batch)
+                        batch.clear()
+                        if fetch.cancel is not None and fetch.cancel.is_set():
+                            raise Cancelled
+                        progress("cpe", result.records, 0, "releases")
+            con.executemany("insert into rel values (?, ?, ?)", batch)
+            result.records += len(batch)
+            _meta_set(con, "cpe.sha", sha)
+    return result
+
+
 # --- OSV ------------------------------------------------------------------------
 
 
@@ -275,6 +325,8 @@ def run(path: Path, progress: Progress | None = None, cancel: threading.Event | 
             try:
                 if source == "nvd":
                     r = update_nvd(con, fetch, urls, progress, full, today, now)
+                elif source == "cpe":
+                    r = update_cpe(con, fetch, urls, progress, full, path.parent)
                 elif source == "osv":
                     r = update_osv(con, fetch, urls, progress, full, path.parent)
                 elif source == "eol":

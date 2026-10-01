@@ -83,6 +83,12 @@ def compare(a: str, b: str) -> int | None:
     return _compare_segments(sa, sb)
 
 
+def is_prerelease(version: str) -> bool:
+    """`3.8.0rc1`, `1.0b2`, `2.0.0-alpha` - a release nobody runs in production."""
+    parts = segments(version)
+    return parts is not None and any(isinstance(p, str) and p in _PRE for p in parts)
+
+
 def less_precise(version: str, bound: str) -> bool:
     """Whether `version` names a whole family that `bound` is inside of: `4`
     against `4.4.1`, `7.4` against `7.4.33`. Such a version cannot be placed

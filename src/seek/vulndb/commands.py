@@ -33,7 +33,7 @@ def status(config: Config, out: TextIO) -> int:
     counts = s.counts()
     out.write(f"{path}\n")
     out.write(f"  {_age(s.age_days())}, stale after {config.vulndb_stale_days} d\n")
-    for source, table in (("nvd", "cve"), ("osv", "osv"), ("eol", "eol")):
+    for source, table in (("eol", "eol"), ("cpe", "rel"), ("osv", "osv"), ("nvd", "cve")):
         when = s.meta(f"{source}.updated_at")
         stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(float(when))) if when else "never"
         out.write(f"  {source:<4} {counts[table]:>8} records   updated {stamp}\n")

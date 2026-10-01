@@ -159,8 +159,17 @@ sorted worst first. The **Findings** tab lists every CVE or advisory that
 affects something in the engagement, and `Enter` lists the services it affects.
 Filter by `eol`, `behind`, `unsupported`, `critical`, `high`, or a CVE id.
 
-The data is public and local: NVD's CVE feeds, OSV advisories for client-side
-libraries (jQuery, Lodash, Vue.js, …) and endoflife.date release cycles, stored
+What nmap itself *tested* (the NSE `vuln` scripts, host scripts such as
+`smb-vuln-ms17-010` included) is always shown first, as **Confirmed by nmap**,
+whatever the database says. When a version names only a family — `Python/3.8`
+from a header — each CVE is checked against every 3.8.x release NVD knows: if
+all are affected it is a finding, if none it is dropped, and otherwise it is a
+**most likely** candidate with its share (`20/21 known 3.8.x`), so the obvious
+ones to verify come first.
+
+The data is public and local: NVD's CVE feeds and CPE dictionary (every known
+release per product), OSV advisories for client-side libraries (jQuery,
+Lodash, Vue.js, …) and endoflife.date release cycles, stored
 in one SQLite file in the state directory. Only an explicit update touches the
 network, and it never sends anything about the engagement — every request is a
 whole public feed:

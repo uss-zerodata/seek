@@ -718,32 +718,59 @@ def _severity_summary(findings: list[vmatch.Finding]) -> str:
     return ", ".join(f"{counts[k]} {k}" for k in order if k in counts)
 
 
+_CANDIDATES_SHOWN = 5
+
+
+def _family(c: inv_mod.Component) -> str:
+    return f"{c.version}.x" if c.version else "this version"
+
+
 def _known_block(assessed: list[tuple[inv_mod.Component, vmatch.Assessment]],
                  loose: list[vmatch.Finding], lookup: vmatch.Lookup,
                  full: bool = False) -> list[RenderableType]:
-    """A service's findings: a one-line answer first (how many, how bad), then
-    the most severe - all of them only at the reader's depth. Ranges that
-    could not be decided are a count, not a list: they are not findings."""
+    """A service's (or a host's) vulnerabilities, in order of how much they
+    have been checked:
+
+    1. what nmap *tested* and reported - always shown, all of them;
+    2. what the version is known to be affected by - a one-line answer (how
+       many, how bad), then the most severe, all of them at the reader's depth;
+    3. for a version that names a family (`3.8`), the most likely candidates:
+       ranked by how many of the family's known releases are affected.
+    """
+    tested: list[tuple[vmatch.Finding, str]] = []
     rows: list[tuple[vmatch.Finding, str]] = []
-    undecided = 0
+    likely: list[tuple[vmatch.Finding, inv_mod.Component]] = []
+    unmeasured = 0
     unknown: list[tuple[inv_mod.Component, int]] = []
     skipped: list[tuple[inv_mod.Component, str]] = []
     for c, a in assessed:
-        rows += [(f, c.label()) for f in a.findings]
-        undecided += len(a.undecided)
+        for f in a.findings:
+            (tested if f.tested else rows).append((f, c.label()))
+        likely += [(f, c) for f in a.undecided if f.known]
+        unmeasured += sum(1 for f in a.undecided if not f.known)
         if not c.versioned and a.product_cves:
             unknown.append((c, a.product_cves))
         if a.not_matched:
             skipped.append((c, a.not_matched))
-    rows += [(f, "") for f in loose]
-    if lookup.db_missing and not rows:
+    for f in loose:
+        (tested if f.tested else rows).append((f, ""))
+    if lookup.db_missing and not rows and not tested:
         return []
-    if not rows and not undecided and not unknown and not skipped:
+    if not (tested or rows or likely or unmeasured or unknown or skipped):
         return []
-    rows.sort(key=lambda r: (-r[0].rank[0], -r[0].rank[1], r[0].id))
     parts: list[RenderableType] = [Text("")]
-    parts.append(_section("Known vulnerabilities", len(rows),
-                          "bold red" if rows else _SECTION))
+    if tested:
+        parts.append(_section("Confirmed by nmap", len(tested), "bold red"))
+        for f, label in tested:
+            line = _finding_line(f, product=label)
+            line.text.append(f"   {f.state}", style="bold red")
+            parts.append(line)
+    rows.sort(key=lambda r: (-r[0].rank[0], -r[0].rank[1], r[0].id))
+    if rows or likely or unmeasured or unknown or skipped:
+        if tested:
+            parts.append(Text(""))
+        parts.append(_section("Known vulnerabilities", len(rows),
+                              "bold red" if rows else _SECTION))
     if rows:
         parts.append(Text(f"    {_severity_summary([f for f, _l in rows])}", style="bold"))
         parts.append(Text(f"    {_CAVEAT}", style=_KEY))
@@ -753,9 +780,21 @@ def _known_block(assessed: list[tuple[inv_mod.Component, vmatch.Assessment]],
     if len(shown) < len(rows):
         parts.append(Text(f"    … and {len(rows) - len(shown)} more, less severe · d lists "
                           "them all, the Findings tab by CVE", style="dim"))
-    if undecided:
-        parts.append(Text(f"    {undecided} more could not be decided - the version is not "
-                          "precise enough to place in their ranges", style=_KEY))
+    if likely:
+        likely.sort(key=lambda r: (-(r[0].likelihood or 0), -r[0].rank[0], -r[0].rank[1],
+                                   r[0].id))
+        parts.append(Text("    most likely - the version names a family; share of its "
+                          "known releases affected:", style="bold"))
+        for f, c in (likely if full else likely[:_CANDIDATES_SHOWN]):
+            line = _finding_line(f, 6, c.label())
+            line.text.append(f"   {f.covered}/{f.known} known {_family(c)}", style="yellow")
+            parts.append(line)
+        if not full and len(likely) > _CANDIDATES_SHOWN:
+            parts.append(Text(f"      … and {len(likely) - _CANDIDATES_SHOWN} less likely",
+                              style="dim"))
+    if unmeasured:
+        parts.append(Text(f"    {unmeasured} more could not be decided - NVD knows no "
+                          "releases to measure them against", style=_KEY))
     for c, n in unknown:
         parts.append(Text(f"    {c.product}: version unknown · {n} CVE(s) for this product "
                           "in some version - U scans for the version", style="yellow"))
@@ -808,6 +847,9 @@ def _host_software(host: Host, inventory: inv_mod.Inventory,
     per_service = [(svc, inventory.of_service(host, svc)) for svc in host.open_services]
     per_service = [(svc, comps) for svc, comps in per_service if comps]
     if not own and not per_service:
+        # Nothing recognised - but what nmap tested on the host still shows.
+        if lookup is not None and lookup.host_only(host.address):
+            parts.extend(_known_block([], lookup.host_only(host.address), lookup, full))
         return parts
     parts.append(Text(""))
     parts.append(_section("Software", len(own) + sum(len(c) for _s, c in per_service)))
@@ -830,8 +872,9 @@ def _host_software(host: Host, inventory: inv_mod.Inventory,
             if any(a.support.status == "eol" for a in found):
                 line.append("  end of life", style="bold red")
         parts.append(Line(line, to=(host, svc)))
-    if lookup is not None and own:
-        parts.extend(_known_block([(c, lookup.of(c)) for c in own], [], lookup, full))
+    if lookup is not None:
+        parts.extend(_known_block([(c, lookup.of(c)) for c in own],
+                                  lookup.host_only(host.address), lookup, full))
     return parts
 
 

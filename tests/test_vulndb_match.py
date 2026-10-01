@@ -214,3 +214,75 @@ def test_operating_systems_are_not_matched_against_cves(db):
     a = lk.of(linux)
     assert a.findings == [] and a.undecided == [] and not a.looked_up
     assert "fingerprint" in a.not_matched
+
+
+# --- version families: measured against the releases NVD knows ------------------------
+
+
+def test_a_family_every_release_of_which_is_affected_is_a_finding(db):
+    a = _one(db, _probed("Python", "3.8"))
+    assert "CVE-2099-0009" in ids(a)
+    finding = next(f for f in a.findings if f.id == "CVE-2099-0009")
+    assert not finding.undecided
+
+
+def test_a_partly_covered_family_is_a_measured_candidate(db):
+    a = _one(db, _probed("Python", "3.8"))
+    [candidate] = [f for f in a.undecided if f.id == "CVE-2099-0010"]
+    assert (candidate.covered, candidate.known) == (5, 21)
+    assert round(candidate.likelihood, 2) == 0.24
+    assert "CVE-2099-0010" not in ids(a), "a candidate is not a finding"
+
+
+def test_a_family_no_release_of_which_is_affected_is_dropped(db):
+    a = _one(db, _probed("Python", "3.8"))
+    assert "CVE-2099-0011" not in ids(a) + [f.id for f in a.undecided]
+
+
+def test_an_exact_version_is_not_expanded(db):
+    a = _one(db, _probed("Python", "3.8.3"))
+    assert {"CVE-2099-0009", "CVE-2099-0010"} <= set(ids(a))
+    assert a.undecided == []
+
+
+# --- what nmap tested ----------------------------------------------------------------
+
+
+def _vuln_script(sid, cve, state="VULNERABLE"):
+    from seek.nmap.models import ScriptResult
+    return ScriptResult(sid, f"{state}: {cve}", {cve: {"title": "t", "state": state,
+                                                      "ids": [f"CVE:{cve}"]}})
+
+
+def test_a_tested_finding_on_a_service_leads_and_merges(db):
+    svc = _probed("nginx", "1.16.1", scripts=[_vuln_script("http-vuln-test", "CVE-2099-0005",
+                                                           "LIKELY VULNERABLE")])
+    a = _one(db, svc)
+    lk, inv, host = _lookup(db, [svc])
+    tested = lk.service_only((host.address, "tcp", 80))
+    assert [(f.id, f.tested, f.state, f.sources) for f in tested] == [
+        ("CVE-2099-0005", True, "LIKELY VULNERABLE", ("http-vuln-test",))]
+    assert a.findings[0].id == "CVE-2099-0001", "the db's own order is kept for the product"
+
+
+def test_a_host_script_finding_is_kept_whatever_the_os(db):
+    from seek.nmap.models import OsMatch
+    lk, inv, host = _lookup(
+        db, [Service("tcp", 445, "open", name="microsoft-ds", method="table")],
+        os_matches=[OsMatch("Windows 7", 95, ["cpe:/o:microsoft:windows_7"])],
+        scripts=[_vuln_script("smb-vuln-ms17-010", "CVE-2017-0143")])
+    [f] = lk.host_only(host.address)
+    assert (f.id, f.tested, f.sources) == ("CVE-2017-0143", True, ("smb-vuln-ms17-010",))
+    rows = match.affected(lk, inv_mod.entries(inv, [host]), [host])
+    [row] = [r for r in rows if r.finding.id == "CVE-2017-0143"]
+    assert row.places == [(host, None, None)]
+
+
+def test_vulners_is_not_a_test(db):
+    from seek.nmap.models import ScriptResult
+    vulners = ScriptResult("vulners", "x", {"cpe:/a:samba:samba:4.6.2": [
+        {"id": "CVE-2099-0008", "cvss": "7.5", "type": "cve"}]})
+    a = _one(db, Service("tcp", 445, "open", product="Samba smbd", version="4.6.2",
+                         method="probed", scripts=[vulners]))
+    f = next(f for f in a.findings if f.id == "CVE-2099-0008")
+    assert not f.tested and f.sources == ("nvd", "vulners")

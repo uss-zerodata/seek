@@ -578,6 +578,13 @@ stdout, `cd`) cannot run while Textual owns the screen. They set
   `4` vs `4.4.1`). OS/device components (kind `o`/`h`) are never CVE-matched -
   on the real sample `linux_kernel:4` from OS detection produced over 4 000
   findings and made the viewer crawl. Sources update smallest first.
+  What a vulnerability script *tested* (everything but `vulners`, which is a
+  version lookup) is `Finding.tested`, sorts first, survives the OS exclusion,
+  and host scripts are filed under `match.host_key`. A version family is
+  expanded into NVD's known releases (`rel`, from the CPE dictionary,
+  pre-releases excluded): all covered = finding, none = nothing, some =
+  candidate with `covered/known`. Tests cannot leave loopback (`_no_internet`
+  in conftest) - a source added without a fixture once downloaded the real feed.
   An unversioned component gets no findings, only a count and the `U` hint.
   Database findings are per `Component` (shared across ports), scan-reported
   ones (`vulners`, NSE `vuln`) per service - `Lookup.of(c, where)` merges them.

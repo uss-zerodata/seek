@@ -164,3 +164,44 @@ async def test_the_pane_shows_the_worst_and_the_reader_all(db):
         full = _text(detail.render(svc, host, inventory=app.session.inventory(),
                                    lookup=lookup, full=True))
         assert full.count("CVE-2099-") == 25
+
+
+_TESTED_XML = """<?xml version="1.0"?>
+<nmaprun scanner="nmap" args="nmap -sV --script vuln" start="1757000900" version="7.94">
+<host><status state="up" reason="syn-ack"/><address addr="198.51.100.30" addrtype="ipv4"/>
+<ports><port protocol="tcp" portid="445"><state state="open" reason="syn-ack"/>
+<service name="microsoft-ds" method="table" conf="3"/></port>
+<port protocol="tcp" portid="8000"><state state="open" reason="syn-ack"/>
+<service name="http" product="SimpleHTTPServer" version="0.6" extrainfo="Python 3.8"
+ method="probed" conf="10"/>
+<script id="http-server-header" output="SimpleHTTP/0.6 Python/3.8">
+<elem>SimpleHTTP/0.6 Python/3.8</elem></script>
+</port></ports>
+<hostscript><script id="smb-vuln-ms17-010" output="VULNERABLE: SMBv1 RCE (ms17-010)">
+<table key="CVE-2017-0143"><elem key="title">SMBv1 RCE (ms17-010)</elem>
+<elem key="state">VULNERABLE</elem>
+<table key="ids"><elem>CVE:CVE-2017-0143</elem></table></table>
+</script></hostscript>
+</host></nmaprun>"""
+
+
+async def test_what_nmap_tested_leads_and_candidates_are_measured(db, tmp_path):
+    scan = tmp_path / "tested.xml"
+    scan.write_text(_TESTED_XML)
+    app = NmapApp(prepare(load([scan])), Config(vulndb_path=str(db)))
+    async with app.run_test(size=(200, 40)) as pilot:
+        await _tab(pilot, app, "findings")
+        cells = [(r.cells[0], r.cells[1]) for r in app._rows]
+        assert cells[0] == ("CVE-2017-0143", "nmap: vulnerable"), "tested first"
+        basis = dict(cells)
+        assert basis["CVE-2099-0009"] == "version", "every 3.8.x is affected: a finding"
+        assert basis["CVE-2099-0010"] == "likely 5/21"
+        host = app.scans.hosts[0]
+        from seek.tui.nmap import detail
+        shown = _text(detail.render(host, None, inventory=app.session.inventory(),
+                                    lookup=app.session.lookup()))
+        assert "Confirmed by nmap (1)" in shown and "CVE-2017-0143" in shown
+        svc = next(s for s in host.services if s.port == 8000)
+        shown = _text(detail.render(svc, host, inventory=app.session.inventory(),
+                                    lookup=app.session.lookup()))
+        assert "most likely" in shown and "5/21 known 3.8.x" in shown

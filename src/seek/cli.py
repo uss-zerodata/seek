@@ -239,7 +239,7 @@ app.add_typer(vulndb_app, name="vulndb")
 def vulndb_update(
     source: Annotated[
         list[str] | None,
-        typer.Option("--source", help="Only this source: nvd, osv or eol (repeatable)."),
+        typer.Option("--source", help="Only this source: eol, cpe, osv or nvd (repeatable)."),
     ] = None,
     full: Annotated[
         bool, typer.Option("--full", help="Download everything again, not just what changed.")

@@ -312,7 +312,10 @@ def _support(a) -> dict:
 def _finding(f) -> dict:
     return {"id": f.id, "sources": list(f.sources), "severity": f.severity or None,
             "score": f.score, "vector": f.vector or None, "url": f.url or None,
-            "summary": f.summary or None, "undecided": f.undecided}
+            "summary": f.summary or None, "undecided": f.undecided,
+            # Added within version 2: how it was arrived at.
+            "tested": f.tested, "state": f.state or None,
+            "releases_known": f.known or None, "releases_affected": f.covered or None}
 
 
 def _entry(host: Host, svc: Service | None, c: inv_mod.Component, lookup=None) -> dict:

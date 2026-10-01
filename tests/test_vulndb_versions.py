@@ -83,3 +83,11 @@ def test_a_version_family_is_never_inside_a_range_it_straddles():
     assert in_range("4", exact="4.4.1") is None
     assert in_range("4", end_excl="3.10") is False, "wholly past the range is still past"
     assert in_range("4", start_incl="5.0") is False
+
+
+@pytest.mark.parametrize(("version", "expected"), [
+    ("3.8.0rc1", True), ("3.8.0a1", True), ("1.0b2", True), ("2.0.0-alpha", True),
+    ("3.8.0", False), ("8.9p1", False), ("1.0.2k", False)])
+def test_prereleases(version, expected):
+    from seek.vulndb.versions import is_prerelease
+    assert is_prerelease(version) is expected

@@ -25,6 +25,7 @@ class Urls:
     """Every base the update talks to; tests point these at a local server."""
 
     nvd: str = "https://nvd.nist.gov/feeds/json/cve/2.0"
+    cpe: str = "https://nvd.nist.gov/feeds/json/cpe/2.0"
     osv: str = "https://osv-vulnerabilities.storage.googleapis.com"
     eol: str = "https://endoflife.date/api"
 
@@ -33,6 +34,12 @@ class Urls:
 
     def nvd_meta(self, year: int | str) -> str:
         return f"{self.nvd}/nvdcve-2.0-{year}.meta"
+
+    def cpe_dictionary(self) -> str:
+        return f"{self.cpe}/nvdcpe-2.0.tar.gz"
+
+    def cpe_meta(self) -> str:
+        return f"{self.cpe}/nvdcpe-2.0.meta"
 
     def osv_npm(self) -> str:
         return f"{self.osv}/npm/all.zip"
@@ -183,6 +190,27 @@ def parse_nvd_meta(text: str) -> dict[str, str]:
         if sep:
             out[key.strip()] = value.strip()
     return out
+
+
+# --- the CPE dictionary ------------------------------------------------------------
+
+
+def parse_cpe_name(item: dict) -> tuple[str, str, str] | None:
+    """(vendor, product, version) of one dictionary entry - a released version
+    of an application or an operating system. Hardware, deprecated names and
+    names without a concrete version (`-`, `*`) say nothing about releases."""
+    cpe = item.get("cpe") or item
+    if cpe.get("deprecated"):
+        return None
+    parts = _split_cpe23(cpe.get("cpeName") or "")
+    if len(parts) < 7 or parts[2] not in ("a", "o"):
+        return None
+    version, update = parts[5], parts[6]
+    if version in ("", "*", "-"):
+        return None
+    if update not in ("", "*", "-"):
+        version += update
+    return parts[3].lower(), parts[4].lower(), version
 
 
 # --- OSV ------------------------------------------------------------------------
