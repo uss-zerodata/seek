@@ -96,9 +96,13 @@ technology detections, split into name and version when detected as
 `Name:version`; the `Server`, `X-Powered-By`, `X-AspNet-Version` and
 `X-Generator` response headers; and the `<meta name="generator">` of the
 captured page. Header names SHALL be matched case-insensitively. A capture that
-failed SHALL contribute nothing. A capture whose URL belongs to no service in
-the model SHALL NOT be dropped silently: the inventory SHALL report how many
-captures it could not place.
+failed SHALL contribute nothing. When a capture's URL is not one the record
+lists for any service (nmap did not identify the port as a web service, so no
+URL is built for it), the capture SHALL be placed by its host and port: the
+host it names, by address or by any name the host is known by, and that host's
+open TCP port. A capture that still belongs to no service SHALL NOT be dropped
+silently: the Inventory tab SHALL say how many captures could not be placed and
+name them.
 
 #### Scenario: A versioned technology detection
 - **WHEN** a capture of a service detects `Nginx:1.16.1`
@@ -112,9 +116,13 @@ captures it could not place.
 - **WHEN** a capture was taken of `https://portal.example.test/` and that name belongs to a host's 443/tcp service
 - **THEN** its components are added to that service
 
-#### Scenario: An unplaced capture is counted
-- **WHEN** a capture's URL matches no service in the model
-- **THEN** the inventory states that one capture could not be placed
+#### Scenario: A web page on a port nmap did not call http
+- **WHEN** nmap reports port 8000 as `tcpwrapped` and a capture of `http://10.0.0.5:8000/app/` detects `jQuery:3.4.1`
+- **THEN** that service has a jQuery component at version 3.4.1
+
+#### Scenario: An unplaced capture is counted and named
+- **WHEN** a capture's URL matches no open port of any host in the model
+- **THEN** the Inventory tab says that one capture could not be placed, and names its URL
 
 ### Requirement: Observations of one product are reconciled, never discarded
 Observations that name the same product on the same service or host SHALL
@@ -125,7 +133,10 @@ gave any version, in this order: an nmap version probe, a script banner or
 header, a captured response header, a technology detection. Every observation
 SHALL remain part of the component with its source. When two sources give
 different versions of the same product, the component SHALL be marked
-conflicting and SHALL list each version with its source. A version that only
+conflicting and SHALL list each version with its source. Versions that come
+only from captures' technology detection and headers SHALL instead be separate
+components, one per version: the pages a port serves (the address, each virtual
+host) may each load their own copy of a library. A version that only
 refines another (`8.9` and `8.9p1`, `1.16` and `1.16.1`) SHALL NOT be a
 conflict, and the more specific one SHALL be shown.
 
@@ -144,6 +155,10 @@ conflict, and the more specific one SHALL be shown.
 #### Scenario: A refinement is not a conflict
 - **WHEN** one source reports PHP 7.4 and another PHP 7.4.33
 - **THEN** the component shows 7.4.33 and is not conflicting
+
+#### Scenario: Two versions of a library on one port
+- **WHEN** a capture of a port's address detects jQuery 2.1.3 and a capture of one of its virtual hosts detects jQuery 3.4.1
+- **THEN** the service has two jQuery components, 2.1.3 and 3.4.1, and neither is conflicting, because pages on one port may each load their own copy
 
 #### Scenario: Different products on one port stay apart
 - **WHEN** nmap reports Traefik on 443/tcp and a capture's `Server` header says nginx

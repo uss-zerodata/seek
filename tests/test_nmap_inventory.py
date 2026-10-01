@@ -351,3 +351,63 @@ def test_nmaps_proxmox_cpe_meets_the_detectors_name():
     from seek.nmap import cpe
     assert cpe.lookup("cpe:/a:proxmox:proxmox_virtual_environment:3.0").key == \
         cpe.product_key("Proxmox VE")
+
+
+# --- captures nmap's names do not lead to, and libraries in several versions --------
+
+
+def _captured(session, *captures):
+    from seek.gowitness.results import Capture
+    session.shots.add([Capture(url=url, technologies=list(techs)) for url, techs in captures])
+    return session.inventory()
+
+
+def test_a_capture_on_a_port_nmap_did_not_call_http_is_placed(session):
+    """Port 25 is `smtp` to nmap and has no http script - no URL is generated
+    for it - but gowitness found a page there."""
+    inv = _captured(session, ("http://198.51.100.10:25/app/", ["jQuery:3.4.1"]))
+    comps = _svc(inv, WEB, 25)
+    assert comps["jquery"].version == "3.4.1"
+
+
+def test_a_capture_by_any_known_name_is_placed(session):
+    inv = _captured(session, ("https://web.example.test:445", ["Bootstrap:4.6.0"]))
+    assert _svc(inv, WEB, 445)["bootstrap"].version == "4.6.0"
+
+
+def test_a_capture_of_a_closed_or_unknown_port_stays_unplaced(session):
+    inv = _captured(session, ("http://198.51.100.10:81", ["jQuery:3.4.1"]),
+                    ("http://nowhere.example.test", ["jQuery:3.4.1"]))
+    assert inv.unplaced == 3, "the fixture's own unplaced capture, and these two"
+    assert "http://198.51.100.10:81" in session.unplaced_captures
+
+
+def test_two_library_versions_on_one_port_are_two_components(session):
+    inv = _captured(session, ("http://portal.example.test", ["jQuery:3.4.1"]),
+                    ("http://198.51.100.20", ["jQuery:2.1.3", "jQuery"]))
+    comps = inv.by_service[(PORTAL, "tcp", 80)]
+    jquery = sorted((c.version, c.conflicting) for c in comps if c.key == "jquery")
+    assert jquery == [("2.1.3", False), ("3.4.1", False)]
+
+
+def test_versions_that_refine_each_other_stay_one_component():
+    obs = [Observation("jQuery", "3.4", "gowitness", "a", inv_mod.DETECTED),
+           Observation("jQuery", "3.4.1", "gowitness", "b", inv_mod.DETECTED)]
+    [group] = inv_mod.split_detected(obs)
+    assert reconcile("jquery", group).version == "3.4.1"
+
+
+def test_nmap_against_a_capture_is_still_a_conflict():
+    obs = [Observation("nginx", "1.16.1", "nmap", "", inv_mod.PROBE),
+           Observation("nginx", "1.24.0", "gowitness", "", inv_mod.HEADER)]
+    [group] = inv_mod.split_detected(obs)
+    assert reconcile("nginx", group).conflicting
+
+
+def test_the_inventory_tab_names_unplaced_captures(session):
+    from seek.tui.nmap import views as vdefs
+    _captured(session, ("http://nowhere.example.test", ["jQuery:3.4.1"]))
+    view = vdefs.inventory_view(session)
+    view.rows(session.scans)
+    assert view.subtitle.startswith("2 capture(s) match no open port")
+    assert "http://nowhere.example.test" in view.subtitle

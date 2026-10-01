@@ -60,3 +60,10 @@
 - [x] 8.2 Add the inventory to `AGENTS.md` (a Layout entry and an invariant: session projection, alias-table-only CPEs, observations never discarded)
 - [x] 8.3 Update `README.md` with the Inventory tab, the export and the `U` action
 - [x] 8.4 `uv run ruff check`, `uv run pytest -q`, `openspec validate service-inventory --strict`
+
+## 9. Captures that went missing (after real use)
+
+- [x] 9.1 Place a capture by host and port when its URL is not one the record builds (nmap named the port something other than http) - any address or name the host is known by, its open TCP port
+- [x] 9.2 Name the captures that still match nothing, in the Inventory tab's subtitle (`Session.unplaced_captures`)
+- [x] 9.3 Versions only captures detected are separate components per version (`inventory.split_detected`); refinements stay together; nmap against a capture is still a conflict
+- [x] 9.4 Tests: jQuery 3.4.1 on an `smtp`-named port, by host name, closed/unknown stays unplaced, 2.1.3 + 3.4.1 on one port, the subtitle

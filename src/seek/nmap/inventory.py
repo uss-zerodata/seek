@@ -466,6 +466,40 @@ def _key(o: Observation) -> str:
     return entry.key if entry else cpe_mod.normal(o.product)
 
 
+def _compatible(a: str, b: str) -> bool:
+    return refines(a, b) or refines(b, a)
+
+
+def split_detected(observations: list[Observation]) -> list[list[Observation]]:
+    """Observations of one product on one port, as the components they are.
+
+    One port can serve several pages - the address and each virtual host, an
+    application and its admin interface - and each can load its own copy of a
+    library: jQuery 2.1.3 on one, 3.4.1 on another. When every version comes
+    from gowitness's captures, different versions are different components,
+    not a conflict; a conflict is two sources disagreeing about *one* piece of
+    software (nmap's probe against a banner). Versions that refine each other
+    (`3.4` / `3.4.1`) stay together, and an unversioned detection joins the
+    most trusted group rather than becoming a component of its own.
+    """
+    versioned = [o for o in observations if o.version]
+    if len({o.version for o in versioned}) < 2 or any(o.source != "gowitness"
+                                                       for o in versioned):
+        return [observations]
+    groups: list[list[Observation]] = []
+    for o in sorted(versioned, key=lambda o: o.rank):
+        home = next((g for g in groups
+                     if all(_compatible(o.version, m.version) for m in g)), None)
+        if home is None:
+            groups.append([o])
+        else:
+            home.append(o)
+    if len(groups) == 1:
+        return [observations]
+    groups[0] += [o for o in observations if not o.version]
+    return groups
+
+
 def _components(observations: list[Observation],
                 memo: dict[tuple, list[Component]] | None = None) -> list[Component]:
     """The components of one place. With `memo`, places that saw exactly the
@@ -480,7 +514,7 @@ def _components(observations: list[Observation],
     groups: dict[str, list[Observation]] = {}
     for o in observations:
         groups.setdefault(_key(o), []).append(o)
-    comps = [reconcile(k, obs) for k, obs in groups.items()]
+    comps = [reconcile(k, part) for k, obs in groups.items() for part in split_detected(obs)]
     return sorted(comps, key=lambda c: (c.rank, c.product.casefold()))
 
 

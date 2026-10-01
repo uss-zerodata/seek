@@ -714,14 +714,27 @@ def inventory_view(session) -> View:
     def build(scans: ScanSet, report: Report | None = None) -> list[Row]:
         inv = session.inventory(report)
         lookup = session.lookup()
+        view.subtitle = unplaced_note(session)
         return [_entry_row(e, lookup.of_entry(e), lookup.db_missing)
                 for e in inv_mod.entries(inv, scans.hosts)]
 
-    return View(
+    view = View(
         title="Inventory", columns=INVENTORY_COLUMNS, build=build, kind="inventory",
         tab="inventory", reports=True, default_sort=(4, True),
         stamp=lambda: (session.shots.generation, session.vulndb().generation),
     )
+    return view
+
+
+def unplaced_note(session) -> str:
+    """Captures that belong to no scanned service, named: their technologies
+    are not in the inventory, and saying so is what makes that visible."""
+    urls = session.unplaced_captures
+    if not urls:
+        return ""
+    shown = ", ".join(urls[:3]) + (f" and {len(urls) - 3} more" if len(urls) > 3 else "")
+    return (f"{len(urls)} capture(s) match no open port in the scans, so their "
+            f"technologies are not listed: {shown}")
 
 
 FINDINGS_COLUMNS = ("Finding", "Basis", "Severity", "Score", "Product", "Version", "Hosts",

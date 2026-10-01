@@ -121,6 +121,25 @@ class Subscription:
                 self.queue.put_nowait(event)
 
 
+def _by_host_and_port(url: str, by_name: dict) -> tuple[str, str, int] | None:
+    """The service a URL's host and port name, whatever nmap called it. Only
+    an *open* TCP port counts: a capture of a port the scans saw closed says
+    the scans are stale, not where the page runs."""
+    from urllib.parse import urlsplit
+
+    try:
+        split = urlsplit(url)
+        port = split.port or {"http": 80, "https": 443}.get(split.scheme.lower())
+    except ValueError:
+        return None
+    host = by_name.get((split.hostname or "").lower())
+    if host is None or port is None:
+        return None
+    svc = next((s for s in host.services
+                if s.port == port and s.protocol == "tcp" and s.is_open), None)
+    return (host.address, svc.protocol, svc.port) if svc is not None else None
+
+
 class Session:
     def __init__(self, config: Config | None = None, sources: list[Path] | None = None,
                  scan_dir: Path | None = None, naming: merge_mod.Naming | None = None,
@@ -150,6 +169,7 @@ class Session:
         self._by_service: dict = {}
         self._by_service_key: tuple | None = None
         self._unplaced = 0
+        self._unplaced_urls: list[str] = []
         self._inventory: inventory_mod.Inventory | None = None
         self._inventory_for: tuple = (None, None)
         self._store: vulndb_store.Store | None = None
@@ -230,17 +250,47 @@ class Session:
                         owner.setdefault(canonical_url(url),
                                          (host.address, svc.protocol, svc.port))
             index: dict[tuple[str, str, int], list] = {}
-            unplaced = 0
+            unplaced: list[str] = []
+            by_name: dict[str, object] | None = None
             for capture in self.shots.all():
                 where = owner.get(canonical_url(capture.url))
+                if where is None:
+                    # Not a URL this app would have built: nmap may not have
+                    # called the port http (`tcpwrapped`, `unknown`, a TLS
+                    # service it could not name) while gowitness found a web
+                    # page there. The host and port still say which service it
+                    # is - the address, or any name the host is known by.
+                    if by_name is None:
+                        by_name = self._hosts_by_name()
+                    where = _by_host_and_port(capture.url, by_name)
                 if where is not None:
                     index.setdefault(where, []).append(capture)
                 else:
-                    unplaced += 1
+                    unplaced.append(capture.url)
             self._by_service, self._by_service_key = index, key
-            self._unplaced = unplaced
+            self._unplaced = len(unplaced)
+            self._unplaced_urls = unplaced
             self._row_texts = {}
         return self._by_service
+
+    def _hosts_by_name(self) -> dict[str, object]:
+        """Every address and every name a host is known by -> the host."""
+        from seek.nmap import names as names_mod
+
+        out: dict[str, object] = {}
+        for host in self.scans.hosts:
+            out.setdefault(host.address.lower(), host)
+            for name in host.hostnames:
+                out.setdefault(name.lower(), host)
+            for name, _source in names_mod.host_names(host):
+                out.setdefault(name.lower(), host)
+        return out
+
+    @property
+    def unplaced_captures(self) -> list[str]:
+        """The URLs of captures no scanned service could be found for."""
+        self.captures_by_service()
+        return list(self._unplaced_urls)
 
     def inventory(self, report=None) -> inventory_mod.Inventory:
         """The software inventory of the model and the captures as they stand.

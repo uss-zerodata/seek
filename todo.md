@@ -46,3 +46,8 @@
 - [x] allow the webinterface to use the full width of the browser window. currently the webinterface is limited in width.
 - [x] allow grouping of hosts by host, service, website title and similarity of the image. this should be done in a way that the user can select which grouping to use and can switch between the different groupings easily.
 - [ ] for services where multiple screenshots were taken, summarize them in a single screenshot page where the user can switch between the different screenshots.
+
+# seek vulndb
+
+- [ ] update needs a progress bar so that the user knows how long the update will take and when it is finished. this is especially important for the first update, which can take a long time.
+- [ ] the download for "cpe" always shows 0 bytes, even though the download is actually happening. please fix this so that the user can see the progress of the download.
