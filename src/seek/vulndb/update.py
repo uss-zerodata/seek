@@ -31,14 +31,19 @@ from datetime import date
 from pathlib import Path
 
 from seek.vulndb import eol, sources, store
+from seek.vulndb import progress as progress_mod
 
-Progress = Callable[[str, int, int, str], None]     # source, done, total, unit
+# source, done, total, activity - `done`/`total` measure the source's whole job
+# (download and index together), so one bar covers it; see `progress.Tracker`.
+Progress = Callable[[str, int, int, str], None]
 USER_AGENT = "seek-vulndb (+https://github.com/uss-zerodata)"
 # Smallest first: endoflife.date is seconds, NVD is minutes. An update that is
 # interrupted, cancelled or fails part-way still leaves the quick answers in.
 SOURCES = ("eol", "cpe", "osv", "nvd")
-# Stated before the first update is confirmed; replaced by what was measured.
-FIRST_DOWNLOAD_ESTIMATE_MB = 700
+# What a first download of each source weighs, measured 2026-10: stated before
+# the first update is confirmed, and by the command before it starts.
+DOWNLOAD_ESTIMATE_MB = {"eol": 1, "cpe": 85, "osv": 220, "nvd": 400}
+FIRST_DOWNLOAD_ESTIMATE_MB = sum(DOWNLOAD_ESTIMATE_MB.values())
 
 
 class Cancelled(Exception):
@@ -73,23 +78,35 @@ class Fetcher:
                                                        **(headers or {})})
         return urllib.request.urlopen(request, timeout=self.timeout)  # noqa: S310 - fixed https URLs
 
-    def get(self, url: str) -> bytes:
+    def get(self, url: str, on_chunk: Callable[[int], None] | None = None) -> bytes:
         with self.open(url) as response:
-            return self._read(response)
+            return self._read(response, on_chunk=on_chunk)
 
-    def _read(self, response, sink=None) -> bytes:
+    def _read(self, response, sink=None, on_chunk: Callable[[int], None] | None = None
+              ) -> bytes:
+        """The body, chunk by chunk - `on_chunk` hears the running byte count, which
+        is what a progress bar moves on."""
         chunks = []
+        received = 0
         while True:
             if self.cancel is not None and self.cancel.is_set():
                 raise Cancelled
-            chunk = response.read(1 << 20)
+            chunk = response.read(1 << 18)
             if not chunk:
                 break
+            received += len(chunk)
             if sink is not None:
                 sink.write(chunk)
             else:
                 chunks.append(chunk)
+            if on_chunk is not None:
+                on_chunk(received)
         return b"".join(chunks)
+
+
+def _of(done: int, total: int) -> str:
+    return (f"{progress_mod.megabytes(done)} of {progress_mod.megabytes(total)}" if total
+            else progress_mod.megabytes(done))
 
 
 def _meta_set(con: sqlite3.Connection, key: str, value: str) -> None:
@@ -133,18 +150,23 @@ def _store_cve(con: sqlite3.Connection, row: sources.CveRow) -> None:
                     [(row.id, *c) for c in row.criteria])
 
 
-def _ingest_feed(con: sqlite3.Connection, data: bytes, cancel, progress, label: str) -> int:
+def _ingest_feed(con: sqlite3.Connection, data: bytes, cancel,
+                 report: Callable[[int, int], None]) -> int:
+    """Store one feed's CVEs. `report(read, count)` hears how far into the
+    compressed feed the parse is, which is what makes indexing measurable."""
     count = 0
-    with gzip.open(io.BytesIO(data), "rt", encoding="utf-8") as stream:
+    raw = io.BytesIO(data)
+    with gzip.open(raw, "rt", encoding="utf-8") as stream:
         for item in sources.iter_json_array(stream, "vulnerabilities"):
             row = sources.parse_nvd_item(item)
             if row is not None:
                 _store_cve(con, row)
                 count += 1
-            if count % 2000 == 0:
+            if count % 500 == 0:
                 if cancel is not None and cancel.is_set():
                     raise Cancelled
-                progress("nvd", count, 0, f"CVEs ({label})")
+                report(raw.tell(), count)
+    report(len(data), count)
     return count
 
 
@@ -155,19 +177,37 @@ def update_nvd(con, fetch: Fetcher, urls: sources.Urls, progress: Progress,
     recent = (not full and last and now - float(last) < sources.NVD_MODIFIED_DAYS * 86400)
     feeds: list[str] = ([sources.NVD_MODIFIED] if recent else
                         [str(y) for y in range(sources.NVD_FIRST_YEAR, today.year + 1)])
+    # Every feed's .meta first: which feeds changed, and how big they are, is
+    # what gives the step a total - otherwise the bar could only count feeds,
+    # and the 2024 feed is a hundred times the 2002 one.
+    wanted: list[tuple[str, str, int]] = []
+    for i, feed in enumerate(feeds):
+        progress("nvd", i, len(feeds), f"checking feed {feed} for changes")
+        meta = sources.parse_nvd_meta(fetch.get(urls.nvd_meta(feed)).decode("utf-8",
+                                                                            "replace"))
+        sha = meta.get("sha256", "")
+        if sha and not full and _meta_get(con, f"nvd.sha.{feed}") == sha:
+            continue
+        size = int(meta.get("gzSize") or 0)
+        wanted.append((feed, sha, size))
+    known = sum(size for _f, _s, size in wanted)
+    total = 2 * known                         # download it, then read it back
+    base = 0
     with _Tx(con):
-        for i, feed in enumerate(feeds, 1):
-            progress("nvd", i - 1, len(feeds), "feeds")
-            meta_text = fetch.get(urls.nvd_meta(feed)).decode("utf-8", "replace")
-            sha = sources.parse_nvd_meta(meta_text).get("sha256", "")
-            if sha and not full and _meta_get(con, f"nvd.sha.{feed}") == sha:
-                continue
-            data = fetch.get(urls.nvd_year(feed))
+        for feed, sha, size in wanted:
+            def downloaded(n: int, feed=feed, size=size, start=base) -> None:
+                progress("nvd", start + n, total, f"downloading {feed} · {_of(n, size)}")
+            data = fetch.get(urls.nvd_year(feed), downloaded)
+            base += len(data)
             result.bytes += len(data)
-            result.records += _ingest_feed(con, data, fetch.cancel, progress, feed)
+
+            def indexed(read: int, count: int, feed=feed, start=base) -> None:
+                progress("nvd", start + read, total, f"indexing {feed} · {count:,} CVEs")
+            result.records += _ingest_feed(con, data, fetch.cancel, indexed)
+            base += len(data)
             if sha:
                 _meta_set(con, f"nvd.sha.{feed}", sha)
-        progress("nvd", len(feeds), len(feeds), "feeds")
+        progress("nvd", max(total, base), max(total, base), "done")
         result.skipped = result.records == 0
         _meta_set(con, "nvd.updated_at", str(now))
     return result
@@ -189,12 +229,14 @@ def update_cpe(con, fetch: Fetcher, urls: sources.Urls, progress: Progress,
     if sha and not full and _meta_get(con, "cpe.sha") == sha:
         result.skipped = True
         return result
-    total = int(meta.get("gzSize") or 0)
+    size = int(meta.get("gzSize") or 0)
     with tempfile.TemporaryFile(dir=tmp_dir) as archive:
         with fetch.open(urls.cpe_dictionary()) as response:
-            progress("cpe", 0, total, "bytes")
-            fetch._read(response, archive)
+            size = size or int(response.headers.get("Content-Length") or 0)
+            fetch._read(response, archive, lambda n: progress(
+                "cpe", n, 2 * size, f"downloading · {_of(n, size)}"))
         result.bytes = archive.tell()
+        size = size or result.bytes
         archive.seek(0)
         with _Tx(con), tarfile.open(fileobj=archive, mode="r:gz") as tar:
             con.execute("delete from rel")
@@ -210,16 +252,19 @@ def update_cpe(con, fetch: Fetcher, urls: sources.Urls, progress: Progress,
                     row = sources.parse_cpe_name(item)
                     if row is not None:
                         batch.append(row)
-                    if len(batch) >= 50_000:
+                    if len(batch) >= 20_000:
                         con.executemany("insert into rel values (?, ?, ?)", batch)
                         result.records += len(batch)
                         batch.clear()
                         if fetch.cancel is not None and fetch.cancel.is_set():
                             raise Cancelled
-                        progress("cpe", result.records, 0, "releases")
+                        # How far into the downloaded archive the tar has read.
+                        progress("cpe", size + min(archive.tell(), size), 2 * size,
+                                 f"indexing · {result.records:,} releases")
             con.executemany("insert into rel values (?, ?, ?)", batch)
             result.records += len(batch)
             _meta_set(con, "cpe.sha", sha)
+            progress("cpe", 2 * size, 2 * size, f"done · {result.records:,} releases")
     return result
 
 
@@ -241,25 +286,27 @@ def update_osv(con, fetch: Fetcher, urls: sources.Urls, progress: Progress,
             with fetch.open(urls.osv_npm(), headers) as response:
                 etag = response.headers.get("ETag", "")
                 modified = response.headers.get("Last-Modified", "")
-                total = int(response.headers.get("Content-Length") or 0)
-                progress("osv", 0, total, "bytes")
-                fetch._read(response, archive)
+                size = int(response.headers.get("Content-Length") or 0)
+                fetch._read(response, archive, lambda n: progress(
+                    "osv", n, 2 * size, f"downloading · {_of(n, size)}"))
         except urllib.error.HTTPError as exc:
             if exc.code == 304:
                 result.skipped = True
                 return result
             raise
         result.bytes = archive.tell()
+        size = size or result.bytes
         archive.seek(0)
         with _Tx(con), zipfile.ZipFile(archive) as z:
             con.execute("delete from osv")
             con.execute("delete from osv_range")
             names = z.namelist()
             for i, name in enumerate(names):
-                if i % 5000 == 0:
+                if i % 2000 == 0:
                     if fetch.cancel is not None and fetch.cancel.is_set():
                         raise Cancelled
-                    progress("osv", i, len(names), "advisories")
+                    progress("osv", size + size * i // max(1, len(names)), 2 * size,
+                             f"indexing · {i:,} of {len(names):,} advisories")
                 try:
                     record = json.loads(z.read(name))
                 except (ValueError, KeyError):
@@ -273,6 +320,7 @@ def update_osv(con, fetch: Fetcher, urls: sources.Urls, progress: Progress,
                 con.executemany("insert into osv_range values (?, ?, ?, ?, ?, ?)",
                                 [(row.id, *r) for r in row.ranges])
                 result.records += 1
+            progress("osv", 2 * size, 2 * size, f"done · {result.records:,} advisories kept")
             _meta_set(con, "osv.etag", etag)
             _meta_set(con, "osv.last_modified", modified)
     return result
@@ -287,7 +335,7 @@ def update_eol(con, fetch: Fetcher, urls: sources.Urls, progress: Progress) -> R
     slugs = sorted(set(eol.SLUGS.values()))
     rows: list[tuple[str, ...]] = []
     for i, slug in enumerate(slugs):
-        progress("eol", i, len(slugs), "products")
+        progress("eol", i, len(slugs), f"release data · {slug}")
         if slug not in known:
             result.notes.append(f"endoflife.date does not know '{slug}'")
             continue
@@ -298,7 +346,7 @@ def update_eol(con, fetch: Fetcher, urls: sources.Urls, progress: Progress) -> R
         con.execute("delete from eol")
         con.executemany("insert into eol values (?, ?, ?, ?, ?, ?, ?)", rows)
     result.records = len(rows)
-    progress("eol", len(slugs), len(slugs), "products")
+    progress("eol", len(slugs), len(slugs), "done")
     return result
 
 

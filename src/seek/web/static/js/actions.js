@@ -169,8 +169,9 @@ async function showVulndb() {
   try {
     const state = await send("GET", "/api/v1/vulndb");
     vulndbButton.textContent = state.label;
+    vulndbButton.title = state.updating ? state.progress : "the vulnerability database - A updates it";
     vulndbButton.classList.toggle("dim", state.stale);
-    if (state.updating) setTimeout(showVulndb, 2000);
+    if (state.updating) setTimeout(showVulndb, 1000);
     return state;
   } catch { return null; }
 }

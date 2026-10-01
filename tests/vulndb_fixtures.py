@@ -158,7 +158,8 @@ def build(root: Path, years=range(2002, 2027), osv=OSV) -> Path:
         (root / "nvd" / f"nvdcve-2.0-{name}.json.gz").write_bytes(data)
         sha = hashlib.sha256(gzip.decompress(data)).hexdigest().upper()
         (root / "nvd" / f"nvdcve-2.0-{name}.meta").write_text(
-            f"lastModifiedDate:2099-01-02T00:00:00\r\nsize:{len(data)}\r\nsha256:{sha}\r\n")
+            f"lastModifiedDate:2099-01-02T00:00:00\r\nsize:{len(data)}\r\n"
+            f"gzSize:{len(data)}\r\nsha256:{sha}\r\n")
     (root / "cpe").mkdir(parents=True, exist_ok=True)
     products = [{"cpe": {"deprecated": False,
                          "cpeName": f"cpe:2.3:a:{v}:{p}:{ver}:*:*:*:*:*:*:*"}}

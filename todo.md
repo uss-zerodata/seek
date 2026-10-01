@@ -40,14 +40,16 @@
 ## bugs
 
 - [x] when launching the webinterface and the port is already being used, increment the port number by one and try again until a free port is found. this should be done automatically without user interaction.
+- [ ] sorting columns does not work as a request to `http://127.0.0.1:7272/v/inventory?sort=2&desc=` is sent, which returns `{"detail":[{"type":"bool_parsing","loc":["query","desc"],"msg":"Input should be a valid boolean, unable to interpret input","input":""}]}`. this response is then being viewed in the browser instead of the sorted table. please fix this so that the user can sort the columns by clicking on the column header.
+- [ ] if there are multiple gowitness screenshots for a single host:port combination, the webinterface currently shows all of them as individual entries. please stack them into a group by default as it looks like much more services are than there actually are. the user should be able to expand the group to see all screenshots for that host:port combination. mark the group with a number of how many screenshots are available for that host:port combination.
+- [ ] for services where multiple screenshots were taken, summarize them in a single screenshot page where the user can switch between the different screenshots.
 
 ## features
 
 - [x] allow the webinterface to use the full width of the browser window. currently the webinterface is limited in width.
 - [x] allow grouping of hosts by host, service, website title and similarity of the image. this should be done in a way that the user can select which grouping to use and can switch between the different groupings easily.
-- [ ] for services where multiple screenshots were taken, summarize them in a single screenshot page where the user can switch between the different screenshots.
 
 # seek vulndb
 
-- [ ] update needs a progress bar so that the user knows how long the update will take and when it is finished. this is especially important for the first update, which can take a long time.
-- [ ] the download for "cpe" always shows 0 bytes, even though the download is actually happening. please fix this so that the user can see the progress of the download.
+- [x] update needs a progress bar so that the user knows how long the update will take and when it is finished. this is especially important for the first update, which can take a long time.
+- [x] the download for "cpe" always shows 0 bytes, even though the download is actually happening. please fix this so that the user can see the progress of the download.

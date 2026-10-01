@@ -10,6 +10,7 @@ from collections.abc import Iterable
 from typing import TextIO
 
 from seek.config import Config
+from seek.vulndb import progress as progress_mod
 from seek.vulndb import store, update
 from seek.vulndb.sources import Urls
 
@@ -45,26 +46,50 @@ def run_update(config: Config, out: TextIO, which: Iterable[str] = update.SOURCE
                full: bool = False, urls: Urls | None = None,
                cancel: threading.Event | None = None) -> int:
     path = store.resolve(config.vulndb_path)
+    which = list(which)
     out.write(f"updating {path}\n")
-    last: dict[str, str] = {}
+    if store.Store(path).missing:
+        size = sum(update.DOWNLOAD_ESTIMATE_MB.get(s, 0) for s in which)
+        out.write(f"  first update: about {size} MB to download, then indexed - "
+                  "this takes a while; the bar shows how far it is\n")
+    tracker = progress_mod.Tracker(which)
+    interactive = hasattr(out, "isatty") and out.isatty()
+    width = [0]
+    last = [0.0, ""]
 
-    def progress(source: str, done: int, total: int, unit: str) -> None:
-        line = f"  {source}: {done}/{total} {unit}" if total else f"  {source}: {done} {unit}"
-        if last.get(source) != line:
-            last[source] = line
-            out.write(line + "\r")
-            out.flush()
+    def progress(source: str, done: int, total: int, activity: str) -> None:
+        tracker(source, done, total, activity)
+        now = time.monotonic()
+        if now - last[0] < 0.2 and not (total and done >= total):
+            return
+        last[0] = now
+        line = f"  {tracker.line()}"
+        if interactive:
+            # One line, redrawn in place; padded so a shorter line erases a longer.
+            out.write("\r" + line.ljust(width[0]))
+            width[0] = max(width[0], len(line))
+        elif line != last[1]:
+            out.write(line + "\n")
+        last[1] = line
+        out.flush()
+
+    def finish_line() -> None:
+        if interactive and width[0]:
+            out.write("\r" + " " * width[0] + "\r")
+            width[0] = 0
 
     results = update.run(path, progress, cancel, which, full, urls)
+    finish_line()
     failed = False
     for r in results:
         if r.error:
             failed = True
-            out.write(f"\n  {r.source}: FAILED - {r.error} (its previous data is kept)\n")
+            out.write(f"  {r.source}: FAILED - {r.error} (its previous data is kept)\n")
         elif r.skipped:
-            out.write(f"\n  {r.source}: unchanged\n")
+            out.write(f"  {r.source}: unchanged\n")
         else:
-            out.write(f"\n  {r.source}: {r.records} records, {r.bytes / 1e6:.1f} MB\n")
+            out.write(f"  {r.source}: {r.records:,} records, {r.bytes / 1e6:.1f} MB\n")
         for note in r.notes:
             out.write(f"  {r.source}: {note}\n")
+    out.write(f"done in {tracker.elapsed()}\n")
     return 1 if failed else 0

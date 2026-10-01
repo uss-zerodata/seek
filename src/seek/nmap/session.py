@@ -178,7 +178,8 @@ class Session:
         # One update at a time, from whichever front end asked; what it is doing
         # now, for a status line to show.
         self._vulndb_lock = threading.Lock()
-        self.vulndb_progress = ""
+        self.vulndb_progress = ""          # the full line: step, bar, activity, time left
+        self.vulndb_progress_short = ""    # the same for a status line
         self.vulndb_cancel: threading.Event | None = None
         self._row_texts: dict[int, tuple] = {}
         # What each finished scan added to what was known, by run.
@@ -339,23 +340,33 @@ class Session:
 
         Raises `Busy` when an update is already running.
         """
+        import time
+
+        from seek.vulndb import progress as progress_mod
         from seek.vulndb import update as vulndb_update
 
         if not self._vulndb_lock.acquire(blocking=False):
             raise Busy("the vulnerability database is already being updated")
         self.vulndb_cancel = threading.Event()
+        tracker = progress_mod.Tracker(vulndb_update.SOURCES)
+        last = [0.0]
 
-        def report(source: str, done: int, total: int, unit: str) -> None:
-            self.vulndb_progress = (f"{source} {done}/{total} {unit}" if total
-                                    else f"{source} {done} {unit}")
-            if progress is not None:
-                progress(source, done, total, unit)
+        def report(source: str, done: int, total: int, activity: str) -> None:
+            tracker(source, done, total, activity)
+            self.vulndb_progress = tracker.line()
+            self.vulndb_progress_short = tracker.short()
+            # Reports arrive per downloaded chunk; a front end redraws four
+            # times a second at most, or the status line is all it does.
+            now = time.monotonic()
+            if progress is not None and (now - last[0] >= 0.25 or done >= total > 0):
+                last[0] = now
+                progress(source, done, total, activity)
 
         try:
             results = vulndb_update.run(vulndb_store.resolve(self.config.vulndb_path),
                                         report, self.vulndb_cancel)
         finally:
-            self.vulndb_progress = ""
+            self.vulndb_progress = self.vulndb_progress_short = ""
             self.vulndb_cancel = None
             self._vulndb_lock.release()
         self.reload_vulndb()
@@ -370,7 +381,7 @@ class Session:
     def vulndb_label(self) -> str:
         """`◈ vulndb 3d`, `◈ vulndb updating …`, or `◈ no vulndb`."""
         if self.vulndb_updating:
-            return f"◈ vulndb updating {self.vulndb_progress}".rstrip()
+            return f"◈ vulndb {self.vulndb_progress_short or 'starting'}"
         store = self.vulndb()
         if store.missing:
             return "◈ no vulndb"
