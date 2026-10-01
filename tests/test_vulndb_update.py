@@ -33,7 +33,7 @@ def test_first_update_fills_every_source(tmp_path, feeds):
     assert not any(r.error for r in results.values()), results
     assert results["nvd"].records == 11
     assert results["osv"].records == 2, "left-pad is not a tracked package"
-    assert results["cpe"].records == 30, "deprecated names and hardware are skipped"
+    assert results["cpe"].records == 34, "deprecated names and hardware are skipped"
     assert results["eol"].notes == [f"endoflife.date does not know '{fx.UNKNOWN_SLUG}'"]
     s = store.Store(db)
     counts = s.counts()
@@ -124,8 +124,7 @@ def test_requests_are_exactly_the_fixed_url_set(tmp_path, feeds):
         _run(db, urls, fetcher=fetch)
         allowed = {urls.nvd_meta(y) for y in range(2002, 2027)} | \
                   {urls.nvd_year(y) for y in range(2002, 2027)} | \
-                  {urls.osv_npm(), urls.eol_all(), urls.cpe_meta(), urls.cpe_dictionary()} | \
-                  {urls.eol_product(s) for s in eol.SLUGS.values()}
+                  {urls.osv_npm(), urls.eol_full(), urls.cpe_meta(), urls.cpe_dictionary()}
     assert set(fetch.requested) <= allowed, set(fetch.requested) - allowed
 
 

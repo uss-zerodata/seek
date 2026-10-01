@@ -225,6 +225,7 @@ class RowOut(BaseModel):
     opens: bool = False              # whether opening it goes anywhere
     shots: list[ShotRef] = []        # the row's captures, the first few
     shots_total: int = 0             # how many it has in all
+    tones: list[str] = []            # per cell: "ok", "warn", "bad", "dim" or ""
 
 
 class ViewOut(BaseModel):

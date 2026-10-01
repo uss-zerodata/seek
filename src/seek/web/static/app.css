@@ -41,6 +41,9 @@ figcaption { padding: 8px 10px; font-size: .88rem; }
 .pill { display: inline-block; padding: 0 6px; border-radius: 4px; font-size: .78rem;
         background: var(--pill); color: var(--dim); font-weight: 600; }
 .pill.ok { color: var(--ok); } .pill.warn { color: var(--warn); } .pill.bad { color: var(--bad); }
+/* A cell's answer at a glance - the support column's green, yellow or red. */
+td.tone-ok { color: var(--ok); font-weight: 600; } td.tone-warn { color: var(--warn); }
+td.tone-bad { color: var(--bad); font-weight: 600; } td.tone-dim { color: var(--dim); }
 table { border-collapse: collapse; width: 100%; }
 table.list th, table.list td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
 table.list th { color: var(--dim); font-weight: 600; font-size: .85rem; }

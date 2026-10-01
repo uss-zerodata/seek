@@ -44,8 +44,10 @@ create index if not exists osv_range_pkg on osv_range (package);
 create index if not exists osv_range_id on osv_range (osv_id);
 create table if not exists rel (vendor text, product text, version text);
 create index if not exists rel_vp on rel (vendor, product);
+create table if not exists eol_cpe (key text primary key, slug text);
 create table if not exists eol (
     slug text, cycle text, released text, eol text, latest text, latest_date text,
+    maintained text,
     lts text, primary key (slug, cycle));
 """
 
@@ -109,6 +111,7 @@ class Cycle:
     latest: str
     latest_date: str
     lts: str
+    maintained: str = ""   # "true" / "false" / "" (not stated)
 
 
 def open_write(path: Path) -> sqlite3.Connection:
@@ -116,6 +119,11 @@ def open_write(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(path, isolation_level=None)
     con.execute("pragma journal_mode=wal")
+    # A database built before release lines carried `maintained`: its `eol`
+    # table is dropped and rebuilt by the same update - it is all refetched.
+    columns = {r[1] for r in con.execute("pragma table_info(eol)")}
+    if columns and "maintained" not in columns:
+        con.execute("drop table eol")
     con.executescript(_SCHEMA)
     con.execute("insert or replace into meta values ('schema', ?)", (str(SCHEMA_VERSION),))
     return con
@@ -222,6 +230,12 @@ class Store:
                 out[r[0]] = OsvRecord(r[0], aliases, r[2] or "", r[3] or "", r[4], r[5] or "")
         return out
 
+    def eol_slug(self, cpe_key: str) -> str:
+        """The endoflife.date product a CPE `vendor:product` belongs to, as
+        endoflife.date itself declares it - what makes the mapping automatic."""
+        rows = self._rows("select slug from eol_cpe where key = ?", (cpe_key,))
+        return rows[0][0] if rows else ""
+
     def releases(self, vendor: str, product: str) -> list[str]:
         """Every version NVD's CPE dictionary knows for a product - what a
         version family (`3.8`) is expanded into to see how much of it a range
@@ -231,5 +245,5 @@ class Store:
 
     def cycles(self, slug: str) -> list[Cycle]:
         return [Cycle(*r) for r in self._rows(
-            "select slug, cycle, released, eol, latest, latest_date, lts from eol"
+            "select slug, cycle, released, eol, latest, latest_date, lts, maintained from eol"
             " where slug = ?", (slug,))]

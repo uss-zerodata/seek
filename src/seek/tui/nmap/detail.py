@@ -669,15 +669,32 @@ def _support_line(a: vmatch.Assessment, missing: bool, indent: int = 8) -> Text:
     if s.status == "eol":
         line.append(f"end of life since {s.eol_date}" if s.eol_date else "end of life",
                     style="bold red")
-        line.append(f"  (cycle {s.cycle}, last release {s.latest or ABSENT})", style=_KEY)
+        bits = [f"line {s.cycle}" if s.cycle else "",
+                f"released {s.released}" if s.released else "",
+                f"last release {s.latest}" if s.latest else ""]
+        line.append(f"  ({', '.join(b for b in bits if b)})", style=_KEY)
     elif s.status == "behind":
-        line.append(f"behind - {s.latest} is the latest {s.cycle}", style="yellow")
+        line.append(f"behind - {s.latest} is the newest"
+                    + (f" {s.cycle}" if s.cycle else ""), style="yellow")
+        if s.latest_date:
+            line.append(f" (released {s.latest_date})", style=_KEY)
+    elif s.status == "mixed":
+        line.append(f"mixed - {s.detail}", style="yellow")
     elif s.status == "current":
-        line.append(f"current {s.cycle} release", style="green")
+        line.append("✓ current" + (f" {s.cycle} release" if s.cycle else ""),
+                    style="bold green")
+        if s.latest_date:
+            line.append(f" (released {s.latest_date})", style=_KEY)
+        if s.detail:
+            line.append(f" · {s.detail}", style=_KEY)
     else:
         line.append(f"unknown - {s.reason}" if s.reason else "unknown", style=_KEY)
     if s.ending_soon and s.eol_date:
         line.append(f"  · support ends {s.eol_date}", style="yellow")
+    elif s.eol_date and s.status in ("current", "behind"):
+        line.append(f"  · supported until {s.eol_date}", style=_KEY)
+    if s.basis and s.status != "unknown":
+        line.append(f"  · {s.basis}", style=_KEY)
     return line
 
 

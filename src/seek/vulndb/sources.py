@@ -44,11 +44,9 @@ class Urls:
     def osv_npm(self) -> str:
         return f"{self.osv}/npm/all.zip"
 
-    def eol_all(self) -> str:
-        return f"{self.eol}/all.json"
-
-    def eol_product(self, slug: str) -> str:
-        return f"{self.eol}/{slug}.json"
+    def eol_full(self) -> str:
+        """Every product, its release lines and its identifiers, in one file."""
+        return f"{self.eol}/v1/products/full"
 
 
 NVD_FIRST_YEAR = 2002          # the 2002 feed carries everything older too
@@ -284,6 +282,43 @@ def _text(value) -> str:
     if value is False or value is None:
         return "false" if value is False else ""
     return str(value)
+
+
+def parse_eol_full(doc: dict) -> tuple[list[tuple[str, ...]], list[tuple[str, str]],
+                                       set[str]]:
+    """The whole catalogue: release lines `(slug, cycle, released, eol, latest,
+    latest_date, lts, maintained)`, the CPE `vendor:product` each product
+    declares, and every product name.
+
+    `eol` is the end date when one is given, else `true`/`false`: `isEol` is
+    computed on the day the file was generated, a date is compared with the
+    session's own."""
+    lines: list[tuple[str, ...]] = []
+    cpes: list[tuple[str, str]] = []
+    names: set[str] = set()
+    for product in doc.get("result") or []:
+        slug = product.get("name")
+        if not slug:
+            continue
+        names.add(slug)
+        for ident in product.get("identifiers") or []:
+            if ident.get("type") != "cpe":
+                continue
+            parts = re.split(r"(?<!\\):", ident.get("id") or "")
+            if parts[:2] == ["cpe", "2.3"] and len(parts) >= 5:
+                cpes.append((f"{parts[3].lower()}:{parts[4].lower()}", slug))
+            elif parts[:1] == ["cpe"] and len(parts) >= 4 and parts[1].startswith("/"):
+                cpes.append((f"{parts[2].lower()}:{parts[3].lower()}", slug))
+        for r in product.get("releases") or []:
+            if not isinstance(r, dict) or not r.get("name"):
+                continue
+            latest = r.get("latest") or {}
+            ended = r.get("eolFrom") or ("true" if r.get("isEol") else "false")
+            lines.append((slug, str(r["name"]), _text(r.get("releaseDate")), _text(ended),
+                          _text(latest.get("name") if isinstance(latest, dict) else latest),
+                          _text(latest.get("date") if isinstance(latest, dict) else ""),
+                          _text(r.get("isLts")), _text(r.get("isMaintained"))))
+    return lines, list(dict.fromkeys(cpes)), names
 
 
 def parse_eol(slug: str, cycles: list) -> list[tuple[str, ...]]:

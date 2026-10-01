@@ -53,3 +53,25 @@
 
 - [x] update needs a progress bar so that the user knows how long the update will take and when it is finished. this is especially important for the first update, which can take a long time.
 - [x] the download for "cpe" always shows 0 bytes, even though the download is actually happening. please fix this so that the user can see the progress of the download.
+  
+---
+
+# Gowitness screenshots that match no service
+
+Neither: it's kept, but how visible it is depends on the front end.
+
+**In the browser, it's displayed without nmap context.** The gallery lists every screenshot from every gowitness database, matched or not, as the spec requires ("A gallery shows every screenshot"). An unmatched one gets its thumbnail, URL, status, title and its own capture page, just no link to a host or port. You can still find it with the gallery's filter, by URL, title or port.
+
+**In the terminal viewer, it's effectively dropped, apart from three traces:**
+- Screenshots appear inside host and service records, under the service's URLs. One that matches no service has no record to appear in.
+- It doesn't count toward the list filter either. Searching for its page title won't find anything, because the filter only adds screenshot text to the row it belongs to.
+- The traces left:
+  - its database shows as a capture run in the Scans tab, counted with the rest;
+  - the Inventory tab's subtitle now names it ("… capture(s) match no open port …");
+  - `W` opens gowitness's own report, which shows everything.
+
+**One inconsistency from the last fix:** the browser still matches screenshots to services by URL only (its own copy of the old logic in [source.py](src/seek/web/source.py)). So a screenshot on a port nmap didn't call HTTP is now matched in the terminal's inventory but still appears unmatched in the gallery, with no host link.
+
+I can fix both if you like:
+1. Make the browser use the session's matching, so the gallery, inventory and records agree on which service a screenshot belongs to.
+2. Give unmatched screenshots a visible place in the terminal. The obvious spot is an "Unmatched screenshots" heading on the Scans tab's capture row, or a `G` filter in the gallery. Each one is listed with its URL, status and title, and the record explains why it didn't match (no such host in the scans, or the port wasn't open).

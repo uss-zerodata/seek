@@ -131,13 +131,42 @@ EOL = {
     "tomcat": [
         {"cycle": "9", "releaseDate": "2018-01-18", "eol": "2026-12-01", "latest": "9.0.96"},
     ],
+    # Lines inside a family (5.x: one ended, two not) and an oldest tracked
+    # line that ended - Linux 3 is older than all of them.
+    "linux": [
+        {"cycle": "5.15", "releaseDate": "2021-10-31", "eol": False, "latest": "5.15.170"},
+        {"cycle": "5.10", "releaseDate": "2020-12-13", "eol": "2026-12-31",
+         "latest": "5.10.230"},
+        {"cycle": "5.4", "releaseDate": "2019-11-24", "eol": "2025-12-01", "latest": "5.4.290"},
+        {"cycle": "4.9", "releaseDate": "2016-12-11", "eol": "2023-01-07", "latest": "4.9.337"},
+    ],
+    # Mapped by the CPE it declares only - not in the hand table.
+    "proftpd": [
+        {"cycle": "1.3", "releaseDate": "2009-02-25", "eol": False, "latest": "1.3.8",
+         "latestReleaseDate": "2022-12-23"},
+    ],
 }
+# The CPEs endoflife.date declares per product (only those the tests need).
+EOL_CPES = {"nginx": "cpe:2.3:a:f5:nginx", "linux": "cpe:/o:linux:linux_kernel",
+            "proftpd": "cpe:2.3:a:proftpd:proftpd", "php": "cpe:2.3:a:php:php"}
+
+
+def _v1_release(c: dict) -> dict:
+    """A release line in the v1 catalogue's shape."""
+    eol = c.get("eol")
+    return {"name": c["cycle"], "releaseDate": c.get("releaseDate"),
+            "isEol": eol is True or isinstance(eol, str),
+            "eolFrom": eol if isinstance(eol, str) else None,
+            "isMaintained": not (eol is True or isinstance(eol, str)),
+            "latest": {"name": c.get("latest"), "date": c.get("latestReleaseDate")}}
 # Releases NVD's CPE dictionary knows - what a version family is expanded into.
 RELEASES = {
     # with the pre-releases NVD lists too, which a family must leave out
     ("python", "python"): [f"3.8.{i}" for i in range(0, 21)] + ["3.8.0a1", "3.8.0rc1",
                                                                  "3.9.0", "3.9.1"],
     ("f5", "nginx"): ["1.16.0", "1.16.1", "1.20.0", "1.20.1", "1.24.0"],
+    # NVD writes OpenSSH as version + update: 10.2 / p1
+    ("openbsd", "openssh"): ["8.9:p1", "9.8:p1", "10.0:p1", "10.2:p1"],
 }
 
 # One slug endoflife.date does not list, to prove the update says so.
@@ -162,7 +191,8 @@ def build(root: Path, years=range(2002, 2027), osv=OSV) -> Path:
             f"gzSize:{len(data)}\r\nsha256:{sha}\r\n")
     (root / "cpe").mkdir(parents=True, exist_ok=True)
     products = [{"cpe": {"deprecated": False,
-                         "cpeName": f"cpe:2.3:a:{v}:{p}:{ver}:*:*:*:*:*:*:*"}}
+                         "cpeName": f"cpe:2.3:a:{v}:{p}:{ver if ':' in ver else ver + ':*'}"
+                                    ":*:*:*:*:*:*"}}
                 for (v, p), versions in RELEASES.items() for ver in versions]
     products.append({"cpe": {"deprecated": True,
                              "cpeName": "cpe:2.3:a:python:python:3.8.99:*:*:*:*:*:*:*"}})
@@ -184,11 +214,14 @@ def build(root: Path, years=range(2002, 2027), osv=OSV) -> Path:
         for record in osv:
             z.writestr(f"{record['id']}.json", json.dumps(record))
     (root / "osv" / "npm" / "all.zip").write_bytes(buf.getvalue())
-    (root / "eol").mkdir(parents=True, exist_ok=True)
-    known = sorted(set(eol.SLUGS.values()) - {UNKNOWN_SLUG})
-    (root / "eol" / "all.json").write_text(json.dumps(known))
-    for slug in known:
-        (root / "eol" / f"{slug}.json").write_text(json.dumps(EOL.get(slug, [])))
+    (root / "eol" / "v1" / "products").mkdir(parents=True, exist_ok=True)
+    known = sorted((set(eol.SLUGS.values()) | set(EOL)) - {UNKNOWN_SLUG})
+    catalogue = {"schema_version": "1.2.1", "total": len(known), "result": [
+        {"name": slug,
+         "identifiers": [{"type": "cpe", "id": EOL_CPES[slug]}] if slug in EOL_CPES else [],
+         "releases": [_v1_release(c) for c in EOL.get(slug, [])]}
+        for slug in known]}
+    (root / "eol" / "v1" / "products" / "full").write_text(json.dumps(catalogue))
     return root
 
 

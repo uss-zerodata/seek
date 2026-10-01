@@ -58,7 +58,7 @@ async def test_the_inventory_says_support_vulns_and_the_worst(db):
         assert nginx[2] == "EOL 2020-04-21"
         assert nginx[3] == "2" and nginx[4] == "7.7 high"
         tomcat = rows[("Apache Tomcat", "9.0.1")]
-        assert tomcat[2] == "behind · 9.0.96 (ending soon)", "the 9 cycle ends 2026-12-01"
+        assert tomcat[2] == "behind · 9.0.96 · ends soon", "the 9 cycle ends 2026-12-01"
         assert tomcat[4].startswith("9.8"), "the scan's vulners finding counts"
         postfix = rows[("Postfix", "—")]
         assert postfix[3].startswith("?"), "an unversioned product is never 'none'"
@@ -205,3 +205,31 @@ async def test_what_nmap_tested_leads_and_candidates_are_measured(db, tmp_path):
         shown = _text(detail.render(svc, host, inventory=app.session.inventory(),
                                     lookup=app.session.lookup()))
         assert "most likely" in shown and "5/21 known 3.8.x" in shown
+
+
+async def test_the_support_column_is_coloured_by_its_answer(db):
+    app = _app(db)
+    async with app.run_test(size=(180, 40)) as pilot:
+        await _tab(pilot, app, "inventory")
+        tone = {(r.cells[0], r.cells[1]): r.tones[2] for r in app._rows}
+        assert tone[("nginx", "1.16.1")] == "bad", "end of life is red"
+        assert tone[("Apache Tomcat", "9.0.1")] == "warn", "behind is yellow"
+        assert tone[("Postfix", "—")] == "dim", "unknown is dim"
+        rendered = app._cell("current (2022-12-23)", None, tone="ok")
+        assert "green" in str(rendered.style), "current is green"
+
+
+async def test_the_browser_marks_the_cells_with_their_tone(db, tmp_path):
+    from fastapi.testclient import TestClient
+
+    from seek.nmap.session import Session
+    from seek.web.app import create_app
+    from seek.web.source import CachedSource
+
+    paths = [FIX / "inventory.xml"]
+    sess = Session(Config(nmap_path="/x", vulndb_path=str(db)), paths, tmp_path,
+                   databases=[], scans=prepare(load(paths)))
+    client = TestClient(create_app(CachedSource(lambda: sess.scans, lambda: sess.shots), sess))
+    page = client.get("/v/inventory").text
+    assert 'class="tone-bad">EOL 2020-04-21' in page
+    assert 'class="tone-warn">behind' in page

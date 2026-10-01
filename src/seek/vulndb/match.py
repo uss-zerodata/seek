@@ -204,14 +204,12 @@ class _Evaluator:
         self._pairs: dict[tuple, Assessment] = {}
         self._cycles: dict[str, list] = {}
         self._releases: dict[str, list[str]] = {}
+        self._slugs: dict[str, str] = {}
 
     def family(self, key: str, version: str) -> list[str]:
         """The known releases a version stands for: itself and every release
         that refines it (`3.8` -> 3.8.0 … 3.8.20), from the CPE dictionary."""
-        found = self._releases.get(key)
-        if found is None:
-            vendor, _, product = key.partition(":")
-            found = self._releases[key] = sorted(set(self.store.releases(vendor, product)))
+        found = self.all_releases(key)
         # Pre-releases are left out: a server runs 3.8.x, not 3.8.0b3, and a
         # beta the range happens to miss would turn "every release" into 37/38.
         return [r for r in found if refines(r, version) and not versions.is_prerelease(r)]
@@ -221,6 +219,34 @@ class _Evaluator:
         if found is None:
             vendor, _, product = key.partition(":")
             found = self._criteria[key] = self.store.criteria(vendor, product)
+        return found
+
+    def support(self, product_key: str, keys: tuple[str, ...],
+                version: str | None) -> eol.Support:
+        """A product version's support status, from the best source there is:
+        endoflife.date (by override, else by the CPEs it declares), else the
+        product's support policy against NVD's known releases."""
+        slug = eol.SLUGS.get(product_key) or next(
+            (found for found in (self.slug(k) for k in keys) if found), "")
+        if slug:
+            return eol.support(product_key, version, self.cycles(slug), self.today)
+        releases = [r for k in keys for r in self.all_releases(k)]
+        policy = eol.by_policy(product_key, version, releases)
+        if policy is not None:
+            return policy
+        return eol.support(product_key, version, [], self.today, tracked=False)
+
+    def slug(self, key: str) -> str:
+        found = self._slugs.get(key)
+        if found is None:
+            found = self._slugs[key] = self.store.eol_slug(key)
+        return found
+
+    def all_releases(self, key: str) -> list[str]:
+        found = self._releases.get(key)
+        if found is None:
+            vendor, _, product = key.partition(":")
+            found = self._releases[key] = sorted(set(self.store.releases(vendor, product)))
         return found
 
     def cycles(self, slug: str) -> list:
@@ -236,9 +262,9 @@ class _Evaluator:
             # thousand CVEs. Matched, it buries every real finding under
             # thousands that say nothing about this host - so it gets its
             # support status and no CVE list.
-            slug = eol.SLUGS.get(component.key, "")
-            support = eol.support(component.key, component.version,
-                                  self.cycles(slug) if slug else [], self.today)
+            keys = tuple(dict.fromkeys([*(c.key for c in component.cpes),
+                                        *cpe_mod.cpe_keys(component.key)]))
+            support = self.support(component.key, keys, component.version)
             return Assessment(support=support, not_matched=(
                 "operating systems and devices are identified by fingerprint, a guess "
                 "at a version family - their CVEs are not listed"))
@@ -254,9 +280,7 @@ class _Evaluator:
 
     def _assess(self, keys: tuple[str, ...], package: str, product_key: str,
                 version: str | None) -> Assessment:
-        slug = eol.SLUGS.get(product_key, "")
-        support = eol.support(product_key, version, self.cycles(slug) if slug else [],
-                              self.today)
+        support = self.support(product_key, keys, version)
         looked_up = bool(keys or package)
         if not version:
             ids = {c.cve_id for k in keys for c in self.criteria(k)}

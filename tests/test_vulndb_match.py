@@ -78,7 +78,10 @@ def test_an_update_field_joins_the_version(db):
     a = _one(db, Service("tcp", 22, "open", product="OpenSSH", version="8.9p1",
                          method="probed"))
     assert ids(a) == ["CVE-2099-0004"]
+    # `8.9` names a family whose only known release (8.9p1) is affected.
     assert ids(_one(db, Service("tcp", 22, "open", product="OpenSSH", version="8.9",
+                                method="probed"))) == ["CVE-2099-0004"]
+    assert ids(_one(db, Service("tcp", 22, "open", product="OpenSSH", version="9.8p1",
                                 method="probed"))) == []
 
 
@@ -286,3 +289,54 @@ def test_vulners_is_not_a_test(db):
                          method="probed", scripts=[vulners]))
     f = next(f for f in a.findings if f.id == "CVE-2099-0008")
     assert not f.tested and f.sources == ("nvd", "vulners")
+
+
+# --- support from more sources ---------------------------------------------------------
+
+
+def test_a_product_is_mapped_by_the_cpe_endoflife_date_declares(db):
+    """ProFTPD is not in the hand table; endoflife.date declares its CPE."""
+    from seek.vulndb import eol as eol_mod
+    assert "proftpd" not in eol_mod.SLUGS
+    s = _one(db, Service("tcp", 21, "open", product="ProFTPD", version="1.3.5",
+                         method="probed")).support
+    assert (s.status, s.latest, s.basis) == ("behind", "1.3.8", "endoflife.date")
+
+
+def test_current_carries_its_release_date(db):
+    s = _one(db, Service("tcp", 21, "open", product="ProFTPD", version="1.3.8",
+                         method="probed")).support
+    assert s.status == "current" and s.tone == "ok"
+    assert s.label() == "current (2022-12-23)"
+
+
+def test_a_family_with_some_lines_ended_is_mixed(db):
+    from seek.nmap.models import OsMatch
+    lk, inv, host = _lookup(db, [], os_matches=[OsMatch("Linux 5.X", 95,
+                                                        ["cpe:/o:linux:linux_kernel:5"])])
+    s = lk.of(inv.of_host(host)[0]).support
+    assert s.status == "mixed" and s.tone == "warn"
+    assert s.detail == "5.10, 5.15 supported, 1 line(s) ended"
+
+
+def test_older_than_every_tracked_line_is_end_of_life(db):
+    from seek.nmap.models import OsMatch
+    lk, inv, host = _lookup(db, [], os_matches=[OsMatch("Linux 3.X", 95,
+                                                        ["cpe:/o:linux:linux_kernel:3"])])
+    s = lk.of(inv.of_host(host)[0]).support
+    assert s.status == "eol" and "older than every tracked line" in s.basis
+    assert "4.9, ended 2023-01-07" in s.basis
+
+
+def test_a_latest_only_policy_judges_against_nvds_releases(db):
+    s = _one(db, Service("tcp", 22, "open", product="OpenSSH", version="9.8p1",
+                         method="probed")).support
+    assert (s.status, s.latest) == ("behind", "10.2p1")
+    assert "only its latest release" in s.basis and "10.2p1" in s.basis
+    assert _one(db, Service("tcp", 22, "open", product="OpenSSH", version="10.2p1",
+                            method="probed")).support.status == "current"
+
+
+def test_every_state_has_a_tone():
+    from seek.vulndb import eol as eol_mod
+    assert {eol_mod.Support(st).tone for st in eol_mod.STATES} == {"ok", "warn", "bad", "dim"}

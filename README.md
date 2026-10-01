@@ -152,8 +152,13 @@ shared port list adds before you review it.
 
 **Vulnerabilities and end of life.** With a local vulnerability database, the
 Inventory tab answers the two questions a review asks of every product at a
-glance: **Support** (`EOL 2022-11-28`, `behind · 2.4.62`, `current`, with
-`(ending soon)` inside 90 days of the end date) and **Vulns** / **Max** (how many
+glance: **Support**, coloured by its answer — green `current (2024-08-14)` with
+the release date, yellow `behind · 2.4.62` or `mixed` (a version family such
+as Linux 5 where some lines are still supported), red `EOL 2022-11-28`, dim
+`—` when no version or no source is known; `· ends soon` within 90 days of the
+end date. Products are matched to endoflife.date by the CPEs it declares;
+OpenSSH and Exim, which support only their latest release, are judged against
+the newest release NVD knows and **Vulns** / **Max** (how many
 known vulnerabilities affect *this* version, and the worst of them). It opens
 sorted worst first. The **Findings** tab lists every CVE or advisory that
 affects something in the engagement, and `Enter` lists the services it affects.

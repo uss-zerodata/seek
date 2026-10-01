@@ -1075,7 +1075,8 @@ class NmapApp(App[int]):
             for row in rows[end:stop]:
                 table.add_row(
                     Text(self._mark_glyph(row), style=_MARK_STYLE),
-                    *(self._cell(c, query, self._width_at(n), row.style)
+                    *(self._cell(c, query, self._width_at(n), row.style,
+                                 row.tones[n] if n < len(row.tones) else "")
                       for n, c in enumerate(row.cells)))
             end = stop
             if end < least:
@@ -1199,7 +1200,10 @@ class NmapApp(App[int]):
     def _width_at(self, index: int) -> int:
         return self._widths[index] if index < len(self._widths) else 0
 
-    def _cell(self, value: str, query, width: int = 0, style: str = "") -> Text:
+    _TONES = {"ok": "green", "warn": "yellow", "bad": "bold red", "dim": "dim"}
+
+    def _cell(self, value: str, query, width: int = 0, style: str = "",
+              tone: str = "") -> Text:
         """Render a cell, highlighting the characters the filter matched.
 
         Without this the filter narrows the list but never says *why* a row
@@ -1207,7 +1211,10 @@ class NmapApp(App[int]):
         highlighting matched characters in a result row.
         """
         shown = clip_cells(str(value), width) if width else str(value)
-        cell = Text(shown, no_wrap=True, style=style)
+        # A tone colours one cell - the support column's green, yellow or red is
+        # its answer at a glance; `style` is a whole heading row's.
+        tint = self.config.theme.get(f"tone_{tone}", self._TONES.get(tone, "")) if tone else ""
+        cell = Text(shown, no_wrap=True, style=style or tint)
         if query is None or not shown or style:
             # A styled row is a section heading: it carries no filter text, so
             # there is nothing on it for the filter to have matched.

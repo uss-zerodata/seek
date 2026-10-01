@@ -44,6 +44,9 @@ class Row:
     section_rank: int = 0
     heading: bool = False
     style: str = ""            # applied to the whole row, for heading rows
+    # Per cell, aligned with `cells`: how a value reads at a glance - "ok",
+    # "warn", "bad", "dim" or "". The support column's colour is the answer.
+    tones: tuple[str, ...] = ()
     # What this row stands for, for marking and export: one host, one service on
     # a host, or every pair in a bucket. Filled here because the builders have
     # both halves in hand; the alternative is unwrapping `target` by type at
@@ -619,7 +622,15 @@ def service_everywhere(svc: Service, hosts: list[Host]) -> View:
 INVENTORY_COLUMNS = ("Product", "Version", "Support", "Vulns", "Max", "Hosts", "Svcs",
                      "Conflict", "CPE", "Kind", "Confidence")
 NO_DB = "no vulndb"
-SUPPORT_RANK = {"eol": 3, "behind": 2, "current": 1, "unknown": 0}
+SUPPORT_RANK = {"eol": 4, "behind": 3, "mixed": 2, "current": 1, "unknown": 0}
+
+
+def _severity_tone(a, missing: bool) -> str:
+    if missing or a is None or not a.findings:
+        return ""
+    sev = a.max_severity.upper()
+    return "bad" if sev in ("CRITICAL", "HIGH") else "warn" if sev in ("MEDIUM",
+                                                                       "MODERATE") else ""
 NO_CPE = "no CPE"
 KIND_SHORT = {"a": "app", "o": "os", "h": "hw"}
 
@@ -643,7 +654,14 @@ def support_cell(a: vmatch.Assessment | None, missing: bool) -> str:
         return NO_DB
     if a is None or a.support.status == "unknown":
         return ABSENT
-    return a.support.label() + (" (ending soon)" if a.support.ending_soon else "")
+    return a.support.label() + (" · ends soon" if a.support.ending_soon else "")
+
+
+def support_tone(a: vmatch.Assessment | None, missing: bool) -> str:
+    if missing or a is None:
+        return "dim"
+    return "warn" if a.support.ending_soon and a.support.status == "current" \
+        else a.support.tone
 
 
 def vulns_cell(a: vmatch.Assessment | None, versioned: bool, missing: bool) -> str:
@@ -672,6 +690,8 @@ def lookup_words(a: vmatch.Assessment | None) -> list[str]:
     if a is None:
         return []
     words = [a.support.status if a.support.status != "unknown" else ""]
+    if a.support.status in ("current", "mixed"):
+        words.append("supported")
     if a.support.status in ("eol", "behind"):
         words.append("unsupported")
     if a.support.ending_soon:
@@ -698,12 +718,13 @@ def _entry_row(e: inv_mod.Entry, a: vmatch.Assessment | None = None,
                vulns_cell(a, bool(e.version), missing), "" if missing else max_cell(a),
                str(len(hosts)), str(e.service_count), "conflict" if e.conflicting else "",
                cpe_cell(e.cpe22), KIND_SHORT.get(e.kind, e.kind), e.confidence),
+        tones=("", "", support_tone(a, missing), "", _severity_tone(a, missing)),
         text=" ".join(w for w in words if w),
         target=e,
         records=records,
         addresses=tuple(h.address for h in hosts),
         sort_key=(e.product.casefold(), version_key(e.version),
-                  SUPPORT_RANK.get(a.support.status, 0) if a is not None and not missing
+                  SUPPORT_RANK.get(a.support.status, -1) if a is not None and not missing
                   else -1, count, score, len(hosts), e.service_count, e.conflicting,
                   e.cpe22[:1], e.kind, -e.rank),
     )
@@ -761,6 +782,8 @@ def _affected_row(a: vmatch.Affected, assessment: vmatch.Assessment | None) -> R
              "likely" if f.undecided else "", "tested confirmed" if f.tested else "",
              f.summary, *lookup_words(assessment)[:3]]
     return Row(
+        tones=("", "bad" if f.tested else "", "", "", "", "", "", "", "",
+               support_tone(assessment, False) if a.entry is not None else ""),
         cells=(f.id, said, f.severity.lower() or ABSENT,
                f"{f.score:.1f}" if f.score is not None else ABSENT,
                a.product or ABSENT, (a.version or ABSENT) if a.entry is not None else ABSENT,

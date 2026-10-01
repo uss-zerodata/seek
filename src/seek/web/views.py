@@ -237,5 +237,6 @@ def _row_out(session: Session, model, r: vdefs.Row):
 
     shots, total = ([], 0) if r.heading else row_shots(model, r)
     return s.RowOut(step=step_of(r) if not r.heading else "", cells=list(r.cells),
+                    tones=list(r.tones),
                     heading=r.heading, section=r.section, mark=mark_state(session, r),
                     opens=_opens(r) and not r.heading, shots=shots, shots_total=total)

@@ -330,23 +330,23 @@ def update_osv(con, fetch: Fetcher, urls: sources.Urls, progress: Progress,
 
 
 def update_eol(con, fetch: Fetcher, urls: sources.Urls, progress: Progress) -> Result:
+    """endoflife.date's whole catalogue in one request: every product's release
+    lines, and the CPEs it declares - which is what maps the inventory's
+    products to it without a hand-kept table (`eol.SLUGS` only overrides)."""
     result = Result("eol")
-    known = set(json.loads(fetch.get(urls.eol_all())))
-    slugs = sorted(set(eol.SLUGS.values()))
-    rows: list[tuple[str, ...]] = []
-    for i, slug in enumerate(slugs):
-        progress("eol", i, len(slugs), f"release data · {slug}")
-        if slug not in known:
-            result.notes.append(f"endoflife.date does not know '{slug}'")
-            continue
-        data = fetch.get(urls.eol_product(slug))
-        result.bytes += len(data)
-        rows += sources.parse_eol(slug, json.loads(data))
+    data = fetch.get(urls.eol_full(), lambda n: progress(
+        "eol", n, 0, f"downloading · {_of(n, 0)}"))
+    result.bytes = len(data)
+    lines, cpes, names = sources.parse_eol_full(json.loads(data))
+    for slug in sorted(set(eol.SLUGS.values()) - names):
+        result.notes.append(f"endoflife.date does not know '{slug}'")
     with _Tx(con):
         con.execute("delete from eol")
-        con.executemany("insert into eol values (?, ?, ?, ?, ?, ?, ?)", rows)
-    result.records = len(rows)
-    progress("eol", len(slugs), len(slugs), "done")
+        con.execute("delete from eol_cpe")
+        con.executemany("insert into eol values (?, ?, ?, ?, ?, ?, ?, ?)", lines)
+        con.executemany("insert or ignore into eol_cpe values (?, ?)", cpes)
+    result.records = len(lines)
+    progress("eol", 1, 1, f"done · {len(names)} products, {len(cpes)} CPE names")
     return result
 
 
