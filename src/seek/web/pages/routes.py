@@ -163,14 +163,22 @@ def capture(request: Request, capture_id: str, m: WebModel = Depends(model)):
 # --- every overview, as the terminal has them --------------------------------------
 
 
+def _flag(value: str) -> bool:
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
 @router.get("/v/{tab}", response_class=HTMLResponse)
 def overview(request: Request, tab: str, path: str = "", q: str = "",
-             sort: int | None = None, desc: bool = False, up: bool = False,
+             sort: int | None = None, desc: str = "", up: bool = False,
              ports: bool = False, open: bool = False, sel: str = "", offset: int = 0,
              limit: int = 500, fragment: bool = False,
              sess=Depends(session), cache=Depends(places), m=Depends(model)):
     """One level of one tab. Its URL is its state: the browser's back button
     returns to the level before with its own filter, sort and selected row."""
+    # A flag, read leniently: `desc=` (empty) is ascending rather than a 422 the
+    # browser would show instead of the list - links written before this fix,
+    # and any bookmarked from them, carry exactly that.
+    desc = _flag(desc)
     try:
         found = views.overview(sess, cache, tab, split_path(path), q, sort, desc, up,
                                ports, open, offset, limit, m)

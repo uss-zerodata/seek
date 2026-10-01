@@ -6,7 +6,9 @@
 {% for col in view.columns %}
   {% set i = loop.index0 %}
   {% if i == 1 %}<th class="shots"></th>{% endif %}
-  <th><a class="sort" href="?{{ dict(here, sort=i, desc=("1" if i == view.sort and not view.desc else "")) | urlencode }}">{{ loop.index }} {{ col }}{% if i == view.sort %} {{ "↓" if view.desc else "↑" }}{% endif %}</a></th>
+  {# Descending is `desc=1`; ascending leaves the key out - an empty `desc=` is not a boolean. #}
+  {% set link = dict(here, sort=i) %}{% if i == view.sort and not view.desc %}{% set link = dict(link, desc="1") %}{% endif %}
+  <th><a class="sort" href="?{{ link | urlencode }}">{{ loop.index }} {{ col }}{% if i == view.sort %} {{ "↓" if view.desc else "↑" }}{% endif %}</a></th>
 {% endfor %}</tr></thead>
 <tbody>
 {% for r in view.rows %}

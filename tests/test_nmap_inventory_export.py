@@ -185,3 +185,21 @@ def test_the_browser_update_is_refused_while_one_runs(looked_up):
     finally:
         looked_up._vulndb_lock.release()
     assert client.post("/api/v1/vulndb/cancel").status_code == 409
+
+
+# --- sorting the web overviews by their column headings ---------------------------------
+
+
+def test_a_column_heading_sorts_instead_of_failing(sess):
+    """`desc=` (empty) used to be a 422 shown in place of the list."""
+    import re
+
+    client = TestClient(create_app(CachedSource(lambda: sess.scans, lambda: sess.shots), sess))
+    page = client.get("/v/inventory", params={"sort": "2", "desc": ""})
+    assert page.status_code == 200 and "<table" in page.text
+    from html import unescape
+    links = [unescape(h) for h in re.findall(r'class="sort" href="\?([^"]*)"', page.text)]
+    assert links and not any(re.search(r"(^|&)desc=(&|$)", h) for h in links), links
+    assert any("sort=2&desc=1" in h for h in links), "the sorted column's link reverses it"
+    flipped = client.get("/v/inventory", params={"sort": "2", "desc": "1"})
+    assert flipped.status_code == 200 and "↓" in flipped.text
