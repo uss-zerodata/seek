@@ -40,6 +40,16 @@ def capture_groups(by: str, q: str = "", sort: str = query.DEFAULT_SORT, desc: b
                                 max(1, min(per_group, 100)))
 
 
+@router.get("/stacks", response_model=s.StackPage)
+def capture_stacks(q: str = "", sort: str = query.DEFAULT_SORT, desc: bool = False,
+                   offset: int = 0, limit: int = query.DEFAULT_LIMIT,
+                   per_stack: int = query.PER_STACK, m: WebModel = Depends(model)):
+    """The gallery's default: one stack per host:port, its first capture in front."""
+    if sort not in query.SORTS:
+        raise HTTPException(422, f"sort must be one of {', '.join(query.SORTS)}")
+    return query.capture_stacks(m, q, sort, desc, offset, limit, max(1, min(per_stack, 100)))
+
+
 @router.get("/{capture_id}", response_model=s.CaptureOut,
             responses={404: {"model": s.ErrorOut}})
 def get_capture(capture_id: str, m: WebModel = Depends(model)):

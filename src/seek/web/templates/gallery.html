@@ -18,7 +18,8 @@
 </form>
 <nav class="groupings" aria-label="group the screenshots">
   <span class="dim small">group by <kbd>b</kbd></span>
-  <a href="/?{{ dict(keep, group="") | urlencode }}" {% if not group %}aria-current="true"{% endif %}>nothing</a>
+  <a href="/?{{ dict(keep, group="") | urlencode }}" {% if not group %}aria-current="true"{% endif %} title="one card per host:port, its other screenshots stacked behind it">port (stacked)</a>
+  <a href="/?{{ dict(keep, group="every") | urlencode }}" {% if group == "every" %}aria-current="true"{% endif %} data-group="every">every screenshot</a>
   {% for key, label in groupings.items() %}<a href="/?{{ dict(keep, group=key) | urlencode }}" {% if group == key %}aria-current="true"{% endif %} data-group="{{ key }}">{{ label }}</a>{% endfor %}
 </nav>
 {% if scope %}
@@ -28,7 +29,7 @@
   {% if scope.title is defined %}the page title “{{ scope.title or "(none)" }}”{% endif %}
   {% if scope.similar %}one look-alike group{% endif %}
   {% if scope.url_host %}{{ scope.url_host }}{% if scope.url_port %}:{{ scope.url_port }}{% endif %} (not in the scans){% endif %}
-  · <a href="/?{{ {"q": q, "sort": sort, "group": group} | urlencode }}">{{ "back to the groups" if group else "show every capture" }}</a></p>
+  · <a href="/?{{ {"q": q, "sort": sort, "group": group} | urlencode }}">{{ "back to the groups" if group in groupings else "back to every port" }}</a></p>
 {% endif %}
-<div id="list">{% if group and not scope %}{% include "_groups.html" %}{% else %}{% include "_captures.html" %}{% endif %}</div>
+<div id="list">{% if group in groupings and not scope %}{% include "_groups.html" %}{% elif not group and not scope %}{% include "_stacks.html" %}{% else %}{% include "_captures.html" %}{% endif %}</div>
 {% endblock %}

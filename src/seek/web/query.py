@@ -242,6 +242,10 @@ def captures(model: WebModel, q: str = "", offset: int = 0,
 GROUPINGS: dict[str, str] = {
     "host": "Host", "service": "Service", "title": "Page title", "similar": "Look-alike",
 }
+# The gallery's default: one card per host:port, its other screenshots stacked
+# behind it. `group=every` shows each screenshot on its own.
+EVERY = "every"
+PER_STACK = 24
 PER_GROUP = 12
 
 
@@ -300,6 +304,32 @@ def _group_of(p: Placed, by: str) -> tuple[str, str, dict, tuple]:
     if not key:
         return "none", "(no screenshot to compare)", {"q": "failed"}, (1, "")
     return f"p:{key}", "", {"similar": key}, (0, key)
+
+
+def capture_stacks(model: WebModel, q: str = "", sort: str = DEFAULT_SORT,
+                   desc: bool = False, offset: int = 0, limit: int = DEFAULT_LIMIT,
+                   per_stack: int = PER_STACK) -> s.StackPage:
+    """The filtered captures, one stack per host:port - so ten screenshots of
+    one web server (by address, by each name, run after run) read as one
+    service, not ten. A stack sits where its first capture sorts; its front card
+    is that capture."""
+    ordered, loose = _filtered(model, q, sort, desc, Scope())
+    stacks: dict[str, list] = {}
+    for p in ordered:
+        key, label, scope, _order = _group_of(p, "service")
+        stacks.setdefault(key, [label, scope, []])[2].append(p)
+    entries = list(stacks.items())
+    limit = max(1, min(limit, MAX_LIMIT))
+    offset = max(0, offset)
+    out = []
+    for key, (label, scope, members) in entries[offset:offset + limit]:
+        out.append(s.Stack(
+            key=key, label=label, count=len(members),
+            first=_summary(model, members[0]),
+            rest=[_summary(model, p) for p in members[1:per_stack]],
+            more=urlencode({k: v for k, v in scope.items() if k != "q"})))
+    return s.StackPage(stacks=out, total=len(entries), captures=len(ordered),
+                       offset=offset, limit=limit, loose=loose)
 
 
 def capture_groups(model: WebModel, by: str, q: str = "", sort: str = DEFAULT_SORT,

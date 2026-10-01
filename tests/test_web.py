@@ -467,13 +467,14 @@ def test_the_gallery_narrows_to_one_service(world):
 
 
 def test_a_card_offers_the_other_captures_of_its_service(world):
+    """Shown each on its own (`group=every`), a card links to its siblings."""
     _scans_, _shots, _source, client = world
-    html = client.get("/?sort=url").text
+    html = client.get("/?sort=url&group=every").text
     assert html.count("all 2 for this service") == 2, "both captures of 192.0.2.1:80"
     link = re.search(r'href="(/\?[^"]*address=192.0.2.1[^"]*)"', html).group(1)
     narrowed = client.get(link.replace("&amp;", "&")).text
     assert narrowed.count('class="card"') == 2
-    assert "show every capture" in narrowed
+    assert "back to every port" in narrowed
 
 
 def test_the_next_page_keeps_the_sort_and_the_scope(world):
@@ -522,3 +523,36 @@ def test_no_route_on_the_loop_reads_the_model():
         uses_model = any(d.call is model for d in route.dependant.dependencies)
         if uses_model:
             assert not inspect.iscoroutinefunction(route.endpoint), route.path
+
+
+def test_captures_of_one_port_are_stacked_by_default(world):
+    """Two captures of 192.0.2.1:80 (by address and by name) are one card with
+    a count, the other behind it - not two services."""
+    _scans_, _shots, source, client = world
+    html = client.get("/?sort=url").text
+    stacks = re.findall(r'<div class="stack" data-key="([^"]+)"', html)
+    # ... and two of sso.hektor.cc:443, a host the scans do not have.
+    assert sorted(stacks) == ["s:192.0.2.1/tcp/80", "u:sso.hektor.cc:443"]
+    assert re.search(r'class="stack-count"[^>]*>2<', html), "the badge says how many"
+    assert "1 more of 192.0.2.1  80/tcp" in html, "and opening it shows the rest"
+    assert "all 2 for this service" not in html, "the stack replaces the sibling link"
+    page = query.capture_stacks(source.snapshot(), sort="url")
+    assert page.captures == len(source.snapshot().captures)
+    assert page.total == page.captures - sum(st.count - 1 for st in page.stacks)
+    stacked = next(st for st in page.stacks if st.key == "s:192.0.2.1/tcp/80")
+    assert {stacked.first.url, *(c.url for c in stacked.rest)} == {
+        "http://192.0.2.1", "http://alpha.example"}
+
+
+def test_every_screenshot_is_still_one_click_away(world):
+    _scans_, _shots, source, client = world
+    flat = client.get("/", params={"group": "every"}).text
+    assert flat.count('class="card"') == len(source.snapshot().captures)
+    assert 'class="stack"' not in flat
+
+
+def test_the_api_serves_the_stacks(world):
+    _scans_, _shots, _source, client = world
+    page = client.get("/api/v1/captures/stacks", params={"sort": "url"}).json()
+    counts = sorted(st["count"] for st in page["stacks"])
+    assert counts[-1] == 2 and page["captures"] == sum(counts)

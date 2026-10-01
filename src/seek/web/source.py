@@ -24,6 +24,7 @@ from seek.gowitness.results import Capture, Captures, canonical_url
 from seek.nmap import bulk
 from seek.nmap.export import service_urls
 from seek.nmap.models import Host, ScanSet, Service
+from seek.nmap.session import hosts_by_name, service_at
 from seek.tui.nmap import views as vdefs
 
 # (address, protocol, port) - how a service on one host is addressed.
@@ -75,8 +76,16 @@ class WebModel:
             for svc in host.services:
                 for url in service_urls(svc, host):
                     owner.setdefault(canonical_url(url), (host, svc))
+        by_name = None
         for capture in captures:
             host, svc = owner.get(canonical_url(capture.url), (None, None))
+            if host is None:
+                # The session's fallback, so the gallery and the inventory put
+                # a capture on the same service: by host and port, whatever nmap
+                # called the port.
+                if by_name is None:
+                    by_name = hosts_by_name(scans.hosts)
+                host, svc = service_at(capture.url, by_name) or (None, None)
             placed = Placed(capture_id(capture), capture, host, svc)
             model.captures.append(placed)
             model.by_id[placed.id] = placed

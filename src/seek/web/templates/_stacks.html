@@ -1,0 +1,25 @@
+{% from "_macros.html" import shot_card %}
+{% if understood %}<p class="understood">Showing screenshots with: {{ understood | join(" · ") }}{% if page.loose %} · <a class="loose" href="?{{ dict(keep, q=q ~ " ~") | urlencode }}">+{{ page.loose }} looser - show them</a>{% endif %}</p>{% endif %}
+<p class="count">{{ page.captures }} screenshot(s) of {{ page.total }} host:port(s){% if page.captures > page.total %} · several of a port are stacked behind one card - <a href="/?{{ dict(keep, group="every") | urlencode }}">show each on its own</a>{% endif %}</p>
+{% if page.stacks %}
+<div class="grid">
+{% for st in page.stacks %}
+{% if st.count == 1 %}{{ shot_card(st.first) }}
+{% else %}
+<div class="stack" data-key="{{ st.key }}">
+  <div class="stack-front">{{ shot_card(st.first, siblings=false) }}<span class="stack-count" title="{{ st.count }} screenshots of {{ st.label }}" aria-label="{{ st.count }} screenshots">{{ st.count }}</span></div>
+  <details class="stack-more">
+    <summary>{{ st.count - 1 }} more of {{ st.label }}</summary>
+    <div class="grid">{% for c in st.rest %}{{ shot_card(c, siblings=false) }}{% endfor %}</div>
+    {% if st.count > st.rest | length + 1 %}<p><a class="more" href="/?{{ st.more }}">all {{ st.count }} of this port →</a></p>{% endif %}
+  </details>
+</div>
+{% endif %}
+{% endfor %}
+</div>
+{% else %}
+<p class="empty">{% if q %}nothing matches “{{ q }}”{% else %}no captures found - run one from the viewer's export dialog, or open the viewer on a directory that holds a gowitness database{% endif %}</p>
+{% endif %}
+{% if page.offset + page.stacks | length < page.total %}
+<p><a class="more" href="?{{ dict(keep, offset=page.offset + page.limit) | urlencode }}">next {{ page.limit }} host:ports →</a></p>
+{% endif %}

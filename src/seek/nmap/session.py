@@ -121,10 +121,26 @@ class Subscription:
                 self.queue.put_nowait(event)
 
 
-def _by_host_and_port(url: str, by_name: dict) -> tuple[str, str, int] | None:
-    """The service a URL's host and port name, whatever nmap called it. Only
-    an *open* TCP port counts: a capture of a port the scans saw closed says
-    the scans are stale, not where the page runs."""
+def hosts_by_name(hosts) -> dict[str, object]:
+    """Every address and every name a host is known by -> the host."""
+    from seek.nmap import names as names_mod
+
+    out: dict[str, object] = {}
+    for host in hosts:
+        out.setdefault(host.address.lower(), host)
+        for name in host.hostnames:
+            out.setdefault(name.lower(), host)
+        for name, _source in names_mod.host_names(host):
+            out.setdefault(name.lower(), host)
+    return out
+
+
+def service_at(url: str, by_name: dict):
+    """`(host, service)` for the service a URL's host and port name, whatever
+    nmap called the port - the fallback when a capture's URL is not one a
+    record builds. Only an *open* TCP port counts: a capture of a port the
+    scans saw closed says the scans are stale, not where the page runs.
+    Shared by the session and the web model, so both place a capture alike."""
     from urllib.parse import urlsplit
 
     try:
@@ -137,7 +153,15 @@ def _by_host_and_port(url: str, by_name: dict) -> tuple[str, str, int] | None:
         return None
     svc = next((s for s in host.services
                 if s.port == port and s.protocol == "tcp" and s.is_open), None)
-    return (host.address, svc.protocol, svc.port) if svc is not None else None
+    return (host, svc) if svc is not None else None
+
+
+def _by_host_and_port(url: str, by_name: dict) -> tuple[str, str, int] | None:
+    found = service_at(url, by_name)
+    if found is None:
+        return None
+    host, svc = found
+    return (host.address, svc.protocol, svc.port)
 
 
 class Session:
@@ -275,17 +299,7 @@ class Session:
         return self._by_service
 
     def _hosts_by_name(self) -> dict[str, object]:
-        """Every address and every name a host is known by -> the host."""
-        from seek.nmap import names as names_mod
-
-        out: dict[str, object] = {}
-        for host in self.scans.hosts:
-            out.setdefault(host.address.lower(), host)
-            for name in host.hostnames:
-                out.setdefault(name.lower(), host)
-            for name, _source in names_mod.host_names(host):
-                out.setdefault(name.lower(), host)
-        return out
+        return hosts_by_name(self.scans.hosts)
 
     @property
     def unplaced_captures(self) -> list[str]:

@@ -81,7 +81,7 @@ def test_the_grouped_gallery_switches_and_keeps_the_filter(world):  # noqa: F811
     assert {"Home - Hektor.cc", "sso.hektor.cc"} <= set(labels)
     assert html.count('class="card"') == 7, "every hektor capture, grouped"
     switch = dict(re.findall(r'<a href="/\?([^"]+)"[^>]*data-group="(\w+)"', html))
-    assert set(switch.values()) == {"host", "service", "title", "similar"}
+    assert set(switch.values()) == {"every", "host", "service", "title", "similar"}
     for query_ in switch:
         assert "q=hektor" in query_.replace("&amp;", "&"), "the filter survives a switch"
     assert 'name="group" value="title"' in html, "and the filter keeps the grouping"

@@ -400,6 +400,26 @@ class CaptureGroup(BaseModel):
     items: list[CaptureSummary] = []  # the first few
 
 
+class Stack(BaseModel):
+    """Every screenshot of one host:port, shown as one card until opened."""
+
+    key: str
+    label: str                       # "10.0.0.5:443/tcp https" or "name:8080 (not in the scans)"
+    count: int
+    first: CaptureSummary            # the front card: first in the gallery's order
+    rest: list[CaptureSummary] = []  # the others, up to a page's worth
+    more: str                        # query string: the gallery narrowed to this port
+
+
+class StackPage(BaseModel):
+    stacks: list[Stack]
+    total: int                       # stacks (host:port combinations) in all
+    captures: int                    # screenshots in them
+    offset: int = 0
+    limit: int = 100
+    loose: int = 0
+
+
 class GroupPage(BaseModel):
     by: str
     groups: list[CaptureGroup]

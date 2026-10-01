@@ -88,7 +88,7 @@ def gallery(request: Request, q: str = "", offset: int = 0,
             url_port: int | None = None, group: str = "",
             m: WebModel = Depends(model)):
     sort = sort if sort in query.SORTS else query.DEFAULT_SORT
-    group = group if group in query.GROUPINGS else ""
+    group = group if group in query.GROUPINGS or group == query.EVERY else ""
     # What the list is narrowed to, and the parameters that keep it narrowed
     # when paging - the "next" link must not drop the sort, the scope or the
     # grouping.
@@ -97,9 +97,13 @@ def gallery(request: Request, q: str = "", offset: int = 0,
                                ("url_host", url_host), ("url_port", url_port))
              if v is not None}
     keep = {"q": q, "sort": sort, **({"desc": "1"} if desc else {}), **scope}
-    if group and not scope:
+    if group in query.GROUPINGS and not scope:
         page = query.capture_groups(m, group, q, sort, desc, offset, min(limit, 100))
         template, part = "gallery.html", "_groups.html"
+    elif not group and not scope:
+        # The default: one card per host:port, the rest stacked behind it.
+        page = query.capture_stacks(m, q, sort, desc, offset, limit)
+        template, part = "gallery.html", "_stacks.html"
     else:
         page = query.captures(m, q, offset, limit, sort, desc, address, protocol, port,
                               title, similar, url_host, url_port)

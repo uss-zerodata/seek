@@ -33,6 +33,21 @@ h3 { font-size: 1rem; margin: 0 0 8px; font-weight: 600; }
 .card { margin: 0; background: var(--card); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .thumb { display: block; aspect-ratio: 16 / 10; background: var(--pill); }
 .thumb img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
+/* Several screenshots of one host:port: one card, the rest stacked behind it -
+   the edges say "more than one", the badge says how many. Opened, the stack
+   takes the whole row so its screenshots are not squeezed into one cell. */
+.stack-front { position: relative; }
+.stack-front .card { box-shadow: 5px 5px 0 -1px var(--card), 5px 5px 0 0 var(--line),
+                                 10px 10px 0 -1px var(--card), 10px 10px 0 0 var(--line); }
+.stack-count { position: absolute; top: 8px; right: 8px; min-width: 1.6em; text-align: center;
+               padding: 1px 8px; border-radius: 999px; background: var(--accent); color: var(--bg);
+               font-weight: 700; font-size: .85rem; }
+.stack-more { margin-top: 14px; }
+.stack-more > summary { cursor: pointer; color: var(--accent); font-size: .9rem; }
+.stack:has(.stack-more[open]) { grid-column: 1 / -1; display: grid; gap: 14px;
+                                grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.stack:has(.stack-more[open]) .stack-more { grid-column: 1 / -1; margin-top: 0; }
+.stack:has(.stack-more[open]) .stack-front .card { box-shadow: none; }
 .noshot { display: flex; height: 100%; align-items: center; justify-content: center;
           padding: 12px; text-align: center; color: var(--dim); font-size: .85rem; }
 figcaption { padding: 8px 10px; font-size: .88rem; }

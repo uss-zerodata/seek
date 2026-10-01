@@ -7,7 +7,7 @@
 {% elif c.status %}<span class="pill {{ 'ok' if c.status < 400 else 'warn' }}">{{ c.status }}</span>{% endif %}
 {%- endmacro %}
 
-{% macro shot_card(c, show_host=true) -%}
+{% macro shot_card(c, show_host=true, siblings=true) -%}
 <figure class="card">
   <a class="thumb" href="/captures/{{ c.id }}">
     {% if c.image %}<img src="{{ c.image }}" alt="screenshot of {{ c.url }}" loading="lazy">
@@ -18,7 +18,7 @@
     {% if c.title %}<div class="line dim">{{ c.title }}</div>{% endif %}
     {% if c.redirected %}<div class="line dim">→ {{ c.final_url }}</div>{% endif %}
     {% if show_host and c.address %}<div class="line"><a href="{{ links.host(c.address) }}">{{ c.address }}</a>{% if c.port %} · <a href="{{ links.port(c.address, c.protocol, c.port) }}">{{ c.port }}/{{ c.protocol }}</a>{% endif %}</div>{% endif %}
-    {% if show_host and c.siblings > 1 %}<div class="line"><a class="siblings" href="/?{{ {"address": c.address, "protocol": c.protocol, "port": c.port} | urlencode }}">all {{ c.siblings }} for this service →</a></div>{% endif %}
+    {% if show_host and siblings and c.siblings > 1 %}<div class="line"><a class="siblings" href="/?{{ {"address": c.address, "protocol": c.protocol, "port": c.port} | urlencode }}">all {{ c.siblings }} for this service →</a></div>{% endif %}
     {% if c.database %}<div class="line dim small" title="{{ c.database }}">{{ c.database.rsplit('/', 2)[-2:] | join('/') }}</div>{% endif %}
   </figcaption>
 </figure>
