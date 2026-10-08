@@ -63,7 +63,12 @@ class DetailScreen(ModalScreen[str | None]):
     """
 
     def __init__(
-        self, result: Result, config: Config, query: ParsedQuery | None = None
+        self,
+        result: Result,
+        config: Config,
+        query: ParsedQuery | None = None,
+        *,
+        top: int | None = None,
     ) -> None:
         super().__init__()
         self._result = result
@@ -71,6 +76,9 @@ class DetailScreen(ModalScreen[str | None]):
         self._query = query
         self._view: FileView | None = None
         self._top = 1  # 1-based first visible line
+        # Where to open instead of on the match: the line this view was on
+        # before it closed to run an open action.
+        self._resume_top = top
         # configured key -> open action id, dismissed back to the app to run
         self._open_keys = {
             config.keys[a]: a for a, _ in _OPEN_ACTIONS if config.keys.get(a)
@@ -128,7 +136,10 @@ class DetailScreen(ModalScreen[str | None]):
             self._show_static(view.error)
             return
         # Open centred on the match, the way the side preview frames it.
-        self._top = self._clamp((view.target or 1) - self._height() // 2)
+        if self._resume_top is not None:
+            self._top = self._clamp(self._resume_top)
+        else:
+            self._top = self._clamp((view.target or 1) - self._height() // 2)
         self._paint()
 
     # --- paging ------------------------------------------------------------

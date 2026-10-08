@@ -15,7 +15,7 @@ An action SHALL operate on the current multi-selection when at least one row is 
 - **THEN** the system asks whether to act on all three or just the highlighted row, and proceeds according to the answer
 
 #### Scenario: Nothing to act on
-- **WHEN** the user triggers an action with no selection and no highlighted row (for example in the empty-query tree view or the no-match state)
+- **WHEN** the user triggers an action with no selection and no highlighted row (for example in the no-match state)
 - **THEN** the system performs nothing and shows a brief "nothing selected" message
 
 ### Requirement: Action invocation
@@ -30,14 +30,14 @@ Each action SHALL be reachable both from an action menu (opened with a dedicated
 - **THEN** the copy action runs without opening the menu
 
 ### Requirement: Open in OS default application
-The system SHALL open the target(s) with the operating system's default application, using the platform opener (`xdg-open` on Linux, `open` on macOS, `start` on Windows), and then exit the session.
+The system SHALL open the target(s) with the operating system's default application, using the platform opener (`xdg-open` on Linux, `open` on macOS, `start` on Windows), detached from the session. The session SHALL stay open and unchanged.
 
 #### Scenario: Open a file in the default app
 - **WHEN** the user triggers "open in default application" on a file row
-- **THEN** the system launches the platform opener for that file and the session exits
+- **THEN** the system launches the platform opener for that file and the session stays open, with the query, the highlighted row and the marks as they were
 
 ### Requirement: Open via the editor table
-The system SHALL open the target(s) in an editor resolved from the configurable editor table, substituting the file path and, for a content match, the matched line number into that editor's command template. When the target is a content match and the editor template has a line placeholder, the editor SHALL be told to jump to that line. Opening an editor SHALL replace the process (or otherwise hand the terminal to the editor) and end the session.
+The system SHALL open the target(s) in an editor resolved from the configurable editor table, substituting the file path and, for a content match, the matched line number into that editor's command template. When the target is a content match and the editor template has a line placeholder, the editor SHALL be told to jump to that line. Opening an editor SHALL lend the terminal to the editor without ending the session: the interface is suspended while the editor runs and SHALL resume when the editor exits, with the query, the highlighted row, the marks and - when the action was triggered there - the detail view as they were. File contents read before the editor ran SHALL be read again afterwards. Only where the terminal cannot be lent (the interface cannot be suspended) MAY the system fall back to replacing the process with the editor.
 
 #### Scenario: Open a content match at its line
 - **WHEN** the user triggers "open in editor" on a content match at line 42 and the resolved editor template is `nvim +{line} {file}`
@@ -46,6 +46,10 @@ The system SHALL open the target(s) in an editor resolved from the configurable 
 #### Scenario: Open a filename match
 - **WHEN** the user triggers "open in editor" on a filename row
 - **THEN** the editor opens the file with no line argument
+
+#### Scenario: Returning from the editor
+- **WHEN** the user opens a result in the editor and then quits the editor
+- **THEN** the interface is back on screen with the same query and the same row highlighted, and the application has not exited
 
 #### Scenario: Multiple targets to one editor
 - **WHEN** the user confirms "open in editor" for three selected files
@@ -119,11 +123,11 @@ For a directory target the system SHALL support copy, export, and (as the primar
 - **THEN** the directory's path is printed to stdout on exit so it can still be used
 
 ### Requirement: Restore the terminal before external programs
-Before replacing the process with, or handing the terminal to, an external program, and before writing action output to stdout, the system SHALL restore the terminal from the full-screen interface state.
+Before handing the terminal to an external program, and before writing action output to stdout, the system SHALL restore the terminal from the full-screen interface state.
 
 #### Scenario: Editor gets a clean terminal
 - **WHEN** an "open in editor" action runs
-- **THEN** the interface is torn down and the terminal restored before the editor starts, so the editor renders correctly
+- **THEN** the interface is suspended and the terminal restored before the editor starts, so the editor renders correctly
 
 #### Scenario: stdout output is not mixed with UI escape codes
 - **WHEN** an action that prints to stdout runs

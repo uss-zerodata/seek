@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import contextlib
+
 import pytest
-from textual.containers import VerticalScroll
+from textual.containers import Vertical
 from textual.geometry import Region
 from textual.widgets import Input, OptionList
 
@@ -11,7 +13,9 @@ from seek.models import MatchKind, ResultSet, ResultSetState
 from seek.scope import build_scope
 from seek.session import SessionConfig
 from seek.tui.app import _SPINNER, SeekApp
+from seek.tui.detail import DetailScreen
 from seek.tui.results import ResultsList
+from seek.tui.tree import TreeList
 
 pytestmark = pytest.mark.asyncio
 
@@ -50,7 +54,7 @@ async def test_empty_query_shows_tree(tree):
     app = SeekApp(_session(tree))
     async with app.run_test() as pilot:
         await _settle(pilot)
-        assert app.query_one("#tree", VerticalScroll).display is True
+        assert app.query_one("#tree", Vertical).display is True
         assert app.query_one(ResultsList).display is False
         await pilot.press(*"main")
         await pilot.pause(0.2)
@@ -58,7 +62,7 @@ async def test_empty_query_shows_tree(tree):
         for _ in range(4):
             await pilot.press("backspace")
         await pilot.pause(0.2)
-        assert app.query_one("#tree", VerticalScroll).display is True
+        assert app.query_one("#tree", Vertical).display is True
 
 
 async def test_query_box_keeps_focus_and_letters_edit(tree):
@@ -428,7 +432,8 @@ async def test_no_match_state(tree):
 
 
 def _render(widget) -> str:
-    region = Region(0, 0, widget.size.width, max(1, widget.size.height))
+    # The outer size: `size` leaves the padding out, and cut the last cells off.
+    region = Region(0, 0, widget.outer_size.width, max(1, widget.outer_size.height))
     return "\n".join(
         "".join(s.text for s in strip) for strip in widget.render_lines(region)
     )
@@ -570,7 +575,7 @@ async def test_esc_clears_query_before_quitting(tree):
         await pilot.pause(0.1)
         assert app.query_one("#query", Input).value == ""
         assert app.is_running  # did not quit
-        assert app.query_one("#tree", VerticalScroll).display is True
+        assert app.query_one("#tree", Vertical).display is True
 
 
 async def test_open_from_detail_view_runs_the_action(tree):
@@ -592,7 +597,7 @@ async def test_empty_state_heading(tree):
     app = SeekApp(_session(tree))
     async with app.run_test(size=(120, 40)) as pilot:
         await _settle(pilot)
-        shown = _render(app.query_one("#tree-body"))
+        shown = _render(app.query_one("#tree-heading"))
         assert f"root: {tree.name}" in shown
         assert ".gitignore off" in shown
 
@@ -961,3 +966,132 @@ async def test_ctrl_d_pages_the_detail_view_rather_than_toggling(tmp_path):
         await pilot.press("ctrl+c")
         await pilot.pause(0.1)
         assert app.modes == modes and app.is_running
+
+
+# --- the tree is a list: move, mark, open ------------------------------------
+
+
+def _goto(app, rel: str) -> None:
+    tl = app.query_one(TreeList)
+    tl.highlighted = next(i for i, r in enumerate(tl.results) if r and r.rel == rel)
+
+
+async def test_tree_has_a_cursor_before_any_query(tree):
+    app = SeekApp(_session(tree))
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _settle(pilot)
+        tl = app.query_one(TreeList)
+        rels = [r.rel for r in tl.results if r]
+        assert "src/main.py" in rels and "notes.txt" in rels
+        assert "node_modules" not in rels, "the walk's exclusions still apply"
+        first = tl.current()
+        await pilot.press("down")
+        await pilot.pause(0.05)
+        assert tl.current() is not first
+        await pilot.press("up")
+        await pilot.pause(0.05)
+        assert tl.current() is first
+        hints = _render(app.query_one("#hint-bar"))
+        assert "mark" in hints and "edit" in hints and "open" in hints
+
+
+async def test_tree_entries_can_be_marked_and_copied(tree, monkeypatch):
+    copied = []
+    monkeypatch.setattr("seek.actions.copy_to_clipboard", copied.append)
+    app = SeekApp(_session(tree))
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _settle(pilot)
+        for rel in ("src/main.py", "notes.txt"):
+            _goto(app, rel)
+            await pilot.press(DEFAULT_KEYS["mark"])
+            await pilot.pause(0.05)
+        assert "2 marked" in _render(app.query_one("#status"))
+        assert "●" in _render(app.query_one(TreeList))
+        await pilot.press(DEFAULT_KEYS["copy"])
+        await pilot.pause(0.2)
+        await pilot.press("enter")  # the confirm dialog: "act on all" is focused
+        await pilot.pause(0.2)
+    assert copied and set(copied[0].splitlines()) == {"src/main.py", "notes.txt"}
+
+
+async def test_enter_in_the_tree_views_a_file_and_enters_a_directory(tree):
+    app = SeekApp(_session(tree))
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _settle(pilot)
+        _goto(app, "notes.txt")
+        await pilot.press("enter")
+        await pilot.pause(0.2)
+        assert isinstance(app.screen, DetailScreen)
+        await pilot.press("escape")
+        await pilot.pause(0.1)
+        _goto(app, "src")
+        await pilot.press("enter")
+        await pilot.pause(0.2)
+        assert app.root == tree / "src"
+        tl = app.query_one(TreeList)
+        assert {r.rel for r in tl.results if r} == {"main.py", "helper.py"}
+        await pilot.press("escape")  # back out, onto the directory just left
+        await pilot.pause(0.2)
+        assert app.root == tree and tl.current().rel == "src"
+
+
+# --- opening keeps the session -----------------------------------------------
+
+
+def _lend_terminal(app, monkeypatch) -> list[list[str]]:
+    """Let `suspend` work under the headless driver and record what would run."""
+    ran: list[list[str]] = []
+    monkeypatch.setattr(app, "suspend", contextlib.nullcontext)
+    monkeypatch.setattr("seek.actions.resolve_program", lambda argv: argv)
+    monkeypatch.setattr("seek.actions.run_foreground", lambda argv: ran.append(argv) or 0)
+    return ran
+
+
+async def test_open_in_editor_returns_to_the_session(tree, monkeypatch):
+    app = SeekApp(_session(tree))
+    ran = _lend_terminal(app, monkeypatch)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _settle(pilot)
+        await pilot.press(*"mainpy")
+        await pilot.pause(0.2)
+        cur = app.query_one(ResultsList).current()
+        await pilot.press(DEFAULT_KEYS["open_editor"])
+        await pilot.pause(0.3)
+        assert ran and ran[0][-1] == str(cur.path)
+        assert app.is_running and app.exit_request is None
+        assert app.query_one("#query", Input).value == "mainpy"
+        assert app.query_one(ResultsList).current().identity() == cur.identity()
+
+
+async def test_open_from_the_tree_and_from_the_detail_view_keep_their_place(
+    tree, monkeypatch
+):
+    app = SeekApp(_session(tree))
+    ran = _lend_terminal(app, monkeypatch)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _settle(pilot)
+        _goto(app, "notes.txt")
+        await pilot.press(DEFAULT_KEYS["open_editor"])
+        await pilot.pause(0.3)
+        assert ran[-1][-1] == str(tree / "notes.txt")
+        assert app.query_one(TreeList).current().rel == "notes.txt"
+        await pilot.press("enter")
+        await pilot.pause(0.2)
+        await pilot.press(DEFAULT_KEYS["open_editor"])
+        await pilot.pause(0.3)
+        assert len(ran) == 2
+        assert isinstance(app.screen, DetailScreen), "the detail view comes back"
+        assert app.is_running
+
+
+async def test_open_in_default_app_does_not_exit(tree, monkeypatch):
+    spawned = []
+    monkeypatch.setattr("seek.actions.spawn_detached", spawned.append)
+    app = SeekApp(_session(tree))
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _settle(pilot)
+        _goto(app, "notes.txt")
+        await pilot.press(DEFAULT_KEYS["open_default"])
+        await pilot.pause(0.2)
+        assert spawned and spawned[0][-1] == str(tree / "notes.txt")
+        assert app.is_running and app.exit_request is None

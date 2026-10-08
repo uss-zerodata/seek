@@ -84,10 +84,10 @@ src/seek/
     engine.py       SearchEngine: name index + content search, modes, cap, publish
   tui/
     app.py          SeekApp: layout, key bindings, search/preview workers, actions
-    results.py      ResultsList (OptionList subclass): row rendering, clipping, marks
+    results.py      RowList (cursor + marks) and ResultsList: row rendering, clipping
     preview.py      build_preview(): windowed syntax + query highlight; header
     detail.py       DetailScreen: full-file pager (j/k/g/G/Ctrl+D…)
-    tree.py         render_tree(): coloured directory tree (Rich Text)
+    tree.py         tree_rows() / render_tree(); TreeList: the empty-query tree as a list
     menu.py         action menu / confirm / prompt / choice modal screens
     help.py         help overlay
     query_input.py  QueryInput(Input): `?`-on-empty opens help
@@ -266,10 +266,29 @@ unreadable. Rendered *text* (rows, tree, preview, status, hints) is styled with 
 colours pulled from `config.theme` (`DEFAULT_THEME` in `config.py`) so users can
 override them; the highlighted row uses `text-style: reverse` (theme-independent).
 
-**Actions that hand off the terminal** (open in editor / default app, print to
-stdout, `cd`) cannot run while Textual owns the screen. They set
-`app.exit_request` and call `self.exit(0)`; `run_session` then calls
-`perform_exit_request` *after* `app.run()` returns and the terminal is restored.
+**Opening keeps the session.** An editor is run inside `App.suspend()`
+(`ActionsMixin._run_in_terminal`): Textual gives the terminal back, the editor
+runs to completion on the event loop's thread, and the app resumes exactly as
+it was. Afterwards `after_external_edit` drops the content cache and re-runs the
+query - the cursor survives because the query text is unchanged. The default
+application and `code` are windows of their own, so they are `spawn_detached`
+and nothing is suspended. Where the driver cannot suspend (the headless driver
+tests run under, among others) the editor falls back to the old exec-and-exit;
+a test that wants the real path replaces `app.suspend` with a null context.
+
+**Actions that end the session** (print to stdout, `cd`) cannot run while
+Textual owns the screen. They set `app.exit_request` and call `self.exit(0)`;
+`run_session` then calls `perform_exit_request` *after* `app.run()` returns and
+the terminal is restored.
+
+**The tree is a list, and a tree entry is a `Result`.** `TreeList` and
+`ResultsList` share `RowList` (cursor, marks, `current()` /
+`selected_results()`), and `SeekApp._active_list()` returns whichever one the
+query state puts on screen. Navigation, marking and every action go through it,
+so nothing downstream knows which list a target came from. Two things differ on
+purpose: the tree reads top-down, and `Enter` on a directory re-roots instead of
+opening a detail view. Marks belong to their list - the two are never on screen
+together. Do not `query_one(RowList)`: it matches both.
 
 ## Conventions
 

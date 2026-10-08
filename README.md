@@ -645,7 +645,17 @@ dropped so the result list stays readable; the hint bar is always kept. Colours
 overridable in the `[theme]` config table.
 
 With an empty query the result list is replaced by a tree of the current root,
-headed by a line naming the root and the walk semantics in effect.
+headed by a line naming the root and the walk semantics in effect. The tree is
+a list like any other: `↑`/`↓` move through it, `Tab` marks an entry, and the
+open, copy and export keys act on the entry under the cursor (or on the marked
+ones) without a query having been typed. `Enter` views a file and steps into a
+directory; `Esc` steps back out.
+
+Opening a file does not end the session. An editor takes over the terminal and
+`seek` is back, where you left it, when the editor exits - the same query, the
+same row, the same detail view; file contents are re-read, since the editor may
+have changed them. The OS default application and `code` open in their own
+windows while `seek` stays on screen.
 
 ## Keybindings
 
@@ -659,7 +669,7 @@ opens the full reference, including the query syntax.
 | `←` `→` | move the query cursor |
 | `↑` `↓` | move the highlighted row (cursor starts on the best match) |
 | `PageUp` `PageDown` | page the list |
-| `Enter` | open the full-screen detail view |
+| `Enter` | open the full-screen detail view (in the tree: step into a directory) |
 | `Esc` | close overlay/detail → clear a non-empty query → pop breadcrumb → quit |
 | `Tab` | mark / unmark the row |
 | `Shift+Tab` | clear all marks |
@@ -670,9 +680,9 @@ opens the full reference, including the query syntax.
 | `Alt+←` | pop one breadcrumb level |
 | `Ctrl+G` | refresh (re-walk from disk) |
 | `Ctrl+K` | action menu |
-| `Ctrl+O` | open in the OS default application |
-| `Ctrl+E` | open in the configured editor |
-| `Ctrl+B` | open in `code` |
+| `Ctrl+O` | open in the OS default application; `seek` stays open |
+| `Ctrl+E` | open in the configured editor; `seek` resumes when it exits |
+| `Ctrl+B` | open in `code`; `seek` stays open |
 | `Ctrl+Y` | copy path(s) |
 | `Ctrl+X` | export (stdout / clipboard / file) |
 | `Alt+C` | go to directory (a file result → its parent; needs the shell wrapper) |

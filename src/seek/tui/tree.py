@@ -9,12 +9,16 @@ entirely, and so listed files a search from the same root would never return.
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from itertools import islice
 from pathlib import Path
 
 from rich.text import Text
+from textual.widgets.option_list import Option
 
 from seek.config import Config
+from seek.models import MatchKind, Result
+from seek.tui.results import RowList
 from seek.walk import Exclusions, _real_key
 
 # Extension -> Rich colour for file names in the tree.
@@ -49,20 +53,31 @@ def _file_style(name: str) -> str:
     return _EXT_COLOR.get(ext, "default")
 
 
-def render_tree(
+@dataclass(slots=True)
+class TreeRow:
+    """One line of the tree. ``path`` is None for a line that names nothing -
+    an unreadable directory, the `…` where the entry budget ran out."""
+
+    text: Text
+    path: Path | None = None
+    rel: str = ""
+    is_dir: bool = False
+
+
+def tree_rows(
     root: Path,
     config: Config,
     *,
     max_depth: int = 3,
     max_entries: int = 400,
-) -> Text:
+) -> tuple[list[TreeRow], bool]:
+    """The tree below ``root``, one row per line, and whether it was truncated."""
     exclusions = Exclusions(config)
     theme = config.theme
     dir_style = theme.get("tree_dir", "bold blue")
     branch_style = theme.get("tree_branch", "bright_black")
 
-    out = Text()
-    out.append(f"{root.name or root}/\n", style=dir_style)
+    rows: list[TreeRow] = []
     state = {"count": 0, "truncated": False}
     # Directories reached through a symlink are followed, as the walk follows
     # them; the same real-path guard stops a cycle.
@@ -95,21 +110,24 @@ def render_tree(
         try:
             kept = entries_of(dir_path, rel_prefix)
             if kept is None:
-                out.append(prefix + "└── ", style=branch_style)
-                out.append("<unreadable>\n", style="red")
+                line = Text(prefix + "└── ", style=branch_style)
+                line.append("<unreadable>", style="red")
+                rows.append(TreeRow(line))
                 return
             for i, (entry, rel, is_dir) in enumerate(kept):
                 if state["count"] >= max_entries:
                     state["truncated"] = True
-                    out.append(prefix + "└── …\n", style=branch_style)
+                    rows.append(TreeRow(Text(prefix + "└── …", style=branch_style)))
                     return
                 last = i == len(kept) - 1
-                out.append(prefix + ("└── " if last else "├── "), style=branch_style)
+                line = Text(prefix + ("└── " if last else "├── "), style=branch_style)
                 state["count"] += 1
                 if not is_dir:
-                    out.append(entry.name + "\n", style=_file_style(entry.name))
+                    line.append(entry.name, style=_file_style(entry.name))
+                    rows.append(TreeRow(line, Path(entry.path), rel, False))
                     continue
-                out.append(entry.name + "/\n", style=dir_style)
+                line.append(entry.name + "/", style=dir_style)
+                rows.append(TreeRow(line, Path(entry.path), rel, True))
                 key = _real_key(Path(entry.path))
                 if key in visited:
                     continue  # symlink cycle or hardlinked dir
@@ -120,9 +138,92 @@ def render_tree(
             exclusions.pop_to(depth)
 
     walk(root, "", "", 1)
-    if state["truncated"]:
-        out.append(
-            f"\n… tree truncated at {max_entries} entries / depth {max_depth}\n",
-            style="bright_black",
-        )
+    return rows, state["truncated"]
+
+
+def _truncation_note(max_entries: int, max_depth: int) -> str:
+    return f"… tree truncated at {max_entries} entries / depth {max_depth}"
+
+
+def render_tree(
+    root: Path,
+    config: Config,
+    *,
+    max_depth: int = 3,
+    max_entries: int = 400,
+) -> Text:
+    rows, truncated = tree_rows(root, config, max_depth=max_depth, max_entries=max_entries)
+    out = Text()
+    out.append(f"{root.name or root}/\n", style=config.theme.get("tree_dir", "bold blue"))
+    for row in rows:
+        out.append_text(row.text)
+        out.append("\n")
+    if truncated:
+        out.append(f"\n{_truncation_note(max_entries, max_depth)}\n", style="bright_black")
     return out
+
+
+class TreeList(RowList):
+    """The empty-query tree as a list with a cursor: every entry is a row that
+    can be viewed, opened and marked like a search result.
+
+    A row stands for a filename or directory ``Result``, so every action that
+    works on the result list works here without knowing which list it is on.
+    Top-down, unlike the result list: a tree reads from its root.
+    """
+
+    DEFAULT_CSS = """
+    TreeList { height: 1fr; border: none; padding: 0; }
+    """
+
+    MAX_DEPTH = 3
+    MAX_ENTRIES = 400
+
+    def __init__(self, config: Config, **kwargs) -> None:
+        super().__init__(config, **kwargs)
+        self._rows: list[TreeRow] = []
+
+    def set_root(self, root: Path) -> None:
+        rows, truncated = tree_rows(
+            root, self._config, max_depth=self.MAX_DEPTH, max_entries=self.MAX_ENTRIES
+        )
+        if truncated:
+            rows.append(TreeRow(Text(
+                _truncation_note(self.MAX_ENTRIES, self.MAX_DEPTH), style="bright_black"
+            )))
+        self._rows = rows
+        self.results = [
+            None if row.path is None else Result(
+                kind=MatchKind.DIRNAME if row.is_dir else MatchKind.FILENAME,
+                path=row.path, rel=row.rel, score=0,
+            )
+            for row in rows
+        ]
+        self.marked &= {r.identity() for r in self.results if r is not None}
+        self.clear_options()
+        self.add_options([self._render_at(i) for i in range(len(rows))])
+        if rows:
+            self.highlighted = 0
+            self.scroll_to_highlight()
+
+    def select_path(self, path: Path) -> None:
+        """Put the cursor on ``path``'s row, if the tree shows it."""
+        for i, row in enumerate(self._rows):
+            if row.path == path:
+                self.highlighted = i
+                self.scroll_to_highlight()
+                return
+
+    def ranked(self) -> list[Result]:
+        return [r for r in self.results if r is not None]
+
+    def _render_at(self, index: int) -> Option:
+        row, result = self._rows[index], self.results[index]
+        marked = result is not None and result.identity() in self.marked
+        text = Text(no_wrap=True)
+        text.append("● " if marked else "  ", style=self._t("selected"))
+        text.append_text(row.text)
+        # OptionList wraps and ignores `no_wrap`, so the row is cut to the width
+        # here, as the result list cuts its own.
+        text.truncate(self._budget(), overflow="ellipsis")
+        return Option(text)

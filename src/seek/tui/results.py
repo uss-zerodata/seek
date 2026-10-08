@@ -52,21 +52,88 @@ _MARKER_STYLE = {
 _PREFIX_CELLS = 4  # "● " + "c "
 
 
-class ResultsList(OptionList):
+class RowList(OptionList):
+    """What the result list and the tree list share: rows that stand for a
+    ``Result``, a cursor moved by the app (focus stays on the query), marks."""
+
     can_focus = False
+
+    def __init__(self, config: Config, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._config = config
+        self._wrap = config.wrap_results
+        self._last_w = 0
+        # In display order, one per row; None for a row that names nothing.
+        self.results: list[Result | None] = []
+        self.marked: set[tuple[str, int | None]] = set()
+
+    def ranked(self) -> list[Result]:
+        raise NotImplementedError
+
+    def _render_at(self, index: int) -> Option:
+        raise NotImplementedError
+
+    def on_resize(self, _event) -> None:
+        w = self._budget()
+        if not self._wrap and self.results and w != self._last_w:
+            self._last_w = w
+            self._rerender_rows()
+
+    def _rerender_rows(self) -> None:
+        for i in range(len(self.results)):
+            self.replace_option_prompt_at_index(i, self._render_at(i).prompt)
+
+    def _budget(self) -> int:
+        w = self.scrollable_content_region.width or self.size.width or 120
+        return max(24, w - 1)
+
+    def _t(self, key: str) -> str:
+        return self._config.theme.get(key, "")
+
+    # --- selection -----------------------------------------------------------
+
+    def current(self) -> Result | None:
+        if self.highlighted is None or not self.results:
+            return None
+        return self.results[self.highlighted]
+
+    def selected_results(self) -> list[Result]:
+        if not self.marked:
+            return []
+        return [r for r in self.ranked() if r.identity() in self.marked]
+
+    def toggle_mark(self) -> None:
+        cur = self.current()
+        if cur is None:
+            return
+        self.marked.symmetric_difference_update({cur.identity()})
+        self.replace_option_prompt_at_index(
+            self.highlighted, self._render_at(self.highlighted).prompt
+        )
+
+    def clear_marks(self) -> None:
+        if not self.marked:
+            return
+        self.marked.clear()
+        self._rerender_rows()
+
+    # --- navigation (called by the app; focus stays on the query) -----------
+
+    def nav(self, delta: int) -> None:
+        if not self.results:
+            return
+        cur = self.highlighted or 0
+        self.highlighted = max(0, min(len(self.results) - 1, cur + delta))
+        self.scroll_to_highlight()
+
+
+class ResultsList(RowList):
     DEFAULT_CSS = """
     ResultsList { height: 1fr; border: none; padding: 0; }
     """
 
-    def __init__(self, config: Config) -> None:
-        super().__init__()
-        self._config = config
-        self._wrap = config.wrap_results
-        self._last_w = 0
-        # `results` is in display order: worst match first (top), best last
-        # (bottom, next to the query box). The cursor starts on the best match.
-        self.results: list[Result] = []
-        self.marked: set[tuple[str, int | None]] = set()
+    # `results` is in display order: worst match first (top), best last
+    # (bottom, next to the query box). The cursor starts on the best match.
 
     # --- population -------------------------------------------------------------
 
@@ -97,24 +164,10 @@ class ResultsList(OptionList):
         """Best-first order, for exports."""
         return list(reversed(self.results))
 
-    def on_resize(self, _event) -> None:
-        w = self._budget()
-        if not self._wrap and self.results and w != self._last_w:
-            self._last_w = w
-            self._rerender_rows()
-
-    def _rerender_rows(self) -> None:
-        for i, r in enumerate(self.results):
-            self.replace_option_prompt_at_index(i, self._render_row(r).prompt)
-
     # --- row rendering -------------------------------------------------------
 
-    def _budget(self) -> int:
-        w = self.scrollable_content_region.width or self.size.width or 120
-        return max(24, w - 1)
-
-    def _t(self, key: str) -> str:
-        return self._config.theme.get(key, "")
+    def _render_at(self, index: int) -> Option:
+        return self._render_row(self.results[index])
 
     def _render_row(self, r: Result) -> Option:
         text = Text(no_wrap=not self._wrap, overflow="fold" if self._wrap else "crop")
@@ -183,37 +236,3 @@ class ResultsList(OptionList):
     @staticmethod
     def _oid(r: Result) -> str:
         return f"{r.path}\x00{r.view_line or r.line_no}"
-
-    # --- selection -----------------------------------------------------------
-
-    def current(self) -> Result | None:
-        if self.highlighted is None or not self.results:
-            return None
-        return self.results[self.highlighted]
-
-    def selected_results(self) -> list[Result]:
-        if not self.marked:
-            return []
-        return [r for r in self.ranked() if r.identity() in self.marked]
-
-    def toggle_mark(self) -> None:
-        cur = self.current()
-        if cur is None:
-            return
-        self.marked.symmetric_difference_update({cur.identity()})
-        self.replace_option_prompt_at_index(self.highlighted, self._render_row(cur).prompt)
-
-    def clear_marks(self) -> None:
-        if not self.marked:
-            return
-        self.marked.clear()
-        self._rerender_rows()
-
-    # --- navigation (called by the app; focus stays on the query) -----------
-
-    def nav(self, delta: int) -> None:
-        if not self.results:
-            return
-        cur = self.highlighted or 0
-        self.highlighted = max(0, min(len(self.results) - 1, cur + delta))
-        self.scroll_to_highlight()

@@ -122,12 +122,30 @@ def copy_to_clipboard(text: str) -> None:
 class ExitRequest:
     """What run_session returns so the CLI can hand off cleanly after teardown."""
 
-    kind: str  # "exec" | "spawn" | "print" | "cd" | "quit"
+    kind: str  # "exec" | "print" | "cd" | "quit"
     argv: list[str] | None = None
-    argvs: list[list[str]] | None = None  # for kind == "spawn": one process each
     text: str | None = None
     path: Path | None = None
     status: int = 0
+
+
+def resolve_program(argv: list[str]) -> list[str]:
+    """``argv`` with its program resolved on ``PATH``, or an ActionError."""
+    prog = shutil.which(argv[0])
+    if prog is None:
+        raise ActionError(f"{argv[0]}: not found")
+    return [prog, *argv[1:]]
+
+
+def run_foreground(argv: list[str]) -> int:
+    """Run ``argv`` on this terminal and wait for it; the session carries on after.
+
+    The caller must have given the terminal back first (``App.suspend``).
+    """
+    try:
+        return subprocess.run(resolve_program(argv)).returncode  # noqa: S603
+    except OSError as exc:
+        raise ActionError(f"{argv[0]}: {exc}") from exc
 
 
 def spawn_detached(argv: list[str]) -> None:

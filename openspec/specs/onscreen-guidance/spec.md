@@ -37,7 +37,8 @@ pair a key with a short verb for what it does. When the result list is showing,
 the hint bar SHALL include the primary "view / open detail" key, at least one
 "open" action key, the "copy path" key, the "mark" key, and the "action menu"
 key. When the tree view is showing, the hint bar SHALL indicate that typing
-starts a search and SHALL include the key that scrolls the tree and the key that
+starts a search and SHALL include the keys that move through the tree, the
+"view" key, at least one "open" action key, the "mark" key and the key that
 opens help. The hint bar SHALL NOT attempt to list every binding — the help
 overlay remains the complete reference.
 
@@ -46,7 +47,7 @@ overlay remains the complete reference.
 - **WHEN** the query box is empty and then the user types a query that produces
   results
 - **THEN** the hint bar changes from tree-view hints (typing starts a search,
-  scroll, help) to result hints (view, open, copy, mark, action menu)
+  move, view, open, mark, help) to result hints (view, open, copy, mark, action menu)
 
 #### Scenario: Hints reflect the no-match state
 

@@ -1,10 +1,13 @@
 """Result-action handling for SeekApp.
 
-Actions that hand the terminal to another program (open in app/editor/code),
-that write to stdout, or that ``cd`` must run *after* Textual has restored the
-terminal. Those set ``self.exit_request`` and quit; :func:`perform_exit_request`
-runs them once ``app.run()`` has returned. Copy and file/clipboard export run
-in-process and keep the session open.
+Opening a target keeps the session: an editor gets the terminal while the app
+is suspended and the app carries on when it exits; the default application and
+``code`` are windows of their own and are started detached. Copy and
+file/clipboard export run in-process.
+
+Actions that end the session - printing to stdout, ``cd`` - must run *after*
+Textual has restored the terminal. Those set ``self.exit_request`` and quit;
+:func:`perform_exit_request` runs them once ``app.run()`` has returned.
 """
 
 from __future__ import annotations
@@ -13,6 +16,7 @@ import sys
 from pathlib import Path
 
 from textual import work
+from textual.app import SuspendNotSupported
 
 from seek import actions
 from seek.actions import ActionError, ExitRequest
@@ -43,6 +47,9 @@ class ActionsMixin:
     exit_request: ExitRequest | None
 
     def commit_query_history(self) -> None:  # provided by SeekApp
+        ...
+
+    def after_external_edit(self) -> None:  # provided by SeekApp
         ...
 
     # --- keybound entry points (workers so they can await modal screens) -----
@@ -164,33 +171,42 @@ class ActionsMixin:
         if not targets:
             return
         try:
+            if which == "editor":
+                argv = actions.editor_argv(self.config, targets)  # type: ignore[arg-type]
+                self._run_in_terminal(argv)
+                return
             if which == "default":
                 # One opener process per file (openers detach immediately).
                 argvs = [actions.opener_argv(t.path) for t in targets]
-                self.exit_request = ExitRequest(kind="spawn", argvs=argvs)
-                self.exit(0)
-                return
-            if which == "editor":
-                argv = actions.editor_argv(self.config, targets)  # type: ignore[arg-type]
             else:
-                argv = actions.code_argv(targets)
+                argvs = [actions.code_argv(targets)]
+            for argv in argvs:
+                actions.spawn_detached(argv)
         except ActionError as exc:
             self.notify(str(exc), severity="error")
             return
-        self.exit_request = ExitRequest(kind="exec", argv=argv)
-        self.exit(0)
+        self.notify(f"Opened {len(targets)} path(s)")
+
+    def _run_in_terminal(self, argv: list[str]) -> None:
+        """Lend the terminal to ``argv`` and take it back when it exits."""
+        actions.resolve_program(argv)  # a missing editor is reported, not flashed
+        try:
+            with self.suspend():  # type: ignore[attr-defined]
+                actions.run_foreground(argv)
+        except SuspendNotSupported:
+            # No way to step aside on this driver: hand over for good instead.
+            self.exit_request = ExitRequest(kind="exec", argv=argv)
+            self.exit(0)  # type: ignore[attr-defined]
+            return
+        self.after_external_edit()
 
     # --- shared plumbing ------------------------------------------------
 
     def _current_result(self) -> Result | None:
-        from seek.tui.results import ResultsList
-
-        return self.query_one(ResultsList).current()
+        return self._active_list().current()  # type: ignore[attr-defined]
 
     def _selected_results(self) -> list[Result]:
-        from seek.tui.results import ResultsList
-
-        return self.query_one(ResultsList).selected_results()
+        return self._active_list().selected_results()  # type: ignore[attr-defined]
 
     async def _targets(self) -> list[Result]:
         self.commit_query_history()  # acting on a result means the query was meant
@@ -218,15 +234,6 @@ def perform_exit_request(req: ExitRequest) -> int:
             print(f"seek: {exc}", file=sys.stderr)
             return 1
         return 0
-    if req.kind == "spawn" and req.argvs:
-        failed = 0
-        for argv in req.argvs:
-            try:
-                actions.spawn_detached(argv)
-            except ActionError as exc:
-                print(f"seek: {exc}", file=sys.stderr)
-                failed = 1
-        return failed
     if req.kind == "print" and req.text is not None:
         print(req.text)
         return 0

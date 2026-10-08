@@ -85,11 +85,23 @@ By default the system SHALL render each result on a single line, shortening rows
 - **THEN** that row wraps onto multiple screen lines instead of being shortened
 
 ### Requirement: Empty-query tree view
-When the query is empty the system SHALL replace the result list with a non-interactive tree view of the current search root (respecting the active scope and exclusions). Above the tree the system SHALL show a heading line that names the current search root and states the walk semantics currently in effect (whether hidden files are included, whether `.gitignore` is being honoured, and that noise directories are pruned) and prompts the user that typing starts a search. The tree SHALL be coloured: directory names, the branch glyphs, and file names (by type) SHALL each be rendered in distinct styles. Entering any query text SHALL switch to the ranked result list; clearing the query again SHALL return to the tree view.
+When the query is empty the system SHALL replace the result list with a tree view of the current search root (respecting the active scope and exclusions). The tree SHALL be navigable without a query: it SHALL have a highlighted entry that `↑`/`↓` and `PageUp`/`PageDown` move, an entry SHALL be markable, and every result action (view, open, copy, export, go to directory, re-root) SHALL act on the highlighted entry or the marked entries exactly as it does on result rows. `Enter` on a file SHALL open its detail view; `Enter` on a directory SHALL re-root into it, and popping back SHALL return the highlight to that directory. Above the tree the system SHALL show a heading line that names the current search root and states the walk semantics currently in effect (whether hidden files are included, whether `.gitignore` is being honoured, and that noise directories are pruned) and prompts the user that typing starts a search. The tree SHALL be coloured: directory names, the branch glyphs, and file names (by type) SHALL each be rendered in distinct styles. Entering any query text SHALL switch to the ranked result list; clearing the query again SHALL return to the tree view.
 
 #### Scenario: Tree shown at empty query
 - **WHEN** the query box is empty
-- **THEN** the results area shows a heading line naming the current root and the active walk semantics, above a coloured tree of that root, and does not accept row selection or marking
+- **THEN** the results area shows a heading line naming the current root and the active walk semantics, above a coloured tree of that root with its first entry highlighted
+
+#### Scenario: Open a file from the tree
+- **WHEN** the query box is empty, the user moves the highlight to a file in the tree and triggers "open in editor"
+- **THEN** the editor opens that file, without a query having been typed
+
+#### Scenario: Mark entries in the tree
+- **WHEN** the query box is empty and the user marks two files in the tree and triggers "copy path"
+- **THEN** both paths are copied
+
+#### Scenario: Enter steps into a directory
+- **WHEN** the query box is empty and the user presses `Enter` on a directory in the tree
+- **THEN** the tree is re-rooted at that directory, and `Esc` returns to the previous root with that directory highlighted
 
 #### Scenario: Heading reflects gitignore state
 - **WHEN** the session was started with `.gitignore` honouring enabled
@@ -208,7 +220,7 @@ The result list takes priority over the preview: when the terminal is too short 
 - **THEN** the preview shows a bounded portion and indicates that the content is truncated, rather than hanging or failing
 
 ### Requirement: Full-screen detail view
-Pressing `Enter` on a row SHALL open a full-screen detail view of its target. For a file the detail view SHALL show the whole file (up to the size cap, then truncated with an indicator), syntax-highlighted, with every query match highlighted, opened scrolled to and marking the matched line for a content match. For a directory it SHALL show a scrollable tree. The view SHALL scroll like a pager — at least `↑`/`↓` line scrolling, `PageUp`/`PageDown`, half-page, and jump-to-top / jump-to-bottom — and query matches SHALL stay highlighted while scrolling. The detail view SHALL display its own controls on screen — at least the scroll keys, the back key, and the keys that open the target in an editor or the default application. Triggering an open action from the detail view SHALL run that action on the previewed target as if it had been triggered from the result list. `Esc` (or the back key) SHALL return to the result list.
+Pressing `Enter` on a row SHALL open a full-screen detail view of its target. For a file the detail view SHALL show the whole file (up to the size cap, then truncated with an indicator), syntax-highlighted, with every query match highlighted, opened scrolled to and marking the matched line for a content match. For a directory it SHALL show a scrollable tree. The view SHALL scroll like a pager — at least `↑`/`↓` line scrolling, `PageUp`/`PageDown`, half-page, and jump-to-top / jump-to-bottom — and query matches SHALL stay highlighted while scrolling. The detail view SHALL display its own controls on screen — at least the scroll keys, the back key, and the keys that open the target in an editor or the default application. Triggering an open action from the detail view SHALL run that action on the previewed target as if it had been triggered from the result list, and SHALL return to the detail view, at the line it was showing, once the action is done. `Esc` (or the back key) SHALL return to the result list.
 
 #### Scenario: Detail view shows its controls
 - **WHEN** the detail view is open

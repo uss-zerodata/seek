@@ -5,13 +5,12 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
-from rich.console import Group
 from rich.table import Table
 from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.timer import Timer
 from textual.widgets import Input, Static
@@ -29,8 +28,8 @@ from seek.tui.help import HelpScreen
 from seek.tui.keyhints import pretty_key
 from seek.tui.preview import build_preview
 from seek.tui.query_input import QueryInput
-from seek.tui.results import ResultsList
-from seek.tui.tree import render_tree
+from seek.tui.results import ResultsList, RowList
+from seek.tui.tree import TreeList
 from seek.walk import rebase, walk
 
 _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
@@ -39,7 +38,14 @@ _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 # (resolved through config.keys) when it names one, otherwise a literal glyph.
 # The Esc segment is appended separately and always shown last.
 _HINT_ITEMS: dict[str, list[tuple[str, str]]] = {
-    "tree": [("↑↓", "scroll"), ("help", "help")],
+    "tree": [
+        ("↑↓", "move"),
+        ("↵", "view"),
+        ("open_editor", "edit"),
+        ("open_default", "open"),
+        ("mark", "mark"),
+        ("help", "help"),
+    ],
     "results": [
         ("↵", "view"),
         ("open_editor", "edit"),
@@ -112,7 +118,9 @@ class SeekApp(ActionsMixin, App[int]):
     }
     ResultsList { height: 1fr; min-height: 3; padding: 0 1; border-bottom: solid $primary; }
     ResultsList > .option-list--option-highlighted { text-style: reverse bold; }
+    TreeList > .option-list--option-highlighted { text-style: reverse bold; }
     #tree { height: 1fr; padding: 0 1; border-bottom: solid $primary; }
+    #tree-heading { height: auto; }
     #nomatch {
         height: 1fr; content-align: center middle; color: $text-muted;
         border-bottom: solid $primary;
@@ -172,8 +180,9 @@ class SeekApp(ActionsMixin, App[int]):
     def compose(self) -> ComposeResult:
         yield Static(id="preview")
         yield ResultsList(self.config)
-        with VerticalScroll(id="tree"):
-            yield Static(id="tree-body")
+        with Vertical(id="tree"):
+            yield Static(id="tree-heading")
+            yield TreeList(self.config, id="tree-list")
         yield Static("", id="nomatch")
         yield Static(id="status")
         yield Static(id="hint-bar")
@@ -421,7 +430,7 @@ class SeekApp(ActionsMixin, App[int]):
     def _set_middle(self, mode: str) -> None:
         """mode: 'tree' (empty query) | 'list' (results) | 'nomatch' (no match)."""
         self._tree_mode = mode == "tree"
-        self.query_one("#tree", VerticalScroll).display = mode == "tree"
+        self.query_one("#tree", Vertical).display = mode == "tree"
         self.query_one(ResultsList).display = mode == "list"
         self.query_one("#nomatch", Static).display = mode == "nomatch"
         if mode != "list":
@@ -447,7 +456,7 @@ class SeekApp(ActionsMixin, App[int]):
 
     def _tree_heading(self) -> Text:
         """One-line orientation above the empty-query tree: the current root and
-        the walk semantics in effect, plus a prompt to start typing."""
+        the walk semantics in effect, plus a prompt to start typing or browse."""
         gi = "honoured" if self.config.honor_gitignore else "off"
         noise = "pruned" if self.config.apply_noise_excludes else "kept"
         h = Text()
@@ -456,12 +465,23 @@ class SeekApp(ActionsMixin, App[int]):
             f"   hidden files shown · .gitignore {gi} · noise dirs {noise}",
             style="dim",
         )
-        h.append("\n\ntype to search files, directories and contents\n", style="dim")
+        h.append(
+            "\n\ntype to search files, directories and contents - or browse the tree\n",
+            style="dim",
+        )
         return h
 
     def _render_tree(self) -> None:
-        body = self.query_one("#tree-body", Static)
-        body.update(Group(self._tree_heading(), render_tree(self.root, self.config)))
+        self.query_one("#tree-heading", Static).update(self._tree_heading())
+        self.query_one(TreeList).set_root(self.root)
+
+    def _active_list(self) -> RowList:
+        """The list the cursor is on: the tree at an empty query, else results.
+
+        Navigation, marking and every result action go through this, which is
+        what makes a tree entry act like a result row.
+        """
+        return self.query_one(TreeList if self._tree_mode else ResultsList)
 
     def _update_preview(self, result) -> None:
         """Clear or (debounced) refresh the preview for ``result``."""
@@ -507,6 +527,7 @@ class SeekApp(ActionsMixin, App[int]):
     def _refresh_status(self) -> None:
         try:
             rl = self.query_one(ResultsList)
+            marked = self._active_list().marked
         except NoMatches:
             return
         # Rendered on the terminal background (no fill); active = bold, else dim.
@@ -537,8 +558,8 @@ class SeekApp(ActionsMixin, App[int]):
             left.append(f"   {crumb}", style=on_st)
 
         right = Text()
-        if rl.marked:
-            right.append(f"{len(rl.marked)} marked  ", style="bold bright_magenta")
+        if marked:
+            right.append(f"{len(marked)} marked  ", style="bold bright_magenta")
         shown = len(rl.results)
         if self._no_match:
             right.append("0", style=off_st)
@@ -634,29 +655,19 @@ class SeekApp(ActionsMixin, App[int]):
     # --- navigation actions ------------------------------------------
 
     def action_seek_nav(self, delta: int) -> None:
-        rl = self.query_one(ResultsList)
-        if not rl.display:
-            self.query_one("#tree", VerticalScroll).scroll_relative(y=delta, animate=False)
-            return
-        rl.nav(delta)  # preview follows via OptionHighlighted
+        self._active_list().nav(delta)  # preview follows via OptionHighlighted
 
     def action_seek_page(self, direction: int) -> None:
-        rl = self.query_one(ResultsList)
-        if not rl.display:
-            scroller = self.query_one("#tree", VerticalScroll)
-            (scroller.scroll_page_down if direction > 0 else scroller.scroll_page_up)(
-                animate=False
-            )
-            return
+        rl = self._active_list()
         page = max(1, rl.scrollable_content_region.height - 1)
         rl.nav(direction * page)
 
     def action_seek_mark(self) -> None:
-        self.query_one(ResultsList).toggle_mark()
+        self._active_list().toggle_mark()
         self._refresh_status()
 
     def action_seek_clear_marks(self) -> None:
-        self.query_one(ResultsList).clear_marks()
+        self._active_list().clear_marks()
         self._refresh_status()
 
     def action_seek_history_prev(self) -> None:
@@ -674,18 +685,28 @@ class SeekApp(ActionsMixin, App[int]):
 
     @work(exclusive=True, group="modal")
     async def action_seek_detail(self) -> None:
-        rl = self.query_one(ResultsList)
-        if not rl.display:
-            return
-        cur = rl.current()
+        cur = self._active_list().current()
         if cur is None:
             return
+        if self._tree_mode and cur.kind is MatchKind.DIRNAME:
+            # In the tree a directory is somewhere to go, not something to
+            # read: `Enter` steps into it and `Esc` steps back out.
+            self.action_seek_reroot()
+            return
         self.commit_query_history()
-        choice = await self.push_screen_wait(
-            DetailScreen(cur, self.config, self._parsed_query)
-        )
-        if choice:  # an open action chosen from inside the detail view
+        top = None
+        while True:
+            screen = DetailScreen(cur, self.config, self._parsed_query, top=top)
+            choice = await self.push_screen_wait(screen)
+            if not choice:
+                return
+            # An open action chosen from inside the detail view. The view comes
+            # back afterwards at the line it was left on, unless the action
+            # ended the session.
+            top = screen.top_line
             await self._dispatch_menu(choice)
+            if self.exit_request is not None:
+                return
 
     def action_seek_back(self) -> None:
         # Resolve one level of state per press: clear a non-empty query, then
@@ -751,10 +772,9 @@ class SeekApp(ActionsMixin, App[int]):
     # --- re-root / refresh --------------------------------------
 
     def action_seek_reroot(self) -> None:
-        rl = self.query_one(ResultsList)
-        cur = rl.current()
+        cur = self._active_list().current()
         if cur is None or cur.kind is not MatchKind.DIRNAME:
-            self.notify("Re-root needs a directory result", severity="warning")
+            self.notify("Re-root needs a directory", severity="warning")
             return
         self.root = cur.path
         self._breadcrumb.append(cur.path)
@@ -763,9 +783,11 @@ class SeekApp(ActionsMixin, App[int]):
     def action_seek_breadcrumb_pop(self) -> None:
         if len(self._breadcrumb) <= 1:
             return
-        self._breadcrumb.pop()
+        left = self._breadcrumb.pop()
         self.root = self._breadcrumb[-1]
         self._reset_for_new_root()
+        # Back where the reader came from, not at the top of the parent.
+        self.query_one(TreeList).select_path(left)
 
     def action_seek_refresh(self) -> None:
         # The explicit escape hatch from "files are stable for this session":
@@ -787,6 +809,16 @@ class SeekApp(ActionsMixin, App[int]):
         else:
             self._show_tree_view(True)
         self._refresh_status()
+
+    def after_external_edit(self) -> None:
+        """An editor had the files: what was read from them before is suspect.
+
+        Only the contents are dropped - the list of files stays as scanned, and
+        `refresh` remains the way to pick up files created or deleted.
+        """
+        self.engine.invalidate_content()
+        if self.query_one("#query", Input).value.strip():
+            self._trigger_search()
 
     @work(exclusive=True, group="modal")
     async def action_seek_help(self) -> None:
