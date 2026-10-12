@@ -17,7 +17,12 @@ function wire(form, target, fieldsOf) {
       try {
         const response = await fetch(url);
         if (response.ok && mine === sent) {
+          // The list scrolls in a pane of its own, and the pane is part of
+          // what is replaced: put it back where the reader had it.
+          const top = target.querySelector(".list-scroll")?.scrollTop || 0;
           target.innerHTML = await response.text();
+          const pane = target.querySelector(".list-scroll");
+          if (pane) pane.scrollTop = top;
           document.dispatchEvent(new CustomEvent("list:replaced"));
         }
       } catch (_) { /* the viewer was closed; leave the list as it is */ }

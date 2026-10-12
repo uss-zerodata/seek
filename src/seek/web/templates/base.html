@@ -9,27 +9,31 @@
 <script type="module" src="/static/js/viewer.js?v={{ V }}"></script>
 <script type="module" src="/static/js/search.js?v={{ V }}"></script>
 </head>
-<body>
+{# `shell` is the viewer's fixed frame: two panes that scroll on their own and a
+   key bar. Every other page scrolls as a page under the same bar and tabs. #}
+<body class="{% block body_class %}{% endblock %}">
 <a class="skip" href="#main">Skip to the content</a>
 <header class="bar">
-  <a class="brand" href="/">seek</a>
-  <nav id="tabs" aria-label="views">
-    {% for id, label in TABS %}<a href="/v/{{ id }}" data-tab="{{ id }}" {% if nav == id %}aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
-    <a href="/" data-tab="gallery" {% if nav == "gallery" %}aria-current="page"{% endif %}>Screenshots</a>
-  </nav>
-  <span id="status" class="status" aria-live="polite"></span>
-  <button type="button" id="vulndb" class="vulndb dim" title="the vulnerability database - A updates it">◈ vulndb</button>
+  <a class="brand" href="/">seek<span>/</span>nmap</a>
   <form class="global-search" action="/search" method="get" role="search">
     <input id="global-q" name="q" type="search" autocomplete="off" value="{{ q if nav == '' and q is defined else '' }}"
            placeholder="Search everything  (Ctrl+K)" aria-label="search everything"
-           aria-controls="global-results">
+           role="combobox" aria-expanded="false" aria-controls="global-results" aria-autocomplete="list">
     <button type="button" class="syntax-help" data-for="global-q" title="how to search" aria-label="how to search">?</button>
     <div id="global-results" class="global-results" hidden></div>
   </form>
+  <span id="status" class="status" aria-live="polite"></span>
+  <button type="button" id="vulndb" class="vulndb dim" title="the vulnerability database - A updates it">◈ vulndb</button>
+  {% block bar_end %}{% endblock %}
 </header>
+<nav id="tabs" aria-label="views">
+  {% for id, label in TABS %}<a href="/v/{{ id }}" data-tab="{{ id }}" {% if nav == id %}aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
+  <a href="/" data-tab="gallery" {% if nav == "gallery" %}aria-current="page"{% endif %}>Screenshots</a>
+</nav>
 {% include "_syntax.html" %}
 <main id="main">
 {% block content %}{% endblock %}
 </main>
+{% block footer %}{% endblock %}
 </body>
 </html>

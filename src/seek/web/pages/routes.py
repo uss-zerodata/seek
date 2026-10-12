@@ -203,7 +203,9 @@ def overview(request: Request, tab: str, path: str = "", q: str = "",
     return _render(request, "_overview.html" if fragment else "overview.html",
                    view=found, tabs=TABS, here=here, sel=step, nav=found.marked_tab,
                    record=record,
-                   sort_arg=sort, desc=desc)
+                   sort_arg=sort, desc=desc,
+                   loaded=f"{len(m.scans.files)} scan(s) · {len(m.scans.hosts)} host(s)",
+                   scan_off="" if sess.nmap.available else sess.nmap.reason)
 
 
 @router.get("/search", response_class=HTMLResponse)

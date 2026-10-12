@@ -58,9 +58,10 @@ for `.gitignore` support. Tests use `httpx2` for FastAPI's `TestClient`.
    via Textual's `Pilot` and need real time to settle).
 3. If you changed `Config` fields: regenerate the example file —
    `uv run python -c "from seek.config import example_toml; open('config.example.toml','w').write(example_toml())"`.
-4. If you changed observable behaviour: update the matching spec in
-   `openspec/changes/terminal-search-app/specs/` and run
-   `openspec validate terminal-search-app --strict`.
+4. If you changed observable behaviour: update the matching spec - in
+   `openspec/specs/<capability>/spec.md`, or in the open change that owns it
+   under `openspec/changes/<change>/specs/` - and run
+   `openspec validate <change> --strict`.
 
 ## Layout
 
@@ -134,7 +135,7 @@ src/seek/
     serve.py        `seek nmap serve`: headless build, owner and signal handling
     api/v1/         + views, records/raw, marks/export, runs/scans/captures/events (SSE),
                     inventory (the versioned JSON document the export writes)
-    static/js/      viewer.js (list/record), keys.js (the key table), actions.js, events.js
+    static/js/      viewer.js (list/record, key bar), keys.js (the key table + hints), actions.js, events.js
     schemas.py      pydantic shapes - the API returns them, the templates render them
     query.py        list/filter/sort/page over the TUI's own view projections
     api/v1/         JSON routers: hosts, services, captures
@@ -142,7 +143,7 @@ src/seek/
     media.py        screenshots by capture id - no route takes a path
     app.py          create_app(source); ROUTERS is the one registration list
     server.py       WebServer: loopback check, port probe, uvicorn on a thread; path_for(row)
-    templates/ static/   Jinja2 + one stylesheet + ~30 lines of JS; nothing from a CDN
+    templates/ static/   Jinja2 + one stylesheet (tokens first) + app.js; nothing from a CDN
 tests/              pytest; conftest.py has the `tree` / `symlink_loop` fixtures
 tests/fixtures/nmap/  synthetic scan XML (no real addresses)
 ```
@@ -554,6 +555,31 @@ together. Do not `query_one(RowList)`: it matches both.
   URLs, technologies and status. `filtering.explain` is the filter in words;
   every web list shows it. A list, the header search group and the TUI must list
   the same rows for the same text - `test_every_overview_lists_what_the_terminal_lists`.
+- **The web layout is a shell, and a control is its key.** A viewer page
+  (`body.shell`) is a fixed frame: bar, tab strip, two panes that scroll on
+  their own, key bar. Do not put `position: sticky` with a pixel offset back -
+  that is what broke whenever the header wrapped. The list pane's scroller
+  (`.list-scroll`) is *inside* the fragment `fragment=1` replaces, so `app.js`
+  restores its `scrollTop` after every swap; the record pane's header is
+  outside what `showRecord` replaces. Three rules keep mouse and keyboard one
+  interface: a toggle is a checkbox of the list form styled as a chip (it works
+  without script and the URL stays the state); an action control is
+  `button[data-action]`, dispatched to `HANDLERS` - the table the key handler
+  uses - so it cannot do what its key does not; and a control's `<kbd>` is
+  filled from `KEYS` (`data-key-of`), as the key bar is (`keys.js` `HINTS`,
+  placed *after* the first `export function` because the parity test reads
+  every string before it as a key). `test_web_layout.py` holds all three.
+- **Colours are tokens, named by meaning, and the tests read them.** `app.css`
+  opens with two token blocks (light, dark); every rule below takes its colour
+  from them - a literal hex in a rule fails `test_no_colour_outside_the_tokens`.
+  `test_web_layout.py` computes contrast for every text token on every surface
+  and for the sixteen record colours (`--c-*`) on the pane and on the cursor
+  tint, both themes, at 4.5:1; this has caught three near misses already.
+  One accent (`--key`): position, focus, the primary action. `--open`,
+  `--filtered`, `--closed` state a fact; `--mark` is a mark. A dim record span
+  takes `--ink-3`, and a colour beats dim, because a dimmed colour falls under
+  the contrast the colour is held to. Every dialog is `dialog(title, body,
+  buttons, note)` in `actions.js`: one frame, one primary.
 - **The software inventory is a session projection, never a model attachment.**
   `nmap/inventory.py` turns every source into `Observation`s - nmap's probe and
   its `<cpe>`s, OS matches, the scripts that *state* this service's software
@@ -820,14 +846,15 @@ together. Do not `query_one(RowList)`: it matches both.
 
 ## OpenSpec
 
-Planning artifacts for the current body of work live in
-`openspec/changes/terminal-search-app/`:
+Archived behaviour lives in `openspec/specs/<capability>/spec.md` (**the source
+of truth**). Work in progress is a change under `openspec/changes/<change>/`:
 
 - `proposal.md` — why + what + capabilities
-- `specs/<capability>/spec.md` — the behaviour contract (**source of truth**)
+- `specs/<capability>/spec.md` — the delta to the behaviour contract
 - `design.md` — how, and the rationale behind the technical decisions
-- `tasks.md` — the implementation checklist (all currently checked)
+- `tasks.md` — the implementation checklist
 
-When you change behaviour, update the relevant `specs/**/spec.md` in the same
-change and keep it valid (`openspec validate terminal-search-app --strict`).
-`openspec status --change terminal-search-app --json` shows artifact state.
+`openspec list` shows the open changes. When you change behaviour, update the
+relevant spec in the same change and keep it valid
+(`openspec validate <change> --strict`). `openspec status --change <change>
+--json` shows artifact state.

@@ -13,22 +13,32 @@ let at = -1;
 // group headings, which would otherwise come first and catch `↓ Enter`.
 function hits() { return [...panel.querySelectorAll("a.hit")]; }
 
+// Open or shut, and the box says which.
+function show(open) {
+  panel.hidden = !open;
+  box.setAttribute("aria-expanded", String(open));
+  if (!open) box.removeAttribute("aria-activedescendant");
+}
+
 function highlight(i) {
   const all = hits();
-  all.forEach((a) => a.classList.remove("active"));
+  all.forEach((a, n) => { a.classList.remove("active"); a.id = `hit-${n}`; });
   at = all.length ? (i + all.length) % all.length : -1;
-  if (at >= 0) { all[at].classList.add("active"); all[at].scrollIntoView({ block: "nearest" }); }
+  if (at < 0) return;
+  all[at].classList.add("active");
+  all[at].scrollIntoView({ block: "nearest" });
+  box.setAttribute("aria-activedescendant", all[at].id);
 }
 
 async function run() {
   const q = box.value.trim();
-  if (!q) { panel.hidden = true; panel.innerHTML = ""; return; }
+  if (!q) { show(false); panel.innerHTML = ""; return; }
   const mine = ++sent;
   try {
     const res = await fetch(`/search?${new URLSearchParams({ q, fragment: "1" })}`);
     if (!res.ok || mine !== sent) return;
     panel.innerHTML = await res.text();
-    panel.hidden = false;
+    show(true);
     at = -1;
   } catch (_) { /* the viewer was closed */ }
 }
@@ -40,10 +50,10 @@ box?.addEventListener("keydown", (e) => {
   else if (e.key === "ArrowUp") { e.preventDefault(); highlight(at - 1); }
   else if (e.key === "Enter" && at >= 0) { e.preventDefault(); window.location.href = hits()[at].href; }
   // Enter with nothing chosen submits the form: the full results page.
-  else if (e.key === "Escape") { e.preventDefault(); panel.hidden = true; box.blur(); }
+  else if (e.key === "Escape") { e.preventDefault(); show(false); box.blur(); }
 });
 document.addEventListener("click", (e) => {
-  if (!e.target.closest(".global-search")) panel.hidden = true;
+  if (!e.target.closest(".global-search")) show(false);
 });
 
 // Ctrl+K anywhere; `/` too, where the page has no list filter of its own.

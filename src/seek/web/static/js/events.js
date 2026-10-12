@@ -4,6 +4,8 @@
 import { refreshList, setLive, logState } from "./actions.js";
 
 const root = document.querySelector(".viewer");
+// The key bar's trailing end: what is loaded, or that the session has gone.
+const session = document.getElementById("session");
 let running = new Map();
 
 function status() {
@@ -19,10 +21,15 @@ function reloadRecordSoon() {
 
 function connect() {
   const source = new EventSource("/api/v1/events");
-  source.addEventListener("open", () => { document.body.classList.remove("offline"); status(); });
+  source.addEventListener("open", () => {
+    document.body.classList.remove("offline");
+    if (session) session.textContent = session.dataset.loaded;
+    status();
+  });
   source.addEventListener("error", () => {
     document.body.classList.add("offline");
-    setLive("connection to seek lost - the viewer may have been closed");
+    const lost = "connection to seek lost - the viewer may have been closed";
+    if (session) session.textContent = lost; else setLive(lost);
   });
   source.addEventListener("model", () => refreshList());
   source.addEventListener("marks", () => refreshList());
@@ -39,5 +46,13 @@ function connect() {
     if (selected?.dataset.step === `r:${run.id}`) reloadRecordSoon();
   });
 }
+
+// A list that was replaced says what is loaded now.
+document.addEventListener("list:replaced", () => {
+  const loaded = document.querySelector("#list [data-loaded]")?.dataset.loaded;
+  if (!session || !loaded) return;
+  session.dataset.loaded = loaded;
+  if (!document.body.classList.contains("offline")) session.textContent = loaded;
+});
 
 connect();

@@ -51,12 +51,15 @@ async function clearMarks() {
 
 // --- dialogs ---------------------------------------------------------------------------
 
+// Every dialog is this frame: a title, the caller's content, one row of buttons
+// with exactly one primary, and a line saying how to leave. Callers pass content.
 let dialogs = 0;
-function dialog(html) {
+function dialog(title, body, buttons, note = "Esc leaves") {
   const d = document.createElement("dialog");
-  d.innerHTML = html;
-  const heading = d.querySelector("h2");
-  if (heading) { heading.id ||= `dialog-title-${++dialogs}`; d.setAttribute("aria-labelledby", heading.id); }
+  const id = `dialog-title-${++dialogs}`;
+  d.setAttribute("aria-labelledby", id);
+  d.innerHTML = `<form method="dialog"><h2 id="${id}">${esc(title)}</h2>${body}
+    <p class="buttons">${buttons} <span class="dim small">${esc(note)}</span></p></form>`;
   document.body.appendChild(d);
   d.addEventListener("close", () => d.remove());
   d.showModal();
@@ -73,20 +76,17 @@ async function exportDialog() {
   try { options = await send("GET", `/api/v1/export/options?${new URLSearchParams(v)}`); }
   catch (e) { say(e.message); return; }
   if (!options.count) { say("nothing to export"); return; }
-  const d = dialog(`
-    <form method="dialog" class="export">
-      <h2>Export ${esc(options.source)}</h2>
+  const d = dialog(`Export ${options.source}`, `
       <p><label>what <select name="which">${options.recipes.map((r) => `<option value="${r.key}">${esc(r.label)}</option>`).join("")}</select></label></p>
       <fieldset class="fields" hidden><legend>fields</legend>${options.fields.map((f) => `<label><input type="checkbox" name="fields" value="${f}" ${["address", "port_label", "service"].includes(f) ? "checked" : ""}> ${f}</label>`).join(" ")}</fieldset>
       <p><label>as <select name="fmt">${options.formats.map((f) => `<option value="${f.key}">${esc(f.label)}</option>`).join("")}</select></label>
-         <span class="dim small fixed" hidden>the port list is always one line</span></p>
-      <p class="buttons"><button value="download" class="primary">Download</button> <button value="copy">Copy</button>
-         <button value="capture" ${options.capture ? "disabled" : ""} title="${esc(options.capture)}">Capture the URLs with gowitness</button>
-         <button value="scan" ${options.scan ? "disabled" : ""} title="${esc(options.scan)}">Scan these hosts…</button>
-         ${options.capture ? `<span class="dim small">capture: ${esc(options.capture)}</span>` : ""}
-         ${options.scan ? `<span class="dim small">scan: ${esc(options.scan)}</span>` : ""}
-         <button value="cancel">Cancel</button> <span class="dim small">Esc leaves</span></p>
-    </form>`);
+         <span class="dim small fixed" hidden>the port list is always one line</span></p>`,
+    `<button value="download" class="primary">Download</button> <button value="copy">Copy</button>
+         <button value="capture" ${options.capture ? "disabled" : ""}>Capture the URLs with gowitness</button>
+         <button value="scan" ${options.scan ? "disabled" : ""}>Scan these hosts…</button>
+         <button value="cancel">Cancel</button>
+         ${options.capture ? `<span class="why">capture: ${esc(options.capture)}</span>` : ""}
+         ${options.scan ? `<span class="why">scan: ${esc(options.scan)}</span>` : ""}`);
   const form = d.querySelector("form");
   const sync = () => {
     form.querySelector(".fields").hidden = form.which.value !== "custom";
@@ -123,16 +123,13 @@ async function newScan() {
   let scope = "";
   try { scope = (await send("GET", `/api/v1/export?${new URLSearchParams({ ...view(), which: "all-hosts" })}`)).trim(); }
   catch { /* nothing marked or listed: the scope is typed */ }
-  const d = dialog(`
-    <form method="dialog" class="scan">
-      <h2>New scan</h2>
+  const d = dialog("New scan", `
       <p><label>preset <select name="preset">${presets.map((p) => `<option value="${esc(p.name)}">${esc(p.name)}${p.needs_root ? " · root" : ""}</option>`).join("")}</select></label></p>
       <p><label>scope<br><textarea name="targets" rows="4" placeholder="one address, range or name per line">${esc(scope)}</textarea></label></p>
       <p><label>command<br><textarea name="command" rows="3"></textarea></label></p>
-      <div class="review dim small"></div>
-      <p class="buttons"><button value="start" class="primary">Start the scan</button> <button value="cancel">Cancel</button>
-        <span class="dim small">Esc leaves - nothing runs until you start it</span></p>
-    </form>`);
+      <div class="review dim small"></div>`,
+    '<button value="start" class="primary">Start the scan</button> <button value="cancel">Cancel</button>',
+    "Esc leaves - nothing runs until you start it");
   const form = d.querySelector("form");
   let edited = false;
   const targets = () => form.targets.value.split(/[\s,]+/).filter(Boolean);
@@ -186,21 +183,18 @@ async function updateVulndb() {
   const state = await showVulndb();
   if (!state) { say("the vulnerability database is not available here"); return; }
   if (state.updating) {
-    const d = dialog(`<form method="dialog"><h2>Updating the vulnerability database</h2>
-      <p>${esc(state.progress)}</p>
-      <p class="buttons"><button value="cancel">Cancel the update</button> <button value="keep" class="primary">Keep going</button>
-      <span class="dim small">a cancelled update leaves the data as it was</span></p></form>`);
+    const d = dialog("Updating the vulnerability database", `<p>${esc(state.progress)}</p>`,
+      '<button value="keep" class="primary">Keep going</button> <button value="cancel">Cancel the update</button>',
+      "Esc leaves - a cancelled update leaves the data as it was");
     d.addEventListener("close", async () => {
       if (d.returnValue === "cancel") { try { await send("POST", "/api/v1/vulndb/cancel"); say("cancelling"); } catch (e) { say(e.message); } }
     });
     return;
   }
   const age = state.missing ? "There is none yet - about 600 MB the first time." : `It is ${Math.round(state.age_days)} days old; only what changed is downloaded.`;
-  const d = dialog(`<form method="dialog"><h2>Update the vulnerability database?</h2>
-    <p>${esc(age)}</p>
-    <p class="dim small">Downloads NVD CVE feeds, OSV npm advisories and endoflife.date release data. Nothing about this engagement is sent.</p>
-    <p class="buttons"><button value="update" class="primary">Download and update</button> <button value="no">Not now</button>
-    <span class="dim small">Esc leaves</span></p></form>`);
+  const d = dialog("Update the vulnerability database?", `<p>${esc(age)}</p>
+    <p class="dim small">Downloads NVD CVE feeds, OSV npm advisories and endoflife.date release data. Nothing about this engagement is sent.</p>`,
+    '<button value="update" class="primary">Download and update</button> <button value="no">Not now</button>');
   d.addEventListener("close", async () => {
     if (d.returnValue !== "update") return;
     try { await send("POST", "/api/v1/vulndb/update"); say("updating the vulnerability database"); showVulndb(); }
@@ -213,15 +207,12 @@ if (vulndbButton) { vulndbButton.addEventListener("click", updateVulndb); showVu
 async function scanGaps() {
   let plan;
   try { plan = await send("POST", "/api/v1/scans/gaps", view()); } catch (e) { say(e.message); return; }
-  const d = dialog(`
-    <form method="dialog" class="scan">
-      <h2>Scan unversioned ports</h2>
+  const d = dialog("Scan unversioned ports", `
       <p class="dim small">${esc(plan.note)}</p>
       <p><label>command<br><textarea name="command" rows="3">${esc(plan.command)}</textarea></label></p>
-      <div class="review dim small"></div>
-      <p class="buttons"><button value="start" class="primary">Start the scan</button> <button value="cancel">Cancel</button>
-        <span class="dim small">Esc leaves - nothing runs until you start it</span></p>
-    </form>`);
+      <div class="review dim small"></div>`,
+    '<button value="start" class="primary">Start the scan</button> <button value="cancel">Cancel</button>',
+    "Esc leaves - nothing runs until you start it");
   const form = d.querySelector("form");
   const body = () => ({ preset: plan.preset, targets: plan.targets, command: form.command.value });
   const review = async () => {
@@ -252,10 +243,12 @@ async function scanGaps() {
 export const logState = { frozen: false, mode: "condensed" };
 const MODES = ["condensed", "diff", "raw"];
 
-export function cycleMode() {
-  if (root?.dataset.tab !== "scans") return;
-  logState.mode = MODES[(MODES.indexOf(logState.mode) + 1) % MODES.length];
-  say(`report: ${logState.mode}`);
+// The three reports of a run, in the terminal's order and words.
+export const MODE_LABELS = { condensed: "overview", diff: "diff", raw: "raw output" };
+
+export function setMode(mode) {
+  if (root?.dataset.tab !== "scans" || !MODES.includes(mode)) return;
+  logState.mode = mode;
   document.dispatchEvent(new CustomEvent("record:reload"));
 }
 
@@ -282,9 +275,9 @@ function shots() {
 }
 
 export function help(keys) {
-  dialog(`<form method="dialog"><h2>Keys</h2><table class="pairs">${keys.map(([k, , text]) =>
-    `<tr><th>${k.map((x) => `<kbd>${esc(x === " " ? "Space" : x)}</kbd>`).join(" ")}</th><td>${esc(text)}</td></tr>`).join("")}</table>
-    <p><button value="close">Close</button> <span class="dim small">Esc leaves</span></p></form>`);
+  dialog("Keys", `<table class="pairs">${keys.map(([k, , text]) =>
+    `<tr><th>${k.map((x) => `<kbd>${esc(x === " " ? "Space" : x)}</kbd>`).join(" ")}</th><td>${esc(text)}</td></tr>`).join("")}</table>`,
+    '<button value="close" class="primary">Close</button>');
 }
 
 export const handlers = { mark, clearMarks, export: exportDialog, newScan, scanGaps, updateVulndb, cancel, freeze, shots };

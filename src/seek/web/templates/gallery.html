@@ -11,16 +11,16 @@
       {% for key, (label, _) in sorts.items() %}<option value="{{ key }}" {% if key == sort %}selected{% endif %}>{{ label }}</option>{% endfor %}
     </select>
   </label>
-  <label><input type="checkbox" name="desc" value="1" {% if desc %}checked{% endif %}> descending</label>
+  <label class="chip"><input type="checkbox" name="desc" value="1" {% if desc %}checked{% endif %}>descending</label>
   {% for key, value in scope.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
   {% if group %}<input type="hidden" name="group" value="{{ group }}">{% endif %}
   <noscript><button type="submit">apply</button></noscript>
 </form>
 <nav class="groupings" aria-label="group the screenshots">
   <span class="dim small">group by <kbd>b</kbd></span>
-  <a href="/?{{ dict(keep, group="") | urlencode }}" {% if not group %}aria-current="true"{% endif %} title="one card per host:port, its other screenshots stacked behind it">port (stacked)</a>
-  <a href="/?{{ dict(keep, group="every") | urlencode }}" {% if group == "every" %}aria-current="true"{% endif %} data-group="every">every screenshot</a>
-  {% for key, label in groupings.items() %}<a href="/?{{ dict(keep, group=key) | urlencode }}" {% if group == key %}aria-current="true"{% endif %} data-group="{{ key }}">{{ label }}</a>{% endfor %}
+  <a href="/?{{ dict(keep, group="") | urlencode }}" {% if not group %}aria-current="true"{% endif %} class="chip" title="one card per host:port, its other screenshots stacked behind it">port (stacked)</a>
+  <a href="/?{{ dict(keep, group="every") | urlencode }}" {% if group == "every" %}aria-current="true"{% endif %} data-group="every" class="chip">every screenshot</a>
+  {% for key, label in groupings.items() %}<a href="/?{{ dict(keep, group=key) | urlencode }}" {% if group == key %}aria-current="true"{% endif %} data-group="{{ key }}" class="chip">{{ label }}</a>{% endfor %}
 </nav>
 {% if scope %}
 <p class="scope">only

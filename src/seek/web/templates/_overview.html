@@ -1,5 +1,9 @@
+{# `data-loaded` rides along so the key bar follows a model that grew. #}
+<div class="list-meta" data-loaded="{{ loaded }}">
 {% if view.understood %}<p class="understood">Showing rows with: {{ view.understood | join(" · ") }}{% if view.loose %} · <a class="loose" href="?{{ dict(here, q=here.q ~ " ~") | urlencode }}">+{{ view.loose }} looser match{{ "es" if view.loose != 1 }} (scattered letters) - show them</a>{% endif %}</p>{% endif %}
 <p class="count">{{ view.count }}{% if view.count != view.total %} of {{ view.total }}{% endif %} row(s){% if view.marks %} · <span class="marked-count">{{ view.marks }} marked</span>{% endif %}</p>
+</div>
+<div class="list-scroll">
 {% if view.rows %}
 <table class="list rows" data-tab="{{ view.tab }}" data-path="{{ view.path }}">
 <thead><tr><th class="mark"><span class="sr">marked</span></th>
@@ -8,7 +12,7 @@
   {% if i == 1 %}<th class="shots"><span class="sr">screenshots</span></th>{% endif %}
   {# Descending is `desc=1`; ascending leaves the key out - an empty `desc=` is not a boolean. #}
   {% set link = dict(here, sort=i) %}{% if i == view.sort and not view.desc %}{% set link = dict(link, desc="1") %}{% endif %}
-  <th{% if i == view.sort %} aria-sort="{{ "descending" if view.desc else "ascending" }}"{% endif %}><a class="sort" href="?{{ link | urlencode }}">{{ loop.index }} {{ col }}{% if i == view.sort %} {{ "↓" if view.desc else "↑" }}{% endif %}</a></th>
+  <th{% if i == view.sort %} aria-sort="{{ "descending" if view.desc else "ascending" }}"{% endif %}><a class="sort" href="?{{ link | urlencode }}"><span class="dim">{{ loop.index }}</span> {{ col }}{% if i == view.sort %} {{ "↓" if view.desc else "↑" }}{% endif %}</a></th>
 {% endfor %}</tr></thead>
 <tbody>
 {% for r in view.rows %}
@@ -31,3 +35,4 @@
 {% set clear = dict(here, q="") %}{% if sort_arg is not none %}{% set clear = dict(clear, sort=sort_arg) %}{% if desc %}{% set clear = dict(clear, desc="1") %}{% endif %}{% endif %}
 <p class="empty">{% if here.q %}nothing matches “{{ here.q }}” - <a href="?{{ clear | urlencode }}">clear the filter</a> (<kbd>Esc</kbd>); {{ view.total }} row(s) behind it{% else %}nothing here{% endif %}</p>
 {% endif %}
+</div>

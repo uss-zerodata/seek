@@ -2,13 +2,18 @@
 // keys. The page is server-rendered; this only moves the selection, fetches
 // records and nmap's text, and turns keys into the same actions the terminal
 // has. State that belongs to this window lives in its URL.
-import { KEYS, actionFor } from "./keys.js";
+import { KEYS, actionFor, hintsFor, keyOf } from "./keys.js";
 import * as actions from "./actions.js";
-import { logState } from "./actions.js";
+import { logState, MODE_LABELS } from "./actions.js";
 import "./events.js";
 
 const root = document.querySelector(".viewer");
+// The record pane: its header stays put, `panel` is the part that scrolls.
 const panel = document.getElementById("record");
+const recordTitle = document.getElementById("record-title");
+const recordExtra = document.getElementById("record-extra");
+const recordQuery = document.getElementById("record-q");
+const recordHits = document.getElementById("record-hits");
 const TABS = [...document.querySelectorAll("#tabs a[data-tab]")].map((a) => a.dataset.tab)
   .filter((t) => t !== "gallery");
 
@@ -65,13 +70,15 @@ function showRecord(title, html, extra = "") {
   const pinned = panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 4;
   const sameRun = panel.dataset.title === title;
   panel.dataset.title = title;
-  panel.innerHTML = `
-    <div class="record-head"><h2>${escapeHtml(title)}</h2>${extra}</div>
-    <div class="record-search"><input type="search" placeholder="search this record" aria-label="search this record">
-      <span class="dim small hits"></span></div>
-    <div class="record">${html}</div>`;
+  recordTitle.textContent = title;
+  recordExtra.innerHTML = extra;
+  panel.innerHTML = `<div class="record">${html}</div>`;
   state.cursor = -1;
-  panel.querySelector(".record-search input").addEventListener("input", (e) => search(e.target.value));
+  showViews();
+  // A search belongs to the record it was typed over.
+  recordQuery.value = "";
+  recordHits.textContent = "";
+  hits = [];
   if (sameRun && pinned && root.dataset.tab === "scans") panel.scrollTop = panel.scrollHeight;
 }
 
@@ -87,6 +94,58 @@ function moveCursor(delta) {
   all[next].classList.add("cursor");
   all[next].scrollIntoView({ block: "nearest" });
 }
+
+// --- the views of a record ---------------------------------------------------------
+
+// A record can be read more than one way: a run as three reports, anything else
+// as the record and as nmap's own text about it. `o` steps through them, and
+// the tabs say which one is on screen. One view is no choice: no tabs. The text
+// is one tab however many scans have some - a tab each ran away with the
+// header, and inside the text `←`/`→` and the record's own lines reach the rest.
+
+function views() {
+  if (root.dataset.tab === "scans") {
+    return Object.entries(MODE_LABELS).map(([key, label]) => ({ key, label, mode: key }));
+  }
+  const holder = document.createElement("div");
+  holder.innerHTML = state.lastRecord?.html || "";
+  const first = holder.querySelector("a.opens");
+  if (!first) return [];
+  return [{ key: "", label: "record" }, { key: "text", label: "nmap text", query: first.dataset.raw }];
+}
+
+function currentView() {
+  if (root.dataset.tab === "scans") return logState.mode;
+  return state.raw ? "text" : "";
+}
+
+function openView(view) {
+  if (view.mode) actions.setMode(view.mode);
+  else if (view.query) openRaw(view.query);
+  else closeRaw();
+}
+
+function showViews() {
+  const tabs = document.getElementById("record-views");
+  const next = document.getElementById("record-next");
+  if (!tabs) return;
+  const all = views();
+  tabs.hidden = next.hidden = all.length < 2;
+  const now = currentView();
+  tabs.innerHTML = all.map((v, i) =>
+    `<button type="button" data-view="${i}"${v.key === now ? ' aria-current="true"' : ""}>${escapeHtml(v.label)}</button>`).join("");
+}
+
+function nextView() {
+  const all = views();
+  if (all.length < 2) return;
+  openView(all[(all.findIndex((v) => v.key === currentView()) + 1) % all.length]);
+}
+
+document.getElementById("record-views")?.addEventListener("click", (e) => {
+  const tab = e.target.closest("[data-view]");
+  if (tab) openView(views()[Number(tab.dataset.view)]);
+});
 
 // --- nmap's own text ---------------------------------------------------------------
 
@@ -110,7 +169,9 @@ function closeRaw() {
   if (state.lastRecord) showRecord(state.lastRecord.title, state.lastRecord.html);
 }
 
-panel.addEventListener("click", (e) => {
+recordQuery?.addEventListener("input", (e) => search(e.target.value));
+
+panel?.addEventListener("click", (e) => {
   const link = e.target.closest("a.opens");
   if (!link) return;
   e.preventDefault();
@@ -123,11 +184,12 @@ let hits = [];
 let hitAt = -1;
 function search(term) {
   const box = panel.querySelector(".record");
+  if (!box) return;
   box.querySelectorAll("mark.hit").forEach((m) => m.replaceWith(...m.childNodes));
   box.normalize();
   hits = [];
   hitAt = -1;
-  const out = panel.querySelector(".hits");
+  const out = recordHits;
   if (!term) { out.textContent = ""; return; }
   const needle = term.toLowerCase();
   const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
@@ -160,7 +222,7 @@ function nextHit(delta) {
   hitAt = (hitAt + delta + hits.length) % hits.length;
   hits[hitAt].classList.add("current");
   hits[hitAt].scrollIntoView({ block: "center" });
-  panel.querySelector(".hits").textContent = `${hitAt + 1}/${hits.length}`;
+  recordHits.textContent = `${hitAt + 1}/${hits.length}`;
 }
 
 // --- navigation --------------------------------------------------------------------
@@ -212,9 +274,10 @@ const HANDLERS = {
     const line = lines()[state.cursor];
     const raw = line?.querySelector("a.opens");
     const to = line?.querySelector("a.to");
+    // A line that opens something wins; otherwise `o` is the next view.
     if (raw) openRaw(raw.dataset.raw);
     else if (to) go(to.href);
-    else actions.cycleMode();
+    else nextView();
   },
   back,
   filter: () => document.querySelector(".controls .filter")?.focus(),
@@ -225,6 +288,11 @@ const HANDLERS = {
     const groups = ["group-service", "group-product", "group-port"];
     const at = groups.indexOf(root.dataset.tab);
     go(`/v/${groups[(at + 1) % groups.length]}`);
+  },
+  upHosts: () => {
+    if (root.dataset.tab === "hosts" && !root.dataset.path) toggleParam("up");
+    else if ((root.dataset.path || "").startsWith("h:")) toggleParam("open");
+    else go("/v/hosts?up=1");
   },
   openPorts: () => (root.dataset.tab === "hosts" && !root.dataset.path ? toggleParam("ports") : go("/v/hosts?ports=1")),
   full: () => { state.full = !state.full; root.classList.toggle("full", state.full); },
@@ -246,15 +314,19 @@ document.addEventListener("keydown", (event) => {
   const action = actionFor(event);
   if (!action) return;
   if (action === "sort") { event.preventDefault(); sortBy(Number(event.key) - 1); return; }
-  if (action === "upHosts") {
-    event.preventDefault();
-    if (root.dataset.tab === "hosts" && !root.dataset.path) toggleParam("up");
-    else if ((root.dataset.path || "").startsWith("h:")) toggleParam("open");
-    else go("/v/hosts?up=1");
-    return;
-  }
   const handler = HANDLERS[action];
   if (handler) { event.preventDefault(); handler(); }
+});
+
+// A control with `data-action` does what its key does: same table, same handler.
+document.addEventListener("click", (e) => {
+  const control = e.target.closest("[data-action]");
+  if (control && root) HANDLERS[control.dataset.action]?.();
+});
+
+// A control's key is read from the key table, not written beside it.
+document.querySelectorAll("kbd[data-key-of]").forEach((kbd) => {
+  kbd.textContent = keyOf(kbd.dataset.keyOf) || kbd.textContent;
 });
 
 // Rows are clicked as well as keyed; the list is swapped in place by the filter.
@@ -279,15 +351,48 @@ export function escapeHtml(text) {
   return String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+// --- the key bar ---------------------------------------------------------------------
+
+// The keys of this view, as the terminal's hint bar has them. What does not fit
+// is dropped from the end, never the navigation, the way out or `?`.
+function showHints() {
+  const bar = document.getElementById("hints");
+  if (!bar) return;
+  const view = { tab: root.dataset.tab, path: root.dataset.path || "" };
+  bar.innerHTML = hintsFor(view).map((h) =>
+    `<span${h.keep ? ' data-keep="1"' : ""}>${h.keys.map((k) => `<kbd>${escapeHtml(k)}</kbd>`).join(" ")} ${escapeHtml(h.text)}</span>`).join("");
+  const fit = () => {
+    const all = [...bar.children];
+    all.forEach((el) => { el.hidden = false; });
+    const droppable = all.filter((el) => !el.dataset.keep).reverse();
+    // Measured at the last hint's edge: a clipped box does not always say it overflows.
+    const fits = () => {
+      const last = all.filter((el) => !el.hidden).at(-1);
+      return !last || last.getBoundingClientRect().right <= bar.getBoundingClientRect().right + 1;
+    };
+    for (const el of droppable) {
+      if (fits()) break;
+      el.hidden = true;
+    }
+  };
+  fit();
+  new ResizeObserver(fit).observe(bar);
+}
+
+// The active tab is on screen even when the strip is wider than the window.
+document.querySelector("#tabs a[aria-current]")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+
 if (root) {
+  showHints();
   // The page arrives with the selected row's record already in it: keep it
   // rather than fetch it again, and remember it for `Esc` out of nmap's text.
   const step = params().get("sel");
   const at = rows().findIndex((tr) => tr.dataset.step === step);
   const rendered = panel.querySelector(".record");
   if (rendered) {
-    state.lastRecord = { title: panel.querySelector(".record-head h2")?.textContent || "",
-                         html: rendered.innerHTML };
+    state.lastRecord = { title: recordTitle.textContent, html: rendered.innerHTML };
+    panel.dataset.title = recordTitle.textContent;
+    showViews();
   }
   select(at >= 0 ? at : 0, { scroll: at >= 0, load: !rendered });
 }
