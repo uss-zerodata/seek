@@ -113,9 +113,18 @@ async function exportDialog() {
 }
 
 async function capture() {
-  try { const run = await send("POST", "/api/v1/captures/runs", view()); say(`capturing: ${run.label}`); }
-  catch (e) { say(e.message); }
+  try {
+    const run = await send("POST", "/api/v1/captures/runs", view());
+    say(`capturing: ${run.label}`);
+    return true;
+  } catch (e) { say(e.message); return false; }
 }
+
+// The screenshot capture sits among the scan presets: to the reader it is one
+// more thing to run against these hosts. It is not an nmap preset - it has no
+// command to edit and its targets are the HTTP(S) URLs of the marks or the
+// list, exactly what the export dialog's capture sends.
+const CAPTURE = "__gowitness__";
 
 async function newScan() {
   let presets;
@@ -123,18 +132,43 @@ async function newScan() {
   let scope = "";
   try { scope = (await send("GET", `/api/v1/export?${new URLSearchParams({ ...view(), which: "all-hosts" })}`)).trim(); }
   catch { /* nothing marked or listed: the scope is typed */ }
+  // Why a capture cannot run, "" when it can; unknown reads as it can, and the
+  // server says otherwise when asked to start.
+  let captureOff = "";
+  let source = "this list";
+  try {
+    const options = await send("GET", `/api/v1/export/options?${new URLSearchParams(view())}`);
+    captureOff = options.capture;
+    source = options.source;
+  } catch { /* the capture's own request will say */ }
   const d = dialog("New scan", `
-      <p><label>preset <select name="preset">${presets.map((p) => `<option value="${esc(p.name)}">${esc(p.name)}${p.needs_root ? " · root" : ""}</option>`).join("")}</select></label></p>
-      <p><label>scope<br><textarea name="targets" rows="4" placeholder="one address, range or name per line">${esc(scope)}</textarea></label></p>
-      <p><label>command<br><textarea name="command" rows="3"></textarea></label></p>
+      <p><label>preset <select name="preset">${presets.map((p) => `<option value="${esc(p.name)}">${esc(p.name)}${p.needs_root ? " · root" : ""}</option>`).join("")}
+        <option value="${CAPTURE}" ${captureOff ? "disabled" : ""}>gowitness · screenshots of the HTTP(S) services${captureOff ? ` - ${esc(captureOff)}` : ""}</option></select></label></p>
+      <p class="nmap-only"><label>scope<br><textarea name="targets" rows="4" placeholder="one address, range or name per line">${esc(scope)}</textarea></label></p>
+      <p class="nmap-only"><label>command<br><textarea name="command" rows="3"></textarea></label></p>
       <div class="review dim small"></div>`,
     '<button value="start" class="primary">Start the scan</button> <button value="cancel">Cancel</button>',
     "Esc leaves - nothing runs until you start it");
   const form = d.querySelector("form");
+  const start = form.querySelector("button[value=start]");
   let edited = false;
   const targets = () => form.targets.value.split(/[\s,]+/).filter(Boolean);
+  const capturing = () => form.preset.value === CAPTURE;
+  // What a capture would photograph: the URLs the export writes, counted.
+  const reviewCapture = async (box) => {
+    let urls = [];
+    try { urls = (await send("GET", `/api/v1/export?${new URLSearchParams({ ...view(), which: "urls" })}`)).trim().split("\n").filter(Boolean); }
+    catch { /* none */ }
+    box.innerHTML = urls.length
+      ? `${urls.length} URL(s) from ${esc(source)}<br><code>${esc(urls.slice(0, 5).join("  "))}${urls.length > 5 ? " …" : ""}</code>`
+      : `<span class="c-red">no HTTP or HTTPS service in ${esc(source)}</span>`;
+    start.disabled = !urls.length;
+  };
   const review = async () => {
     const box = form.querySelector(".review");
+    form.querySelectorAll(".nmap-only").forEach((el) => { el.hidden = capturing(); });
+    start.textContent = capturing() ? "Start the capture" : "Start the scan";
+    if (capturing()) { reviewCapture(box); return; }
     try {
       const plan = await send("POST", "/api/v1/scans/review",
         { preset: form.preset.value, targets: targets(), command: edited ? form.command.value : null });
@@ -143,7 +177,7 @@ async function newScan() {
         ? `<span class="c-red">${esc(plan.error)}</span>`
         : `runs <code>${esc(plan.argv.join(" "))}</code><br>${plan.targets.length} target(s) · writes ${esc(plan.out_base)}.{xml,nmap,gnmap}` +
           (plan.elevated ? `<br><strong>needs root</strong> (${esc(plan.privilege)}) - through <code>sudo -n</code>, never a prompt` : "");
-      form.querySelector("button[value=start]").disabled = Boolean(plan.error);
+      start.disabled = Boolean(plan.error);
     } catch (e) { box.innerHTML = `<span class="c-red">${esc(e.message)}</span>`; }
   };
   form.preset.addEventListener("change", () => { edited = false; review(); });
@@ -152,6 +186,10 @@ async function newScan() {
   review();
   d.addEventListener("close", async () => {
     if (d.returnValue !== "start") return;
+    if (capturing()) {
+      if (await capture() && root?.dataset.tab !== "scans") window.location.href = "/v/scans";
+      return;
+    }
     try {
       const run = await send("POST", "/api/v1/scans",
         { preset: form.preset.value, targets: targets(), command: form.command.value });

@@ -9,7 +9,10 @@ function wire(form, target, fieldsOf) {
     clearTimeout(timer);
     timer = setTimeout(async () => {
       const url = new URL(form.action || window.location.href, window.location.href);
+      // The selected row is this window's, not the form's: it stays in the URL.
+      const selected = url.searchParams.get("sel");
       url.search = "";
+      if (selected) url.searchParams.set("sel", selected);
       for (const [key, value] of fieldsOf()) if (value !== "") url.searchParams.set(key, value);
       history.replaceState(null, "", url);
       url.searchParams.set("fragment", "1");

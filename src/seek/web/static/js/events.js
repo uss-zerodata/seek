@@ -31,7 +31,8 @@ function connect() {
     const lost = "connection to seek lost - the viewer may have been closed";
     if (session) session.textContent = lost; else setLive(lost);
   });
-  source.addEventListener("model", () => refreshList());
+  // A changed model can change the selected row's record; a mark cannot.
+  source.addEventListener("model", () => { refreshList(); reloadRecordSoon(); });
   source.addEventListener("marks", () => refreshList());
   source.addEventListener("run", (e) => {
     const { run } = JSON.parse(e.data);

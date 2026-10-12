@@ -242,3 +242,28 @@ def test_every_dialog_is_the_one_frame():
     assert '<form method="dialog"' not in ACTIONS_JS.replace(frame, ""), "callers pass content"
     syntax = (WEB / "templates/_syntax.html").read_text()
     assert syntax.count('class="primary"') == 1 and "Esc leaves" in syntax
+
+
+def test_the_capture_is_offered_among_the_scan_presets():
+    """One dialog for everything that can be run against these hosts. It starts
+    the capture the export dialog starts - one request, one scope rule."""
+    dialog = ACTIONS_JS.split("async function newScan()")[1].split("\nasync function ")[0]
+    assert '<option value="${CAPTURE}" ${captureOff ? "disabled" : ""}>' in dialog
+    assert "${esc(captureOff)}" in dialog, "unavailable is shown with its reason, not hidden"
+    assert "await capture()" in dialog and ACTIONS_JS.count('"/api/v1/captures/runs"') == 1
+
+
+def test_a_refreshed_list_leaves_the_cursor_and_the_record_alone():
+    """Marking refreshes the list. The row is found again by what it is, its
+    record is not fetched again, and the selection survives in the URL."""
+    handler = VIEWER_JS.split('addEventListener("list:replaced"')[1].split("\n});")[0]
+    assert "tr.dataset.step === state.step" in handler
+    assert "select(at, { scroll: false, load: false })" in handler
+    app_js = (WEB / "static/app.js").read_text()
+    assert 'url.searchParams.set("sel", selected)' in app_js
+
+
+def test_static_files_are_revalidated(world):  # noqa: F811
+    # An imported module has no version in its URL; a stale one breaks the page.
+    response = world[3].get("/static/js/keys.js")
+    assert response.status_code == 200 and response.headers["cache-control"] == "no-cache"

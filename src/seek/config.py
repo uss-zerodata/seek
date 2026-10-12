@@ -126,6 +126,12 @@ class Config:
     # no way to tell. Set false when the size of a capture directory matters
     # more than its completeness. Affects collection only, never reading.
     gowitness_collect_all: bool = True
+    # A screenshot is taken once the page has loaded and nothing in it has
+    # changed for this long, or at the cap. Raise the first for pages that sit
+    # silent before one late response draws them. 0 puts back gowitness's
+    # default driver and a fixed three-second delay.
+    gowitness_settle_ms: int = 2000
+    gowitness_settle_cap_ms: int = 20000
     # The vulnerability database (`seek vulndb update`). Empty: `vulndb.sqlite3`
     # in the state directory. Point it at a copy to use one built elsewhere.
     vulndb_path: str = ""
@@ -175,6 +181,8 @@ _SCALAR_KEYS: dict[str, type | tuple[type, ...]] = {
     "web_port": int,
     "gowitness_chrome_path": str,
     "gowitness_collect_all": bool,
+    "gowitness_settle_ms": int,
+    "gowitness_settle_cap_ms": int,
     "vulndb_path": str,
     "vulndb_stale_days": int,
 }
@@ -193,6 +201,8 @@ _RANGES: dict[str, tuple[int, int | None]] = {
     "preview_window_lines": (1, None),
     "max_results": (1, None),
     "publish_interval_ms": (0, 60_000),
+    "gowitness_settle_ms": (0, 60_000),
+    "gowitness_settle_cap_ms": (1_000, 600_000),
     "format_min_line": (1, None),
     "content_cache_budget": (0, None),
     "gowitness_report_port": (1, 65_535),
@@ -408,6 +418,8 @@ _EXAMPLE_COMMENTS = {
     "web_port": "port the viewer's web interface listens on",
     "gowitness_chrome_path": "a Chrome binary for gowitness to use; empty lets it fetch its own",
     "gowitness_collect_all": "record network logs, cookies and response bodies too (large)",
+    "gowitness_settle_ms": "screenshot once the page has been still this long (0: fixed 3 s delay)",
+    "gowitness_settle_cap_ms": "...or after this long, whatever the page is doing",
     "vulndb_path": "the vulnerability database; empty means vulndb.sqlite3 in the state dir",
     "vulndb_stale_days": "offer an update when the vulnerability database is older than this",
 }

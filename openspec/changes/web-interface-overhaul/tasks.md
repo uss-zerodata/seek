@@ -44,6 +44,9 @@
 - [x] 5.3 `actions.js`: `setMode` and `MODE_LABELS` replace `cycleMode`; `keys.js` help text for `o`
 - [x] 5.4 `templates/capture.html`: heading with status and title, action chips, picture beside grouped facts, folded lists, the no-picture state
 - [x] 5.5 Tests: views hidden by default and tied to `o`; the capture page's order, actions and failed state
+- [x] 5.6 Record views: nmap's text is one tab, not one per scan
+- [x] 5.7 Capture page fills a wide window: lists as a third column from 1600 px
+- [x] 5.8 New-scan dialog lists the gowitness capture among the presets (disabled with its reason when unavailable; URL count as its review)
 
 ## 6. Verify and document
 

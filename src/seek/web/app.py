@@ -48,6 +48,21 @@ ROUTERS = [
 _SAFE = {"GET", "HEAD", "OPTIONS"}
 
 
+class _Static(StaticFiles):
+    """Static files the browser asks about every time.
+
+    The page's own files carry a version in their URL, but the modules they
+    import (`keys.js`, `actions.js`, `events.js`) do not, and a browser that
+    kept an old one beside a new `viewer.js` fails the import and runs none of
+    it. `no-cache` is a revalidation, not a download: on loopback it is free.
+    """
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 def create_app(source: ModelSource, session=None,
                origin: Callable[[], str] | None = None) -> FastAPI:
     """The application over `source`; `session` is what the actions change.
@@ -62,7 +77,7 @@ def create_app(source: ModelSource, session=None,
     app.state.places = ViewCache()
     for router in ROUTERS:
         app.include_router(router)
-    app.mount("/static", StaticFiles(directory=STATIC), name="static")
+    app.mount("/static", _Static(directory=STATIC), name="static")
 
     @app.middleware("http")
     async def same_origin(request: Request, call_next):

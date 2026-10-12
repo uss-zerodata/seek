@@ -17,7 +17,8 @@ const recordHits = document.getElementById("record-hits");
 const TABS = [...document.querySelectorAll("#tabs a[data-tab]")].map((a) => a.dataset.tab)
   .filter((t) => t !== "gallery");
 
-export const state = { index: -1, raw: null, cursor: -1, full: false, lastRecord: null };
+// `step` names the selected row: an index means nothing once the list is replaced.
+export const state = { index: -1, step: "", raw: null, cursor: -1, full: false, lastRecord: null };
 
 function rows() { return [...document.querySelectorAll("table.rows tr.row")]; }
 function params() { return new URL(window.location.href).searchParams; }
@@ -38,6 +39,7 @@ export function select(i, { scroll = true, load = true } = {}) {
   all.forEach((tr, n) => tr.classList.toggle("selected", n === i));
   state.index = i;
   const tr = all[i];
+  state.step = tr.dataset.step;
   if (scroll) tr.scrollIntoView({ block: "nearest" });
   setParam("sel", tr.dataset.step);
   if (load) loadRecord(tr.dataset.step);
@@ -341,10 +343,14 @@ document.addEventListener("record:reload", () => {
   if (tr && !state.raw) loadRecord(tr.dataset.step);
 });
 
+// The list is replaced under the reader - by a mark, a filter, a scan that
+// finished. The cursor stays on the row it was on, and that row's record is
+// left alone: marking ten rows in a row must not move anything. Only when the
+// row is gone does the cursor take the row now in its place.
 document.addEventListener("list:replaced", () => {
-  const step = params().get("sel");
-  const at = rows().findIndex((tr) => tr.dataset.step === step);
-  select(at >= 0 ? at : 0, { scroll: false });
+  const at = rows().findIndex((tr) => tr.dataset.step === state.step);
+  if (at >= 0) select(at, { scroll: false, load: false });
+  else select(Math.max(state.index, 0), { scroll: false });
 });
 
 export function escapeHtml(text) {

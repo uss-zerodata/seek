@@ -31,6 +31,22 @@ target. Failures are therefore recovered from the log line the flag turns on:
 which is also why the progress counter has to count two different lines to
 know how many targets are done.
 
+**The screenshot waits for the page, not for a clock.** A fixed `--delay`
+photographs a slow page half drawn and makes a fast one wait for nothing.
+gowitness has no wait-for-load flag, but `--javascript` runs a function before
+the screenshot, and measured against 3.2.2 the `gorod` driver awaits the promise
+it returns - the default `chromedp` driver does not (0.7 s for a promise of
+8 s), and neither does `--javascript-file` under either driver. So the capture
+runs `--driver gorod --delay 0` with `settle_script` inline. It resolves when
+the document is complete, every image has arrived, and nothing has changed in
+the page or finished downloading for the quiet window - or at the cap. One
+blind spot, and it is the platform's: a page cannot see a request still in
+flight, so one that is silent for longer than the quiet window before a single
+late response is photographed early; the quiet window is the knob for that.
+`gorod` without a script does not wait for navigation at all (it records
+`about:blank` as the title), so the driver and the script travel together:
+`settle_ms=0` puts back `chromedp` and the fixed delay.
+
 **One argv, two backends.** The container sees `/data` where the host sees the
 capture directory, so the only difference between the two commands is that
 prefix and the `docker run` preamble. Keeping that in one function is what stops
@@ -146,11 +162,40 @@ def write_urls(paths: Paths, urls: list[str]) -> Path:
     return paths.urls
 
 
+def settle_script(quiet_ms: int, cap_ms: int) -> str:
+    """The function gowitness evaluates before a screenshot: a promise that
+    resolves once the page has loaded and been still for `quiet_ms`, or after
+    `cap_ms` whatever the page is doing. One line - it travels in the argv."""
+    return (
+        "() => new Promise((done) => {"
+        f" const quiet = {int(quiet_ms)}, cap = {int(cap_ms)}, start = performance.now();"
+        " let last = start; const seen = () => { last = performance.now(); };"
+        " new MutationObserver(seen).observe(document,"
+        " { subtree: true, childList: true, attributes: true, characterData: true });"
+        ' try { new PerformanceObserver(seen).observe({ type: "resource" }); } catch (_) {}'
+        ' const loaded = () => document.readyState === "complete"'
+        " && [...document.images].every((i) => i.complete);"
+        " const tick = () => { const now = performance.now();"
+        " if (now - start >= cap || (loaded() && now - last >= quiet)) done();"
+        " else setTimeout(tick, 100); };"
+        " tick(); })"
+    )
+
+
 def scan_argv(probe: Probe, paths: Paths, *, chrome_path: str = "",
               collect_all: bool = True,
-              threads: int = 6, timeout: int = 30, delay: int = 3) -> list[str]:
+              threads: int = 6, timeout: int = 30, delay: int = 3,
+              settle_ms: int = 2000, settle_cap_ms: int = 20000) -> list[str]:
     """The command that captures `paths.urls`, for whichever backend is in use."""
     seen = _MOUNT if probe.backend == "docker" else str(paths.root)
+    if settle_ms > 0:
+        # The page's own wait must fit inside gowitness's: a timeout shorter
+        # than the cap would fail the very pages the cap exists for.
+        timeout = max(timeout, -(-settle_cap_ms // 1000) + 10)
+        waiting = ["--driver", "gorod", "--delay", "0",
+                   "--javascript", settle_script(settle_ms, settle_cap_ms)]
+    else:
+        waiting = ["--delay", str(delay)]
     flags = [
         "scan", "file",
         "-f", f"{seen}/{URLS_NAME}",
@@ -162,7 +207,7 @@ def scan_argv(probe: Probe, paths: Paths, *, chrome_path: str = "",
         "--log-scan-errors",
         "--threads", str(threads),
         "--timeout", str(timeout),
-        "--delay", str(delay),
+        *waiting,
     ]
     if not collect_all:
         # `html` carries a whole response body per result and the network log a

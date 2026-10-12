@@ -440,6 +440,21 @@ together. Do not `query_one(RowList)`: it matches both.
   is worth looking at" and that is read down a status column. Before reaching
   for a new section - or a new tab - check whether the thing the new data
   describes is already on screen.
+- **A screenshot waits for the page, not for a clock.** gowitness has no
+  wait-for-load flag; `capture.settle_script` is a function passed inline with
+  `--javascript` that resolves when the document is complete, every image is
+  in, and nothing has changed or finished downloading for
+  `gowitness_settle_ms` - or at `gowitness_settle_cap_ms`. Three traps, all
+  measured against 3.2.2 and all silent: the default `chromedp` driver does
+  **not** await the promise (0.7 s for a promise of 8 s), so the capture runs
+  `--driver gorod`; `--javascript-file` is not awaited under either driver, so
+  the script travels in the argv on one line; and `gorod` *without* a script
+  does not wait for navigation at all (title `about:blank`), so the driver and
+  the script go together - `settle_ms=0` puts back `chromedp` and `--delay 3`.
+  A page cannot see a request still in flight: one that is silent for longer
+  than the quiet window before a single late response is captured early. That
+  is the platform's limit; the quiet window is the knob. `--timeout` is raised
+  to cover the cap, never lowered.
 - **One `Runner` slot per tool is the whole concurrency design.** A `Runner`
   supervises one run, so `self.runner` (nmap) and `self.captures` (gowitness)
   give "serial within a tool, concurrent across tools" with no scheduler and no

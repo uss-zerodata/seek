@@ -186,6 +186,28 @@ and offer the target.
 - **WHEN** the capture has headers and network entries
 - **THEN** the headers are shown, the network entries are folded under a heading with their count, and opening it shows them
 
+### Requirement: The new-scan dialog offers the screenshot capture
+The dialog that starts a scan SHALL list the gowitness screenshot capture among
+its presets. Choosing it SHALL replace the scope and command fields with what
+would be captured - the number of HTTP(S) URLs of the marked rows, or of the
+listed rows when nothing is marked, and the first of them - and SHALL start that
+capture, the same one the export dialog starts. When gowitness is not available
+the entry SHALL stay in the list, disabled, with the reason. When the selection
+holds no HTTP or HTTPS service the dialog SHALL say so and the start control
+SHALL be disabled.
+
+#### Scenario: Capturing from the scan dialog
+- **WHEN** the user opens the new-scan dialog on a list of hosts, chooses the gowitness entry and starts it
+- **THEN** a capture of those hosts' HTTP(S) URLs starts and the Scans tab shows it
+
+#### Scenario: gowitness is missing
+- **WHEN** gowitness cannot be run
+- **THEN** its entry is listed, cannot be chosen, and reads why
+
+#### Scenario: Nothing to capture
+- **WHEN** the listed rows have no HTTP or HTTPS service and the gowitness entry is chosen
+- **THEN** the dialog says so and cannot be started
+
 ### Requirement: A key bar shows the keys for the current view
 The bottom of a viewer page SHALL show the keys that apply to the current view,
 in the terminal viewer's words, and the session's state: how many scans and

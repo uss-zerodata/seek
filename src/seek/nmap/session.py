@@ -688,7 +688,9 @@ class Session:
             raise ScanError(f"could not write the URL list: {exc.strerror or exc}") from None
         argv = gw_capture.scan_argv(self.gowitness, paths,
                                     chrome_path=self.config.gowitness_chrome_path,
-                                    collect_all=self.config.gowitness_collect_all)
+                                    collect_all=self.config.gowitness_collect_all,
+                                    settle_ms=self.config.gowitness_settle_ms,
+                                    settle_cap_ms=self.config.gowitness_settle_cap_ms)
         return gw_capture.CaptureRun(argv=argv, paths=paths, urls=urls,
                                      backend=self.gowitness.backend or "")
 

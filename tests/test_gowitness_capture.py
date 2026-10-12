@@ -16,6 +16,7 @@ from seek.gowitness.capture import (
     capture_dir,
     report_argv,
     scan_argv,
+    settle_script,
     write_urls,
 )
 from seek.gowitness.detect import Probe
@@ -306,3 +307,55 @@ def test_everything_is_recorded_by_default(tmp_path):
 def test_collection_can_still_be_trimmed(tmp_path):
     argv = scan_argv(DOCKER, _paths(tmp_path), collect_all=False)
     assert "--skip-network-logs" in argv and "--skip-html" in argv
+
+
+# --- waiting for the page ---------------------------------------------------------
+
+
+def test_a_capture_waits_for_the_page_not_for_a_clock(tmp_path):
+    """Measured against gowitness 3.2.2: only the gorod driver awaits the promise
+    the script returns, and only when the script is inline."""
+    for probe in (DOCKER, NATIVE):
+        argv = scan_argv(probe, _paths(tmp_path))
+        assert argv[argv.index("--driver") + 1] == "gorod"
+        assert argv[argv.index("--delay") + 1] == "0", "the script is the wait"
+        assert argv[argv.index("--javascript") + 1] == settle_script(2000, 20000)
+        assert "--javascript-file" not in argv, "not awaited"
+
+
+def test_the_wait_is_one_function_on_one_line():
+    script = settle_script(1500, 9000)
+    assert script.startswith("() => new Promise(") and "\n" not in script
+    assert "quiet = 1500, cap = 9000" in script
+    # Loaded, every image in, and still - or the cap.
+    for part in ('readyState === "complete"', "document.images", "MutationObserver",
+                 "now - start >= cap"):
+        assert part in script, part
+
+
+def test_the_page_s_wait_fits_inside_the_tool_s_timeout(tmp_path):
+    argv = scan_argv(DOCKER, _paths(tmp_path), timeout=30, settle_cap_ms=45_000)
+    assert int(argv[argv.index("--timeout") + 1]) >= 55
+    quick = scan_argv(DOCKER, _paths(tmp_path), timeout=30, settle_cap_ms=5_000)
+    assert quick[quick.index("--timeout") + 1] == "30", "never shortened"
+
+
+def test_the_wait_can_be_switched_off(tmp_path):
+    """gorod without a script does not wait for navigation at all, so the
+    driver and the script go together."""
+    argv = scan_argv(DOCKER, _paths(tmp_path), settle_ms=0)
+    assert "--driver" not in argv and "--javascript" not in argv
+    assert argv[argv.index("--delay") + 1] == "3"
+
+
+def test_the_session_passes_the_configured_wait(tmp_path, monkeypatch):
+    from seek.config import Config
+    from seek.nmap.session import Session
+
+    config = Config(nmap_path="/nonexistent/nmap", gowitness_settle_ms=4000,
+                    gowitness_settle_cap_ms=30_000)
+    session = Session(config, [], tmp_path, databases=[], scans=None)
+    session.gowitness = DOCKER
+    monkeypatch.setattr("seek.nmap.session.export_urls", lambda records: list(records))
+    run = session.plan_capture(["https://192.0.2.1:443"])
+    assert settle_script(4000, 30_000) in run.argv
