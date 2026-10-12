@@ -10,9 +10,10 @@
 <script type="module" src="/static/js/search.js?v={{ V }}"></script>
 </head>
 <body>
+<a class="skip" href="#main">Skip to the content</a>
 <header class="bar">
   <a class="brand" href="/">seek</a>
-  <nav id="tabs">
+  <nav id="tabs" aria-label="views">
     {% for id, label in TABS %}<a href="/v/{{ id }}" data-tab="{{ id }}" {% if nav == id %}aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
     <a href="/" data-tab="gallery" {% if nav == "gallery" %}aria-current="page"{% endif %}>Screenshots</a>
   </nav>
@@ -27,7 +28,7 @@
   </form>
 </header>
 {% include "_syntax.html" %}
-<main>
+<main id="main">
 {% block content %}{% endblock %}
 </main>
 </body>

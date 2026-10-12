@@ -2,13 +2,13 @@
 <p class="count">{{ view.count }}{% if view.count != view.total %} of {{ view.total }}{% endif %} row(s){% if view.marks %} · <span class="marked-count">{{ view.marks }} marked</span>{% endif %}</p>
 {% if view.rows %}
 <table class="list rows" data-tab="{{ view.tab }}" data-path="{{ view.path }}">
-<thead><tr><th class="mark"></th>
+<thead><tr><th class="mark"><span class="sr">marked</span></th>
 {% for col in view.columns %}
   {% set i = loop.index0 %}
-  {% if i == 1 %}<th class="shots"></th>{% endif %}
+  {% if i == 1 %}<th class="shots"><span class="sr">screenshots</span></th>{% endif %}
   {# Descending is `desc=1`; ascending leaves the key out - an empty `desc=` is not a boolean. #}
   {% set link = dict(here, sort=i) %}{% if i == view.sort and not view.desc %}{% set link = dict(link, desc="1") %}{% endif %}
-  <th><a class="sort" href="?{{ link | urlencode }}">{{ loop.index }} {{ col }}{% if i == view.sort %} {{ "↓" if view.desc else "↑" }}{% endif %}</a></th>
+  <th{% if i == view.sort %} aria-sort="{{ "descending" if view.desc else "ascending" }}"{% endif %}><a class="sort" href="?{{ link | urlencode }}">{{ loop.index }} {{ col }}{% if i == view.sort %} {{ "↓" if view.desc else "↑" }}{% endif %}</a></th>
 {% endfor %}</tr></thead>
 <tbody>
 {% for r in view.rows %}
@@ -17,9 +17,9 @@
 {% else %}
 <tr class="row{% if sel == r.step %} selected{% endif %}" data-step="{{ r.step }}"
     {% if r.opens %}data-open="/v/{{ view.tab }}?{{ {"path": (view.path ~ "|" ~ r.step) if view.path else r.step} | urlencode }}"{% endif %}>
-  <td class="mark">{{ "●" if r.mark == "all" else ("◐" if r.mark == "some" else "") }}</td>
+  <td class="mark">{% if r.mark %}<span aria-hidden="true">{{ "●" if r.mark == "all" else "◐" }}</span><span class="sr">{{ "marked" if r.mark == "all" else "partly marked" }}</span>{% endif %}</td>
   {% set drill = "/v/" ~ view.tab ~ "?" ~ ({"path": (view.path ~ "|" ~ r.step) if view.path else r.step} | urlencode) %}
-  {% for cell in r.cells %}{% if loop.index0 == 1 %}<td class="shots">{% for shot in r.shots %}<a class="thumb-row" href="/captures/{{ shot.id }}" title="{{ shot.status or '' }} {{ shot.url }}">{% if shot.image %}<img src="{{ shot.image }}" alt="" loading="lazy">{% else %}<span class="noshot-sm">✗</span>{% endif %}</a>{% endfor %}{% if r.shots_total > r.shots | length %}<a class="more-shots" href="/?{{ gallery_scope(r.step) }}">+{{ r.shots_total - r.shots | length }}</a>{% endif %}</td>{% endif %}<td title="{{ cell }}"{% if loop.index0 < r.tones | length and r.tones[loop.index0] %} class="tone-{{ r.tones[loop.index0] }}"{% endif %}>{% if loop.first and view.kind == "host-detail" %}<a href="?{{ dict(here, sel=r.step) | urlencode }}" title="everything the scans recorded about this port">{{ cell }}</a>{% if r.opens %} <a class="everywhere small" href="{{ drill }}" title="this service on every host">everywhere →</a>{% endif %}{% elif loop.first and r.opens %}<a href="{{ drill }}">{{ cell }}</a>{% else %}{{ cell }}{% endif %}</td>{% endfor %}
+  {% for cell in r.cells %}{% if loop.index0 == 1 %}<td class="shots">{% for shot in r.shots %}<a class="thumb-row" href="/captures/{{ shot.id }}" title="{{ shot.status or '' }} {{ shot.url }}" aria-label="{{ "screenshot" if shot.image else "failed capture" }} of {{ shot.url }}">{% if shot.image %}<img src="{{ shot.image }}" alt="" loading="lazy">{% else %}<span class="noshot-sm" aria-hidden="true">✗</span>{% endif %}</a>{% endfor %}{% if r.shots_total > r.shots | length %}<a class="more-shots" href="/?{{ gallery_scope(r.step) }}">+{{ r.shots_total - r.shots | length }}</a>{% endif %}</td>{% endif %}<td title="{{ cell }}"{% if loop.index0 < r.tones | length and r.tones[loop.index0] %} class="tone-{{ r.tones[loop.index0] }}"{% endif %}>{% if loop.first and view.kind == "host-detail" %}<a href="?{{ dict(here, sel=r.step) | urlencode }}" title="everything the scans recorded about this port">{{ cell }}</a>{% if r.opens %} <a class="everywhere small" href="{{ drill }}" title="this service on every host">everywhere →</a>{% endif %}{% elif loop.first and r.opens %}<a href="{{ drill }}">{{ cell }}</a>{% else %}{{ cell }}{% endif %}</td>{% endfor %}
 </tr>
 {% endif %}
 {% endfor %}
@@ -27,5 +27,7 @@
 </table>
 {% if view.offset + view.rows | length < view.count %}<p><a class="more" href="?{{ dict(here, offset=view.offset + view.limit) | urlencode }}">next {{ view.limit }} →</a></p>{% endif %}
 {% else %}
-<p class="empty">{% if here.q %}nothing matches “{{ here.q }}” - <kbd>Esc</kbd> clears the filter; {{ view.total }} row(s) behind it{% else %}nothing here{% endif %}</p>
+{# Clearing keeps the sort, as Esc does - it lives in the form, not in `here`. #}
+{% set clear = dict(here, q="") %}{% if sort_arg is not none %}{% set clear = dict(clear, sort=sort_arg) %}{% if desc %}{% set clear = dict(clear, desc="1") %}{% endif %}{% endif %}
+<p class="empty">{% if here.q %}nothing matches “{{ here.q }}” - <a href="?{{ clear | urlencode }}">clear the filter</a> (<kbd>Esc</kbd>); {{ view.total }} row(s) behind it{% else %}nothing here{% endif %}</p>
 {% endif %}

@@ -4,9 +4,9 @@
 {% endif %}
 {% for g in found.groups %}
 <section class="hit-group" data-kind="{{ g.kind }}">
-  <h3>{{ g.label }} <span class="dim">{{ g.total }}</span>
+  <h2>{{ g.label }} <span class="dim">{{ g.total }}</span>
     {% if g.loose %}<span class="dim small" title="rows that only contain the letters, scattered">+{{ g.loose }} looser</span>{% endif %}
-    <a class="small all" href="{{ g.more }}">all →</a></h3>
+    <a class="small all" href="{{ g.more }}">all →</a></h2>
   <ul class="hits">
   {% for h in g.hits %}
     <li><a class="hit" href="{{ h.href }}">

@@ -8,7 +8,7 @@
   <div class="grid">{% for c in g.items %}{{ shot_card(c, show_host=(group not in ("host", "service"))) }}{% endfor %}</div>
 </section>
 {% else %}
-<p class="empty">{% if q %}nothing matches “{{ q }}”{% else %}no captures found{% endif %}</p>
+<p class="empty">{% if q %}nothing matches “{{ q }}” - <a href="/?{{ dict(keep, q="", group=group) | urlencode }}">clear the filter</a>{% else %}no captures found{% endif %}</p>
 {% endfor %}
 {% if page.offset + page.groups | length < page.total %}
 <p><a class="more" href="?{{ dict(keep, group=group, offset=page.offset + page.limit) | urlencode }}">next {{ page.limit }} groups →</a></p>

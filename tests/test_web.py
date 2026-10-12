@@ -556,3 +556,19 @@ def test_the_api_serves_the_stacks(world):
     page = client.get("/api/v1/captures/stacks", params={"sort": "url"}).json()
     counts = sorted(st["count"] for st in page["stacks"])
     assert counts[-1] == 2 and page["captures"] == sum(counts)
+
+
+def test_clearing_a_filter_keeps_the_rest_of_the_position(world):
+    client = world[3]
+    page = client.get("/v/hosts?q=zzzzzz&sort=3&desc=1").text
+    link = page.split('">clear the filter')[0].rsplit('href="', 1)[1]
+    assert "sort=3" in link and "desc=1" in link, "as Esc does"
+    page = client.get("/?group=every&q=zzzzzz").text
+    link = page.split('">clear the filter')[0].rsplit('href="', 1)[1]
+    assert "group=every" in link
+
+
+def test_the_title_is_a_heading_outside_the_trail(world):
+    page = world[3].get("/v/hosts").text
+    trail = page.split('<nav aria-label="breadcrumb">')[1].split("</nav>")[0]
+    assert "<h1" not in trail and "<h1>" in page.split('class="viewer"')[0]

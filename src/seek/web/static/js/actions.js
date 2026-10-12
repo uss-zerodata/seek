@@ -51,9 +51,12 @@ async function clearMarks() {
 
 // --- dialogs ---------------------------------------------------------------------------
 
+let dialogs = 0;
 function dialog(html) {
   const d = document.createElement("dialog");
   d.innerHTML = html;
+  const heading = d.querySelector("h2");
+  if (heading) { heading.id ||= `dialog-title-${++dialogs}`; d.setAttribute("aria-labelledby", heading.id); }
   document.body.appendChild(d);
   d.addEventListener("close", () => d.remove());
   d.showModal();
@@ -81,6 +84,7 @@ async function exportDialog() {
          <button value="capture" ${options.capture ? "disabled" : ""} title="${esc(options.capture)}">Capture the URLs with gowitness</button>
          <button value="scan" ${options.scan ? "disabled" : ""} title="${esc(options.scan)}">Scan these hosts…</button>
          ${options.capture ? `<span class="dim small">capture: ${esc(options.capture)}</span>` : ""}
+         ${options.scan ? `<span class="dim small">scan: ${esc(options.scan)}</span>` : ""}
          <button value="cancel">Cancel</button> <span class="dim small">Esc leaves</span></p>
     </form>`);
   const form = d.querySelector("form");

@@ -46,7 +46,13 @@ async function loadRecord(step) {
   const q = new URLSearchParams({ step, path: root.dataset.path || "", mode: logState.mode });
   const res = await fetch(`/api/v1/records/${root.dataset.tab}?${q}`);
   if (mine !== recordSeq) return;
-  if (!res.ok) { panel.innerHTML = `<p class="dim">${(await res.json()).detail}</p>`; return; }
+  if (!res.ok) {
+    // `detail` is text from our own routes, a list from request validation, absent on a 500.
+    const detail = await res.json().then((body) => body.detail, () => null);
+    const text = Array.isArray(detail) ? detail.map((d) => d.msg).join("; ") : detail;
+    panel.innerHTML = `<p class="dim">${escapeHtml(String(text || `${res.status} ${res.statusText}`))}</p>`;
+    return;
+  }
   const rec = await res.json();
   state.raw = null;
   state.lastRecord = rec;
@@ -235,6 +241,8 @@ document.addEventListener("keydown", (event) => {
     return;
   }
   if (event.ctrlKey || event.metaKey || event.altKey) return;
+  // Enter on a focused link or button is that control's, not the list's.
+  if (event.key === "Enter" && event.target.closest("a[href], button, summary")) return;
   const action = actionFor(event);
   if (!action) return;
   if (action === "sort") { event.preventDefault(); sortBy(Number(event.key) - 1); return; }

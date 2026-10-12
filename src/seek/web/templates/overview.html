@@ -1,12 +1,17 @@
 {% extends "base.html" %}
 {% block title %}{{ view.title }}{% endblock %}
 {% block content %}
+{# The title is the page's heading, beside the trail and not in it - and above
+   both panes, so the full-width record still has it. #}
+<div class="crumbs">
+  <nav aria-label="breadcrumb">
+      {% for c in view.crumbs %}{% if not loop.last %}<a href="/v/{{ view.tab }}{% if c.path %}?{{ {"path": c.path} | urlencode }}{% endif %}">{{ c.title }}</a> › {% endif %}{% endfor %}
+  </nav>
+  <h1>{{ view.crumbs[-1].title }}</h1>
+  {% if view.subtitle %}<span class="dim small">{{ view.subtitle }}</span>{% endif %}
+</div>
 <div class="viewer" data-tab="{{ view.tab }}" data-path="{{ view.path }}">
   <section class="pane-list">
-    <nav class="crumbs">
-      {% for c in view.crumbs %}{% if not loop.last %}<a href="/v/{{ view.tab }}{% if c.path %}?{{ {"path": c.path} | urlencode }}{% endif %}">{{ c.title }}</a> › {% else %}<strong>{{ c.title }}</strong>{% endif %}{% endfor %}
-      {% if view.subtitle %}<span class="dim small">{{ view.subtitle }}</span>{% endif %}
-    </nav>
     <form class="controls" method="get" data-list="list">
       {% if view.path %}<input type="hidden" name="path" value="{{ view.path }}">{% endif %}
       <input class="filter" id="list-q" type="search" name="q" value="{{ here.q or '' }}" autocomplete="off"
@@ -23,7 +28,7 @@
     </form>
     <div id="list">{% include "_overview.html" %}</div>
   </section>
-  <aside class="pane-record" id="record" aria-live="polite">
+  <aside class="pane-record" id="record" aria-label="record" aria-live="polite">
     {% if record %}
     <div class="record-head"><h2>{{ record.title }}</h2></div>
     <div class="record">{{ record.html | safe }}</div>
