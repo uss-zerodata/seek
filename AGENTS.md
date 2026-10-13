@@ -2,6 +2,15 @@
 
 Guidance for coding agents working in this repository.
 
+## Standard
+
+This project follows the tool standard: the agent skill `py-cli-standard`,
+which is the folder `../standards/`. Load the skill before you work here.
+
+The list of the rules that this project does not meet is not written yet.
+Until it is, treat a difference between the code and the standard as a
+deviation: do not copy it into new code, and do not migrate it unasked.
+
 ## What this is
 
 `seek` — an interactive terminal search application. One persistent TUI that
