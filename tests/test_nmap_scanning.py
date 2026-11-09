@@ -127,7 +127,7 @@ async def test_without_nmap_the_review_refuses_to_start_but_copies(tmp_path, mon
         assert "local" not in ids, "no local nmap to copy for"
         await pilot.press("y")
         await pilot.pause(0.2)
-        assert copied and copied[0].startswith("sudo nmap -sS -oA ")
+        assert copied and copied[0].startswith("sudo nmap -sS 10.0.0.1 -oA nmap_quick_")
         assert str(tmp_path) not in copied[0]
         await pilot.press("Y")              # not available: says so, copies nothing
         await pilot.pause(0.2)
@@ -1435,3 +1435,18 @@ async def test_a_quiet_running_scan_still_shows_time_passing(tmp_path):
         assert shown_time() != before, "the clock moved with no output at all"
         app.runner.cancel()
         await pilot.pause(0.5)
+
+
+async def test_a_cancelled_scans_file_is_kept_and_named_incomplete(tmp_path):
+    text = (FIX / "basic.xml").read_text()
+    end = text.index("</host>", text.index("</host>") + 1) + len("</host>")
+    cut = tmp_path / "nmap_quick_cancelled.xml"
+    cut.write_text(text[:end] + "\n<host>")
+    said = []
+    app = NmapApp(prepare(load([cut])), _config(tmp_path), sources=[cut], scan_dir=tmp_path)
+    app.notify = lambda message, **_kw: said.append(str(message))
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        assert len(app._rows) == 2, "the finished hosts are on screen"
+        assert any("incomplete" in s and "2 host(s) kept" in s for s in said), said
+        assert not any("skipped unreadable" in s for s in said)

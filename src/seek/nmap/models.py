@@ -218,6 +218,9 @@ class ScanFile:
     # tab, failures, exports. The file name unless several directories were
     # read, where two `scan.xml` would otherwise be one source (`merge.naming`).
     label: str = ""
+    # False when the XML stops part-way - a cancelled or crashed scan. The
+    # hosts it finished are kept; the viewer says the file is incomplete.
+    complete: bool = True
 
     def __repr__(self) -> str:
         """A summary, for the same reason `ScanSet` has one.

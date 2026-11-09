@@ -42,28 +42,13 @@ def strip(argv: list[str]) -> list[str]:
         tokens = tokens[1:]
     if tokens and not tokens[0].startswith("-"):
         tokens = tokens[1:]                    # the program
+    groups, _targets = options.split(tokens)
     kept: list[str] = []
-    index = 0
-    while index < len(tokens):
-        token = tokens[index]
-        index += 1
-        found = options.lookup(token)
-        if found is None:
-            if len(options.expand(token)) > 1:   # -sUV
-                kept.append(token)
-            elif token.startswith("-") and token != "-":
-                kept.append(token)             # unknown: assumed to take no value
-            continue                           # anything else is a target
-        option, _value, takes_next = found
-        value = None
-        if takes_next and index < len(tokens):
-            value = tokens[index]
-            index += 1
-        if option.owner or option.name in _DROPPED:
+    for group in groups:
+        found = options.lookup(group[0])
+        if found is not None and (found[0].owner or found[0].name in _DROPPED):
             continue
-        kept.append(token)
-        if value is not None:
-            kept.append(value)
+        kept.extend(group)
     return kept
 
 

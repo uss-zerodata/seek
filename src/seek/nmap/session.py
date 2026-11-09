@@ -44,6 +44,7 @@ from seek.gowitness.results import canonical_url
 from seek.nmap import builder as builder_mod
 from seek.nmap import inventory as inventory_mod
 from seek.nmap import merge as merge_mod
+from seek.nmap import options as options_mod
 from seek.nmap import presets as presets_mod
 from seek.nmap import rawlog, remote, timeline
 from seek.nmap import recent as recent_mod
@@ -712,33 +713,44 @@ class Session:
         command = " ".join([self.config.nmap_path, args, *targets])
         return command, note, out_base, targets
 
-    def plan_scan(self, preset: str, command: str, targets: list[str],
-                  out_base: Path) -> ScanPlan:
+    def plan_scan(self, preset: str, command: str, out_base: Path) -> ScanPlan:
         """What an edited command would run, exactly - or `CommandError` why not.
 
         The command is parsed, never re-joined: no shell, nmap only, no output
         flags of the user's. Whether it needs root is read from its flags.
         """
         args = presets_mod.parse_command(command, self.config.nmap_path)
-        # The targets are whatever survived the edit, in the order given.
-        scan_args = [a for a in args if a not in targets]
-        chosen = [a for a in args if a in targets] or targets
+        # The command as edited is what runs, word for word and in its order;
+        # the targets are read *from* it, for the review and the run list. It
+        # used to keep the words that matched the scope it was drafted for and
+        # fall back to that whole scope when none did: a command edited to
+        # `-iL list.txt` still scanned the hosts taken out of it.
+        groups, chosen = options_mod.split(args)
+        given_list = any(g[0].startswith(("-iL", "-iR")) for g in groups)
+        if not chosen and not given_list:
+            raise presets_mod.CommandError(
+                "no target left in the command - add an address, or -iL a list")
+        scan_args = [token for group in groups for token in group]
         needs = presets_mod.needs_root(scan_args) and os.geteuid() != 0
         via = ("capabilities" if self.nmap.capable else "sudo") if needs else ""
-        run_args = scan_args
-        if via == "capabilities" and "--privileged" not in scan_args:
+        run_args = args
+        if via == "capabilities" and "--privileged" not in args:
             # nmap uses its capabilities only when told it is privileged.
-            run_args = [*scan_args, "--privileged"]
+            run_args = [*args, "--privileged"]
         elevate = via == "sudo"
-        argv = presets_mod.build_argv(self.config.nmap_path, run_args, chosen,
-                                      str(out_base), elevate)
+        # sudo looks a bare name up in its own secure_path, not the user's
+        # PATH: nmap in /opt or ~ was "command not found" under sudo while
+        # seek had found it fine. The path seek found is the one it runs.
+        program = (self.nmap.path or self.config.nmap_path) if elevate \
+            else self.config.nmap_path
+        argv = presets_mod.build_argv(program, run_args, [], str(out_base), elevate)
         blocked = self.scan_blocked()
         return ScanPlan(preset, argv, chosen, out_base, elevate,
                         presets_mod.privileged_labels(scan_args), via=via, blocked=blocked,
                         notify_url=self.config.notify_url,
                         notify_progress=self.config.notify_progress,
                         copy_local=remote.local_text(argv) if self.nmap.available else None,
-                        copy_remote=remote.nmap_snippet(scan_args, chosen, out_base.name))
+                        copy_remote=remote.nmap_snippet(args, [], out_base.name))
 
     def scan_blocked(self) -> str | None:
         """Why a scan cannot start on this machine, or `None`. Planning and
@@ -869,6 +881,7 @@ class Session:
         def on_start(started: Run) -> None:
             self.emit(Event("run", origin, started))
 
+        runner.claim(run)        # busy from this moment: see `Runner.claim`
         task = asyncio.get_running_loop().create_task(
             runner.run(run, on_line, on_done, on_start=on_start))
         self._tasks.add(task)

@@ -159,6 +159,18 @@ class Runner:
     def busy(self) -> Run | None:
         return self.current
 
+    def claim(self, run: Run) -> None:
+        """Make `run` the current one *now*, before its task first runs.
+
+        `run()` used to do this on its first step, one loop turn after the
+        caller had checked `busy()` - two starts in one turn (a double click,
+        the browser and the terminal together) both passed, both scans ran,
+        and only the second could be cancelled.
+        """
+        self.runs.append(run)
+        self._current = run
+        self._cancelling = False
+
     async def run(self, run: Run, on_line: Callable[[str], None],
                   on_done: Callable[[Run], None],
                   on_start: Callable[[Run], None] | None = None) -> Run:
@@ -173,9 +185,8 @@ class Runner:
         it the caller can only refresh its view when the first line arrives, and
         until then the run it just started is nowhere to be seen.
         """
-        self.runs.append(run)
-        self._current = run
-        self._cancelling = False
+        if self._current is not run:
+            self.claim(run)
         if on_start is not None:
             on_start(run)
         try:
@@ -225,7 +236,7 @@ class Runner:
 
     def _classify(self, run: Run, code: int) -> tuple[State, int, str]:
         if self._cancelling:
-            return State.CANCELLED, code, "cancelled — no file was written"
+            return State.CANCELLED, code, "cancelled — what it wrote so far is kept"
         if code == 0:
             return State.DONE, code, run.summarise()
         tail = [line for line in run.log if line.strip()]

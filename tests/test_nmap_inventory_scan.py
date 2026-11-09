@@ -77,7 +77,7 @@ def test_the_draft_is_an_ordinary_reviewed_command(tmp_path):
     sess = _session(tmp_path)
     command, _note, out_base, targets = sess.draft_version_gaps(
         records_for(sess.scans.hosts))
-    plan = sess.plan_scan(presets.VERSION_GAPS_PRESET, command, targets, out_base)
+    plan = sess.plan_scan(presets.VERSION_GAPS_PRESET, command, out_base)
     assert plan.targets == targets
     assert "--version-all" in plan.argv
     assert plan.elevated == (__import__("os").geteuid() != 0), "-sU/-sS need root"
@@ -95,7 +95,7 @@ def test_unavailable_nmap_blocks_the_start_not_the_plan(tmp_path):
     sess = _session(tmp_path, nmap="/nonexistent/nmap")
     command, _note, out_base, targets = sess.draft_version_gaps(
         records_for(sess.scans.hosts))
-    plan = sess.plan_scan(presets.VERSION_GAPS_PRESET, command, targets, out_base)
+    plan = sess.plan_scan(presets.VERSION_GAPS_PRESET, command, out_base)
     assert plan.blocked and plan.blocked.startswith("cannot scan")
     assert plan.copy_local is None, "nothing here to run it"
     assert plan.copy_remote.startswith("sudo nmap ") and str(tmp_path) not in plan.copy_remote

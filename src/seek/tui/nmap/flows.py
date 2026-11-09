@@ -175,7 +175,7 @@ class ScanFlows:
             if edited is None:
                 return
             try:
-                plan = self.session.plan_scan(name, edited, targets, out_base)
+                plan = self.session.plan_scan(name, edited, out_base)
             except presets_mod.CommandError as exc:
                 self.notify(str(exc), severity="error", timeout=10)
                 command = edited

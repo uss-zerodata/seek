@@ -129,6 +129,8 @@ def parse_file(path: Path, label: str | None = None) -> ScanFile:
     """
     hosts: list[Host] = []
     source = label or path.name
+    root = None
+    complete = True
     try:
         stream = ET.iterparse(path, events=("start", "end"))
         _, root = next(stream)
@@ -141,11 +143,17 @@ def parse_file(path: Path, label: str | None = None) -> ScanFile:
                 hosts.append(_host(el, source))
                 el.clear()  # free the subtree; keeps memory flat over big files
     except ET.ParseError as exc:
-        raise NmapParseError(f"{path}: malformed XML ({exc})") from exc
+        if root is None or root.tag != "nmaprun" or not hosts:
+            # Nothing finished before it broke: there is nothing to keep.
+            raise NmapParseError(f"{path}: malformed XML ({exc})") from exc
+        # nmap writes its XML as it goes: a scan that was cancelled, or died,
+        # leaves it cut off. Every host it finished is whole - keep those, and
+        # say the file is incomplete, rather than throw the file away.
+        complete = False
     except OSError as exc:
         raise NmapParseError(f"{path}: {exc}") from exc
     except StopIteration:
         raise NmapParseError(f"{path}: empty file") from None
     return ScanFile(path=path, args=args, hosts=hosts,
                     start=int(start) if start and start.isdigit() else None,
-                    label=source)
+                    label=source, complete=complete)

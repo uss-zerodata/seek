@@ -229,7 +229,7 @@ def test_the_review_is_what_the_terminal_would_run(tmp_path):
                          json={"preset": name, "targets": ["192.0.2.1"]}).json()
     command, _note, out_base = sess.draft_command(name, ["192.0.2.1"])
     assert review["command"] == command
-    assert review["argv"] == sess.plan_scan(name, command, ["192.0.2.1"], out_base).argv
+    assert review["argv"] == sess.plan_scan(name, command, out_base).argv
 
 
 def test_the_copied_commands_are_the_terminals(tmp_path):
@@ -240,7 +240,7 @@ def test_the_copied_commands_are_the_terminals(tmp_path):
     review = _client(sess).post("/api/v1/scans/review",
                                 json={"preset": name, "targets": ["192.0.2.1"]}).json()
     command, _note, out_base = sess.draft_command(name, ["192.0.2.1"])
-    plan = sess.plan_scan(name, command, ["192.0.2.1"], out_base)
+    plan = sess.plan_scan(name, command, out_base)
     assert review["copy_local"] == remote.local_text(plan.argv)
     assert review["copy_remote"] == plan.copy_remote
     snippet = review["copy_remote"]

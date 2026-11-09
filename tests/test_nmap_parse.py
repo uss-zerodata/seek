@@ -176,3 +176,22 @@ def test_merging_keeps_the_slower_measurement(tmp_path):
         merged = merge([parse_file(p) for p in order])
         host = next(h for h in merged.hosts if h.address == "192.0.2.10")
         assert host.times.srtt == 9000, "file order must not decide"
+
+
+def test_a_cut_off_scan_keeps_the_hosts_it_finished(tmp_path):
+    """nmap writes its XML as it goes; a cancelled scan leaves it unclosed.
+    The whole file used to be thrown away, finished hosts and all."""
+    text = (FIX / "basic.xml").read_text()
+    cut = text[:text.index("</host>", text.index("</host>") + 1) + len("</host>")] + "\n<host>"
+    path = tmp_path / "cancelled.xml"
+    path.write_text(cut)
+    scan = parse_file(path)
+    assert not scan.complete and len(scan.hosts) == 2
+    assert parse_file(FIX / "basic.xml").complete
+
+
+def test_a_file_that_breaks_before_it_is_nmap_is_still_unreadable(tmp_path):
+    path = tmp_path / "junk.xml"
+    path.write_text("<nmaprun")
+    with pytest.raises(NmapParseError):
+        parse_file(path)

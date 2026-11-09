@@ -115,7 +115,7 @@ async def test_cancelling_ends_the_process_and_keeps_what_it_produced(tmp_path):
     await asyncio.wait_for(task, timeout=10)
     assert run.state is State.CANCELLED
     assert "started" in list(run.log), "the output it produced is kept"
-    assert "no file was written" in run.result
+    assert "what it wrote so far is kept" in run.result
 
 
 async def test_cancelling_when_nothing_runs_is_a_no_op(tmp_path):

@@ -106,7 +106,7 @@ def _plan(sess, body: s.ScanPlanIn):
         command, note, out_base = sess.draft_command(body.preset, body.targets)
     out = s.ScanPlanOut(preset=body.preset, command=body.command or command, note=note)
     try:
-        plan = sess.plan_scan(body.preset, out.command, body.targets, out_base)
+        plan = sess.plan_scan(body.preset, out.command, out_base)
     except presets_mod.CommandError as exc:
         out.error = str(exc)
         return out, None

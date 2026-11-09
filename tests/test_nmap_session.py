@@ -127,3 +127,13 @@ async def test_a_started_scan_is_remembered_without_its_targets(tmp_path):
     assert "192.0.2.77" not in stored and str(tmp_path) not in stored
     recent, _frequent = session.earlier_commands()
     assert recent and recent[0].where == "history"
+
+
+async def test_two_starts_in_the_same_moment_run_one_scan(tmp_path):
+    """`busy()` used to turn true a loop turn after the check: both passed."""
+    session = _session(tmp_path)
+    first = session.start_scan(_run(tmp_path, "import time; time.sleep(0.5)"))
+    with pytest.raises(Busy):
+        session.start_scan(_run(tmp_path, "print(1)"))
+    assert [r for r in session.runner.runs] == [session.runner.busy()]
+    await first

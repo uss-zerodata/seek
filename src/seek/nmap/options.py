@@ -445,6 +445,35 @@ def lookup(token: str) -> tuple[Option, str | None, bool] | None:
     return None
 
 
+def split(args: list[str]) -> tuple[list[list[str]], list[str]]:
+    """A command's arguments as nmap reads them: each option with its value,
+    and the targets - every word that is neither.
+
+    An option the catalogue does not know (or `-sUV`) is taken to have no
+    value, so the word after it counts as a target. The scan path never
+    reorders the command on the strength of this - it only counts and checks.
+    """
+    groups: list[list[str]] = []
+    targets: list[str] = []
+    index = 0
+    while index < len(args):
+        token = args[index]
+        index += 1
+        found = lookup(token)
+        if found is None:
+            if token.startswith("-") and token != "-":
+                groups.append([token])
+            else:
+                targets.append(token)
+            continue
+        group = [token]
+        if found[2] and index < len(args):
+            group.append(args[index])
+            index += 1
+        groups.append(group)
+    return groups, targets
+
+
 # --- combinations ----------------------------------------------------------------------
 
 

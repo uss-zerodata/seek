@@ -64,14 +64,15 @@ def _session(tmp_path, *, capable=False, euid=1000, monkeypatch) -> Session:
 
 
 def _plan(sess, args="-sS -p 22"):
-    return sess.plan_scan("p", f"nmap {args} 192.0.2.1", ["192.0.2.1"],
+    return sess.plan_scan("p", f"nmap {args} 192.0.2.1",
                           sess.scan_dir / "out")
 
 
 def test_unprivileged_without_capabilities_goes_through_sudo(tmp_path, monkeypatch):
     plan = _plan(_session(tmp_path, monkeypatch=monkeypatch))
     assert plan.via == "sudo" and plan.elevated
-    assert plan.argv[:3] == ["sudo", "-n", "nmap"] and "--privileged" not in plan.argv
+    assert plan.argv[:3] == ["sudo", "-n", "/usr/bin/nmap"], "the path seek found"
+    assert "--privileged" not in plan.argv
 
 
 def test_capabilities_replace_sudo_with_privileged(tmp_path, monkeypatch):
@@ -233,3 +234,38 @@ def test_the_browser_refuses_a_scan_sudo_would_not_run(tmp_path, monkeypatch):
     assert "terminal viewer" in response.json()["detail"]
     assert sess.runner.runs == [], "refused before anything ran"
     assert presets.needs_root(["-sS"])
+
+
+def test_unelevated_scans_keep_the_configured_name(tmp_path, monkeypatch):
+    plan = _plan(_session(tmp_path, euid=0, monkeypatch=monkeypatch))
+    assert plan.argv[0] == "nmap"
+
+
+# --- the targets are the command's -----------------------------------------------------
+
+
+def test_targets_taken_out_of_the_command_are_not_scanned(tmp_path, monkeypatch):
+    """The scope used to come back when the edit left no target matching it."""
+    sess = _session(tmp_path, euid=0, monkeypatch=monkeypatch)
+    plan = sess.plan_scan("p", "nmap -sT -iL only-these.txt", tmp_path / "o")
+    assert plan.targets == [] and "192.0.2.1" not in plan.argv
+    assert plan.argv[:5] == ["nmap", "-sT", "-iL", "only-these.txt", "-oA"]
+
+
+def test_a_target_added_in_the_editor_is_counted(tmp_path, monkeypatch):
+    sess = _session(tmp_path, euid=0, monkeypatch=monkeypatch)
+    plan = sess.plan_scan("p", "nmap -sT 192.0.2.1 192.0.2.99", tmp_path / "o")
+    assert plan.targets == ["192.0.2.1", "192.0.2.99"]
+
+
+def test_a_command_with_no_target_is_refused(tmp_path, monkeypatch):
+    sess = _session(tmp_path, euid=0, monkeypatch=monkeypatch)
+    with pytest.raises(presets.CommandError, match="no target left"):
+        sess.plan_scan("p", "nmap -sT --script vuln -p 80", tmp_path / "o")
+
+
+def test_option_values_are_not_counted_as_targets(tmp_path, monkeypatch):
+    sess = _session(tmp_path, euid=0, monkeypatch=monkeypatch)
+    plan = sess.plan_scan("p", "nmap -sT --exclude 192.0.2.5 -p 80 192.0.2.0/24",
+                          tmp_path / "o")
+    assert plan.targets == ["192.0.2.0/24"]

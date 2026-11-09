@@ -655,9 +655,7 @@ class NmapApp(ScanFlows, App[int]):
         # That frees every bare key for an action and lets the row cursor show.
         self.query_one(DataTable).focus()
         self._refresh_warning()
-        if self.scans.failures:
-            names = ", ".join(n for n, _ in self.scans.failures)
-            self.notify(f"skipped unreadable: {names}", severity="warning")
+        self._say_unread(self.scans)
         # Build immediately so the list is usable at once, then re-budget the
         # columns once the table has real geometry - preserving the selection,
         # because a rebuild that reset it would swallow anything pressed in the
@@ -2146,15 +2144,25 @@ class NmapApp(ScanFlows, App[int]):
         else:
             self._refresh_status()
 
+    def _say_unread(self, scans: ScanSet) -> None:
+        """Files that could not be read, and files that stop part-way - a
+        cancelled or crashed scan, whose finished hosts were kept."""
+        if scans.failures:
+            names = ", ".join(n for n, _ in scans.failures)
+            self.notify(f"skipped unreadable: {names}", severity="warning")
+        cut = [f for f in scans.files if not f.complete]
+        if cut:
+            said = ", ".join(f"{f.label or f.path.name} ({len(f.hosts)} host(s) kept)"
+                             for f in cut)
+            self.notify(f"incomplete, cut off part-way: {said}", severity="warning")
+
     def _on_read_done(self, token: int, scans: ScanSet) -> None:
         if self._read_token != token:
             return
         self._reading = _Reading(done=len(self._to_read), total=len(self._to_read),
                                  failures=list(scans.failures))
         read = len(self._to_read) - len(scans.failures)
-        if scans.failures:
-            names = ", ".join(n for n, _ in scans.failures)
-            self.notify(f"skipped unreadable: {names}", severity="warning")
+        self._say_unread(scans)
         # Candidates existed and not one of them could be read. That is not an
         # engagement with no hosts in it, and the process must not report it as
         # a clean run; the empty list says which files failed.
