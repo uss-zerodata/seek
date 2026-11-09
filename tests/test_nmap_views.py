@@ -269,3 +269,26 @@ def test_the_names_ports_column_is_sorted_at_all():
     got = _sorted_by(rows, 3)
     keys = [views.ports_key(cell.rstrip(" …").split(", ")) for cell in got]
     assert keys == sorted(keys), got
+
+
+def test_the_cached_order_is_the_sort_and_never_the_cache_itself(tmp_path):
+    from seek.config import Config
+    from seek.nmap.session import Session
+    from seek.nmap.views import prepare
+    from seek.tui.nmap import views as vdefs
+    from seek.tui.nmap.tabs import tab_view
+
+    paths = sorted((Path(__file__).parent / "fixtures" / "nmap").glob("*.xml"))
+    sess = Session(Config(nmap_path="/nonexistent/nmap"), paths, tmp_path, databases=[],
+                   scans=prepare(load(paths)))
+    view = tab_view("hosts", sess)
+    rows = view.rows(sess.scans)
+    assert len(rows) > 5
+    for col in range(len(view.columns)):
+        for desc in (False, True):
+            expected = sorted(rows, key=lambda r, c=col: vdefs.key_at(r, c), reverse=desc)
+            expected.sort(key=lambda r: (r.section_rank, 0 if r.heading else 1))
+            got = view.ordered(rows, col, desc)
+            assert got == expected, (col, desc)
+            assert got is not view.ordered(rows, col, desc), "a copy, never the cache"
+    assert view.ordered(list(rows), 0, False) is None, "only the view's own rows are cached"

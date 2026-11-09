@@ -138,6 +138,7 @@ class View:
     _stamp_of: object = field(default=None, repr=False, compare=False)
     _rows: list[Row] = field(default_factory=list, repr=False, compare=False)
     _natural: list[int] | None = field(default=None, repr=False, compare=False)
+    _sorted: dict = field(default_factory=dict, repr=False, compare=False)
 
     def cached_for(self, scans: ScanSet) -> bool:
         """Are this view's rows already built for exactly this model?"""
@@ -159,10 +160,30 @@ class View:
             self._rows = self._built(scans, report)
             self._rows_of, self._stamp_of = scans, stamp
             self._natural = None
+            self._sorted = {}
         return self._rows
 
     def _built(self, scans: ScanSet, report: Report | None) -> list[Row]:
         return self.build(scans, report) if self.reports else self.build(scans)
+
+    def ordered(self, rows: list[Row], col: int, descending: bool) -> list[Row] | None:
+        """`rows` in the order the list shows them, when they are this view's
+        own cached rows - else `None` and the caller sorts.
+
+        Sorting twenty-four thousand rows is a key per row, ~60 ms, and the
+        list re-sorts the same rows on every redraw: a live run's progress, a
+        growing read, a tab coming back. Kept with the rows, so the worker that
+        builds them can pay for it too, and the event loop only copies.
+        """
+        if not self.cacheable or rows is not self._rows:
+            return None
+        key = (col, descending)
+        if key not in self._sorted:
+            ordered = sorted(rows, key=lambda r: key_at(r, col), reverse=descending)
+            # Two stable passes: `reverse` belongs to the column only.
+            ordered.sort(key=lambda r: (r.section_rank, 0 if r.heading else 1))
+            self._sorted[key] = ordered
+        return list(self._sorted[key])
 
     def measure(self) -> list[int]:
         """The widest cell in each column, over the rows this view built.

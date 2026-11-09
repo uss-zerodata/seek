@@ -32,6 +32,12 @@ def record(session: Session, cache: ViewCache, tab: str, path: list[str], step: 
                 if not r.heading and step_of(r) == step), None)
     if row is None:
         raise Unresolved(f"nothing called {step} in {place.view.title}")
+    # A running run's log grows by the hundred lines a second and the page
+    # reloads it every 400 ms: the whole of it - up to 20 000 lines through
+    # Rich to HTML and to text, in the process the terminal runs in - is the
+    # pane's tail until the run ends. `/runs/{id}/log` has every line.
+    if getattr(row.target, "running", False):
+        full = False
     lines, title = record_mod.record_lines(row, place.view.title, session,
                                            report_mode, full=full)
     return s.RecordOut(title=title, html=lines_html(lines), text=_plain(lines))

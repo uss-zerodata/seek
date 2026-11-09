@@ -1332,3 +1332,56 @@ async def test_the_progress_switch_reads_without_colour(tmp_path):
         tick.value = True
         await pilot.pause(0.1)
         assert str(tick.render()).startswith("[x]")
+
+
+async def test_two_quick_tab_switches_settle_on_the_last(tmp_path):
+    """Each switch reports itself later as a message. When a second switch came
+    before the first report - a scan starting while a key was pressed - the
+    stale report was taken for a click, switched back, and the two tabs
+    alternated for as long as the loop lagged."""
+    app = _app(tmp_path, "basic")
+    calls = []
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        real = app._activate
+        app._activate = lambda tab: (calls.append(tab), real(tab))[1]
+        app._activate("services")
+        app._activate("stats")
+        for _ in range(10):
+            await pilot.pause(0.05)
+        assert app.query_one(Tabs).active == "stats" and app._active_tab == "stats"
+        assert calls == ["services", "stats"], f"switched on its own: {calls[2:8]}"
+
+
+async def test_a_streaming_scan_redraws_a_few_times_a_second(tmp_path):
+    body = ("#!/bin/sh\ni=0\nwhile [ $i -lt 600 ]; do echo \"line $i\"; i=$((i+1)); "
+            "done\nsleep 0.5\n")
+    config = Config(nmap_path=_stub(tmp_path, body), nmap_presets={"Quick": "-sT"},
+                    scan_output_dir=str(tmp_path))
+    app = _app(tmp_path, "basic", config=config)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        reloads = []
+        real = app._reload_rows
+        app._reload_rows = lambda preserve=False: (reloads.append(1), real(preserve))[1]
+        await _to_review(pilot, app)
+        await _choose(pilot, app, "start")
+        for _ in range(20):
+            await pilot.pause(0.1)
+        assert len(app.runner.runs[-1].log) >= 600
+        assert len(reloads) < 30, f"{len(reloads)} redraws for 600 lines"
+
+
+def test_the_pane_renders_the_newest_part_of_a_long_log():
+    from seek.nmap.runner import ScanRun
+    from seek.tui.nmap import scans as scan_views
+
+    run = ScanRun(argv=["nmap"], preset="p", targets=["t"])
+    for i in range(2000):
+        run.append(f"line {i}")
+    pane = scan_views._log_lines(run, scan_views.PANE_TAIL)
+    assert "1500 earlier line(s) - d reads the whole log" in pane[0].plain
+    assert pane[-1].plain.endswith("line 1999") and "line 1499\n" not in pane[-1].plain
+    reader = scan_views._log_lines(run)
+    assert reader[-1].plain.startswith("  line 0"), "the reader keeps everything"
+    assert scan_views._log_lines(run, scan_views.PANE_TAIL) is pane, "cached until it grows"

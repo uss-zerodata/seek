@@ -834,6 +834,12 @@ class NmapApp(App[int]):
                                                       self.session.row_text)
             rows = _drop_empty_sections(rows)
         col = min(self._sort_col, max(0, len(self.view.columns) - 1))
+        if self._spec.is_empty:
+            # The view's own rows: sorted once, kept with them (`View.ordered`),
+            # usually by the worker that built them.
+            ordered = self.view.ordered(rows, col, self._sort_desc)
+            if ordered is not None:
+                return ordered
         # Two stable passes rather than one compound key: `reverse` belongs to
         # the column only. Reversing a single (rank, heading, value) key would
         # turn the sections upside down and push every heading to the bottom of
@@ -905,6 +911,9 @@ class NmapApp(App[int]):
                 # Esc, or another view asked for its rows: stop at the first
                 # boundary the work offers rather than finishing unwanted work.
                 raise _Abandoned
+            # A freeze per report keeps the one in `bulk()`'s exit small - its
+            # cost is what was built since the last one (see `_read_scans`).
+            bulk.freeze()
             self.call_from_thread(self._on_build_progress, token, done, total, unit)
 
         try:
@@ -923,8 +932,11 @@ class NmapApp(App[int]):
                     self.session.inventory()
                     self.session.lookup()
                 # Measured here too: it is a pass over every cell of every row,
-                # and the event loop should not be the one making it.
+                # and the event loop should not be the one making it. The same
+                # goes for the order the list will show them in.
                 view.measure()
+                col = min(self._sort_col, max(0, len(view.columns) - 1))
+                view.ordered(view.rows(scans), col, self._sort_desc)
         except _Abandoned:
             return
         except Exception as exc:                      # noqa: BLE001 - report, never crash
@@ -1594,6 +1606,14 @@ class NmapApp(App[int]):
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         tab_id = event.tab.id or "hosts"
+        # A switch made here (`_activate`, `_sync_tab`) reports itself later as
+        # this message. When a second switch came first - a scan starting while
+        # a key was pressed, a busy loop - the report of the first is stale:
+        # taking it for a click switched back, whose own report switched
+        # forward, and the two tabs alternated for as long as the loop lagged.
+        # A click leaves the tab row on the tab it reports; a stale report does not.
+        if tab_id != self.query_one(Tabs).active:
+            return
         if tab_id != self._active_tab:
             self._activate(tab_id)
         else:
@@ -2217,9 +2237,24 @@ class NmapApp(App[int]):
                 self._refresh_detail()
                 return
 
+    _LIVE_REFRESH = 0.25      # seconds: at most four redraws a second while a run streams
+    _live_pending = False
+
     def _on_scan_line(self, _line: str) -> None:
-        """The run list carries progress; the pane carries the log."""
-        if self.view.kind == "scans" and not self._log_frozen:
+        """The run list carries progress; the pane carries the log.
+
+        Coalesced: nmap at `-v` prints hundreds of lines a second, and a redraw
+        per line - the whole run list and the record pane, on the event loop -
+        froze the interface for seconds at a time. The first line of a burst
+        schedules one redraw; the rest of the burst rides on it."""
+        if self._live_pending:
+            return
+        self._live_pending = True
+        self.set_timer(self._LIVE_REFRESH, self._live_refresh)
+
+    def _live_refresh(self) -> None:
+        self._live_pending = False
+        if self.is_running and self.view.kind == "scans" and not self._log_frozen:
             self._reload_rows(preserve=True)
 
     def _on_scan_done(self, run: ScanRun) -> None:
@@ -2351,6 +2386,11 @@ class NmapApp(App[int]):
                     failures.append((label, str(exc)))
                 except Exception as exc:            # noqa: BLE001 - never crash
                     failures.append((label, str(exc)))
+                # Frozen file by file, here: freezing costs in proportion to
+                # what was allocated since the last freeze, so one freeze per
+                # published snapshot was 25-145 ms on the event loop
+                # (`_publish`); per file it is a millisecond in this thread.
+                bulk.freeze()
                 now = time.monotonic()
                 snapshot = None
                 if unread and now - last >= _PUBLISH_EVERY and done < total:
@@ -2469,15 +2509,24 @@ class NmapApp(App[int]):
         # The fill calls it the moment the cursor is on the right row.
         self._refresh_status()
 
+    _warn_for: ScanSet | None = None
+    _warn_counts: tuple[int, int] = (0, 0)
+
     def _refresh_warning(self) -> None:
         """The `-Pn` overstatement banner, which a growing model can turn on."""
         try:
             warn = self.query_one("#warn", Static)
         except NoMatches:
             return
-        warn.display = self.scans.overstated
-        if self.scans.overstated:
-            asserted, real = len(self.scans.asserted_up), len(self.scans.up)
+        # Counted once per model: `overstated` builds both lists to compare
+        # their lengths, and this ran on every redraw, over every host.
+        if self._warn_for is not self.scans:
+            self._warn_for = self.scans
+            self._warn_counts = (sum(1 for h in self.scans.hosts if h.state == "up"),
+                                 sum(1 for h in self.scans.hosts if h.up))
+        asserted, real = self._warn_counts
+        warn.display = asserted > real
+        if asserted > real:
             warn.update(Text(
                 f"⚠  scan asserted {asserted} hosts up (-Pn) but only {real} are up "
                 f"— an open port or host discovery", style="bold bright_yellow"))
@@ -2656,9 +2705,24 @@ class NmapApp(App[int]):
                                        self._report_mode, self._log_frozen,
                                        self._following, full)
 
+    _detail_due = False
+
     def _refresh_detail(self) -> None:
+        """Show the full record for the highlighted row - on the next refresh,
+        once however often it was asked for before then.
+
+        One fill asked three times: the cursor move it makes fires a row
+        highlight, which redraws, then it redraws itself, then once more at
+        the end - each rendering a whole record, on the event loop."""
+        if self._detail_due:
+            return
+        self._detail_due = True
+        self.call_after_refresh(self._draw_detail)
+
+    def _draw_detail(self) -> None:
         """Show the full record for the highlighted row - the table only has
         room for a few columns, and script and vulnerability detail has none."""
+        self._detail_due = False
         try:
             pane = self.query_one("#detail-body", Static)
         except NoMatches:

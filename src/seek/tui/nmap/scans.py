@@ -156,10 +156,12 @@ def follow_note(running: bool, frozen: bool, following: bool,
 
 
 def report(run: Run, mode: str, changes: ScanDiff | None,
-           frozen: bool = False, following: bool = True) -> RenderableType:
-    """A live in-app run, read the way `mode` asks for."""
+           frozen: bool = False, following: bool = True,
+           full: bool = False) -> RenderableType:
+    """A live in-app run, read the way `mode` asks for. The pane (`full`
+    False) shows the newest `PANE_TAIL` lines of the log; the reader all."""
     if isinstance(run, CaptureRun):
-        return capture_report(run, mode, frozen, following)
+        return capture_report(run, mode, frozen, following, full)
     note = ""
     style = _KEY
     if mode == "raw":
@@ -167,7 +169,7 @@ def report(run: Run, mode: str, changes: ScanDiff | None,
     header = _mode_header(mode, trailer=run.label, note=note, note_style=style)
 
     if mode == "raw":
-        return Group(header, *_log_lines(run))
+        return Group(header, *_log_lines(run, None if full else PANE_TAIL))
     if mode == "diff":
         return Group(header, Text(),
                      *_diff_lines(changes, running=run.running))
@@ -175,7 +177,7 @@ def report(run: Run, mode: str, changes: ScanDiff | None,
 
 
 def capture_report(run: CaptureRun, mode: str, frozen: bool = False,
-                   following: bool = True) -> RenderableType:
+                   following: bool = True, full: bool = False) -> RenderableType:
     """A capture, read three ways - the same three a scan reads.
 
     "diff" here is what this capture found rather than what changed about the
@@ -202,7 +204,7 @@ def capture_report(run: CaptureRun, mode: str, frozen: bool = False,
                          Text("  this capture was not run here — its output was "
                               "not recorded", style=_KEY),
                          Text(f"  read from {run.paths.db}", style=_KEY))
-        return Group(header, *_log_lines(run))
+        return Group(header, *_log_lines(run, None if full else PANE_TAIL))
     if mode == "diff":
         return Group(header, Text(), *_capture_failures(run))
     return Group(header, Text(), *_capture_overview(run))
@@ -245,13 +247,35 @@ def _pair(label: str, value: str) -> Text:
     return text
 
 
-def _log_lines(run: Run) -> list[Text]:
+# The pane is a dozen rows; the reader (`d`) is where a whole log is read. A
+# 20 000-line log rendered on every refresh of the pane is what froze the
+# interface while a scan streamed - see `_log_lines`.
+PANE_TAIL = 500
+_LOG_CACHE: dict[tuple[int, int | None], tuple[tuple, list[Text]]] = {}
+
+
+def _log_lines(run: Run, tail: int | None = None) -> list[Text]:
+    """The log as *one* Text - a Text per line was 2.5 million objects for a
+    1200-line scan, rebuilt three times a refresh - cached until it grows."""
+    key = (run.dropped, len(run.log))
+    cached = _LOG_CACHE.get((id(run), tail))
+    if cached is not None and cached[0] == key:
+        return cached[1]
     lines: list[Text] = []
     if run.dropped:
         lines.append(Text(f"  … {run.dropped} earlier line(s) dropped", style=_KEY))
     if not run.log:
         lines.append(Text("  no output yet", style=_KEY))
-    lines += [Text(f"  {line}") for line in run.log]
+    shown = list(run.log)
+    if tail is not None and len(shown) > tail:
+        lines.append(Text(f"  … {len(shown) - tail} earlier line(s) - d reads the whole log",
+                          style=_KEY))
+        shown = shown[-tail:]
+    if shown:
+        lines.append(Text("\n".join(f"  {line}" for line in shown)))
+    if len(_LOG_CACHE) > 16:
+        _LOG_CACHE.clear()
+    _LOG_CACHE[(id(run), tail)] = (key, lines)
     return lines
 
 

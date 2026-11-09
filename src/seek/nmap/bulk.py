@@ -82,6 +82,13 @@ def freeze() -> None:
     "everything now alive is long-lived" is true. From then on a collection
     walks what the run allocates next, not the twenty-four thousand hosts it
     is walking through.
+
+    **It costs in proportion to what was allocated since the last freeze**
+    (CPython 3.14, measured: 144 ms for a whole 24 200-host model at once,
+    nothing when nothing is new). The two owners therefore also freeze as they
+    go - per file read, per projection report - so the freeze at publication
+    finds little left to do and the pause is spread over their own threads in
+    millisecond pieces.
     """
     gc.freeze()
 

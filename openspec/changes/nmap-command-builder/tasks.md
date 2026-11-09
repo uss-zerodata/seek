@@ -48,4 +48,4 @@
 ## 8. Finish
 
 - [x] 8.1 README (the builder, fine-tune, the trade-offs, the history file and what it holds); AGENTS.md (the stateless exception, the catalogue as the one option source, the rule sources, the precedence)
-- [ ] 8.2 ruff, full pytest, `openspec validate nmap-command-builder --strict`
+- [x] 8.2 ruff, full pytest, `openspec validate nmap-command-builder --strict`

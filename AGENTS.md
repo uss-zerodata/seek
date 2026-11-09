@@ -757,6 +757,27 @@ together. Do not `query_one(RowList)`: it matches both.
   model changes; the Scans `View.build` recomputes only the live-run rows each
   refresh. A finished in-app run is deduped against its own output file so it is
   listed once, as the file.
+- **A running scan redraws four times a second, not once a line.** nmap at
+  `-v` prints hundreds of lines a second, and each line used to rebuild the run
+  list and render the record pane three times, each render rebuilding the whole
+  log as one Rich `Text` per line (2.5 million objects for 1200 lines, 1.9 s of
+  frozen interface). Now `_on_scan_line` only schedules `_live_refresh`
+  (`_LIVE_REFRESH`), the pane's log is one `Text` of the newest `PANE_TAIL` lines,
+  cached per run and depth (`scans._log_lines`), and `_refresh_detail` coalesces
+  to one `_draw_detail` per refresh. The reader (`full=True`) still has every
+  line. The browser gets the tail while a run is running, because it re-fetches
+  the record every 400 ms in the same process.
+- **A stale tab report is not a click.** `_activate`/`_sync_tab` set
+  `Tabs.active`, and Textual reports that later as `TabActivated`. When a second
+  switch comes first (a scan starting while a key was pressed, a lagging loop),
+  the first report is stale. Taken as a click, it switched back, its own report
+  switched forward, and two tabs alternated for as long as the loop lagged.
+  `on_tabs_tab_activated` ignores a report that no longer matches the tab row;
+  `test_two_quick_tab_switches_settle_on_the_last` holds it.
+- **A view sorts its rows once.** `View.ordered` caches the shown order with the
+  rows (24 200 hosts are about 60 ms of `key_at`), and the projection worker
+  warms it, so a redraw only copies. `_narrow` uses it when no filter is set.
+  `_refresh_warning` counts per model, not per redraw.
 - **The collector is the pause, not the work.** At engagement scale the model is
   millions of tracked container objects and every generational collection walks
   all of them - measured at 1.9 s of frozen interface in the middle of a
@@ -770,7 +791,11 @@ together. Do not `query_one(RowList)`: it matches both.
   are imported directly by tests and by the export path, and a library call that
   turns the host program's collector off is a surprise that outlives it. The
   freeze/unfreeze pair lives in `NmapApp._publish`, the one place `self.scans`
-  is ever replaced, because it is a *pair*.
+  is ever replaced, because it is a *pair*. On CPython 3.14 `gc.freeze()` costs in
+  proportion to what was allocated since the last freeze (144 ms for a whole
+  engagement at once), so the two owners also freeze as they go - per file in
+  `_read_scans`, per progress report in `_build_rows` - and the freeze in
+  `_publish` finds almost nothing left (100 ms → 3 ms).
 - **One report shape for every long step.** `nmap/progress.py` defines it: work
   done, work total, and the unit counted. `merge.load` reports files (with a
   total of zero during the walk, which means "cannot count itself yet"),

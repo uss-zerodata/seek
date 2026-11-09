@@ -32,12 +32,13 @@ def record_lines(row: vdefs.Row | None, view_title: str, session: Session,
         # Checked before ScanRun and separately from it: a capture is a `Run`,
         # not a `ScanRun`, and the record renderer knows nothing about runs.
         return ([detail_pane.Line(
-                    scan_views.report(target, report_mode, None, frozen, following))],
+                    scan_views.report(target, report_mode, None, frozen, following,
+                                      full))],
                 f"Capture · {target.scope}")
     if isinstance(target, ScanRun):
         return ([detail_pane.Line(
                     scan_views.report(target, report_mode, session.diffs.get(id(target)),
-                                      frozen, following))],
+                                      frozen, following, full))],
                 f"Scan · {target.preset}")
     if row is not None and row.heading:
         return ([detail_pane.Line(Text(
