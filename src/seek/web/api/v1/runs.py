@@ -17,6 +17,7 @@ from starlette.concurrency import run_in_threadpool
 
 from seek.gowitness.capture import CaptureRun
 from seek.nmap import presets as presets_mod
+from seek.nmap.runner import elevation_help, sudo_ready
 from seek.nmap.session import Busy, Event, ScanError
 from seek.runner import Run
 from seek.web import schemas as s
@@ -108,6 +109,7 @@ def _plan(sess, body: s.ScanPlanIn):
         return out, None
     out.argv, out.targets = plan.argv, plan.targets
     out.out_base, out.elevated, out.privilege = str(plan.out_base), plan.elevated, plan.privilege
+    out.via = plan.via
     out.blocked = plan.blocked or ""
     out.copy_local, out.copy_remote = plan.copy_local, plan.copy_remote
     return out, plan
@@ -156,6 +158,12 @@ async def start_scan(body: s.ScanPlanIn, request: Request):
     if plan.blocked:
         raise HTTPException(409, plan.blocked)
     run = plan.run()
+    if run.elevated:
+        # Nothing here can let sudo ask, so a scan it would not run is refused
+        # before it starts rather than failing once it has.
+        problem = await sudo_ready(run.argv)
+        if problem is not None:
+            raise HTTPException(409, f"{problem}. {elevation_help(sess.config.nmap_path)}")
     try:
         sess.start_scan(run, origin="web")
     except (ScanError, Busy) as exc:

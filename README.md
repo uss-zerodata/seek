@@ -342,10 +342,19 @@ added for you. `{ports}` expands to the open ports already in the model — the
 step you would otherwise grep out of the previous scan's `.gnmap`.
 
 Whether a preset needs root is worked out from its flags, not declared. When it
-does and you are not root, the command runs under `sudo -n`, which never
-prompts: if sudo would have asked for a password the run fails and says so, and
-you can warm the timestamp with `sudo -v` elsewhere, run seek as root, or give
-nmap the capability and run unelevated. The command box is not a shell — it is
+does and you are not root, seek takes the first route that works, and the
+review says which one:
+
+- **nmap's own capabilities.** If the nmap binary has them
+  (`sudo setcap cap_net_raw,cap_net_admin,cap_net_bind_service+eip $(which nmap)`),
+  the scan runs as you, with `--privileged` added, and no sudo.
+- **sudo.** Before the scan starts, seek checks whether sudo would run nmap
+  without asking. If sudo would ask, the viewer steps aside and **sudo itself**
+  asks for the password on the terminal; seek never sees it. The scan then runs
+  under `sudo -n`. A scan started from the browser cannot let sudo ask, so it is
+  refused before it runs, with these same options.
+
+Running seek as root needs neither. The command box is not a shell — it is
 split into arguments and executed directly, so pipes and redirections are
 refused rather than silently ignored.
 
@@ -523,7 +532,8 @@ selected row's record beside the list, rendered from the very same record the
 terminal shows. Links in a record open nmap's own text for that host or port;
 `←`/`→` step to the other scans of it. Marks, export (every recipe, field and
 format, downloaded or copied), new scans (preset, scope, editable command, the
-same review and `sudo -n` rule) and gowitness captures all work from the
+same review and elevation rules; a scan that sudo would only run after a
+password has to be started in the terminal) and gowitness captures all work from the
 browser, and the Scans tab streams a running scan's log as nmap writes it.
 
 Everything is linked: a host leads to its ports and their state, a port to its

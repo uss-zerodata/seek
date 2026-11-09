@@ -355,6 +355,7 @@ class ScanPlanOut(BaseModel):
     out_base: str = ""
     elevated: bool = False
     privilege: str = ""               # what needs root, as the terminal says it
+    via: str = ""                    # "", "sudo" or "capabilities" - how it gets root
     error: str = ""                  # why this command would not be run
     blocked: str = ""                # why it cannot start here; it can still be copied
     copy_local: str | None = None    # the argv as one shell line; None without nmap here

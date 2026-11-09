@@ -18,7 +18,7 @@ from pathlib import Path
 from rich.console import RenderableType
 from rich.text import Text
 from textual import work
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, SuspendNotSupported
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
@@ -38,7 +38,7 @@ from seek.nmap.merge import Accumulator, Pending
 from seek.nmap.models import Host, ScanSet, Service
 from seek.nmap.parse import NmapParseError, parse_file
 from seek.nmap.progress import FILES, Report
-from seek.nmap.runner import ScanRun, State, elevation_help
+from seek.nmap.runner import ScanRun, State, elevation_help, sudo_ready
 from seek.nmap.session import Busy as SessionBusy
 from seek.nmap.session import Event as SessionEvent
 from seek.nmap.session import ScanError, Session
@@ -1859,7 +1859,9 @@ class NmapApp(App[int]):
         body.append(f"  {'writes':<11}", style="dim")
         body.append(f"{plan.out_base}.{{xml,nmap,gnmap}}\n")
         body.append(f"  {'privilege':<11}", style="dim")
-        body.append("sudo -n — " if plan.elevated else "direct — ")
+        body.append({"sudo": "sudo (asks for a password here if it needs one) — ",
+                     "capabilities": "nmap's own capabilities, --privileged — "}
+                    .get(plan.via, "direct — "))
         body.append(plan.privilege or "no elevated flags")
         confirmed = await self.push_screen_wait(ReviewScreen(
             "Start this scan?", body, "start the scan", blocked=plan.blocked,
@@ -1868,7 +1870,40 @@ class NmapApp(App[int]):
                     f"back into {_short(self.scan_dir)}"))
         if not confirmed:
             return
-        self._run_scan(plan.run())
+        run = plan.run()
+        if run.elevated and not await self._authorise(run):
+            return
+        self._run_scan(run)
+
+    async def _authorise(self, run: ScanRun) -> bool:
+        """Make sure `sudo -n` will run this scan, letting sudo ask if it must.
+
+        sudo asks on the terminal itself, with the interface stepped aside:
+        seek never sees the password. The scan then runs in this session, which
+        is what lets that authorisation count for it.
+        """
+        problem = await sudo_ready(run.argv)
+        if problem is None:
+            return True
+        if problem.startswith("sudo is not installed"):
+            self.notify(f"{run.preset} needs root and {problem}. "
+                        + elevation_help(self.config.nmap_path, terminal=True),
+                        severity="error", timeout=20)
+            return False
+        try:
+            with self.suspend():
+                print(f"\nseek: {run.preset} needs root ({' '.join(run.argv[2:4])} …).\n"
+                      "sudo asks for your password; seek never sees it.\n", flush=True)
+                _sudo_validate()
+        except SuspendNotSupported:
+            self.notify(elevation_help(self.config.nmap_path), severity="error", timeout=20)
+            return False
+        problem = await sudo_ready(run.argv)
+        if problem is None:
+            return True
+        self.notify(f"{problem}. " + elevation_help(self.config.nmap_path, terminal=True),
+                    severity="error", timeout=20)
+        return False
 
     @work(group="scan")
     async def _run_scan(self, run: ScanRun) -> None:
@@ -2173,7 +2208,7 @@ class NmapApp(App[int]):
         if run.state is State.DONE and run.xml_path.exists():
             self._absorb(run)
         elif run.state is State.FAILED and "sudo -n refused" in run.result:
-            self.notify(elevation_help(self.config.nmap_path),
+            self.notify(elevation_help(self.config.nmap_path, terminal=True),
                         severity="error", timeout=20)
         else:
             self.notify(f"{run.preset}: {run.result}",
@@ -3198,6 +3233,12 @@ class NmapApp(App[int]):
             self.notify(f"wrote {path}")
         except OSError as exc:
             self.notify(f"write failed: {exc}", severity="error")
+
+
+def _sudo_validate() -> None:
+    """Let sudo ask for the password on the terminal - a module function so
+    tests can replace it without patching `subprocess`."""
+    subprocess.run(["sudo", "-v"], check=False)  # noqa: S603, S607 - fixed argv
 
 
 def _short(path: Path) -> str:

@@ -164,7 +164,8 @@ function scanReview(plan) {
   if (plan.error) return `<span class="c-red">${esc(plan.error)}</span>`;
   const base = plan.out_base.split("/").pop();
   return `runs <code>${esc(plan.argv.join(" "))}</code><br>${plan.targets.length} target(s) · writes ${esc(plan.out_base)}.{xml,nmap,gnmap}` +
-    (plan.elevated ? `<br><strong>needs root</strong> (${esc(plan.privilege)}) - through <code>sudo -n</code>, never a prompt` : "") +
+    (plan.via === "sudo" ? `<br><strong>needs root</strong> (${esc(plan.privilege)}) - through <code>sudo -n</code>: the browser cannot let sudo ask for a password, the terminal viewer can` : "") +
+    (plan.via === "capabilities" ? `<br><strong>needs root</strong> (${esc(plan.privilege)}) - nmap's own capabilities, with <code>--privileged</code>, no sudo` : "") +
     blockedLine(plan, `${base}.{xml,nmap,gnmap}`);
 }
 

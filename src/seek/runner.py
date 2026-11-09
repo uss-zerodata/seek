@@ -160,11 +160,16 @@ class Runner:
         try:
             process = await asyncio.create_subprocess_exec(
                 *run.argv,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 # Its own process group, so cancelling reaches the children the
-                # tool spawns rather than only the sudo or docker wrapper.
-                start_new_session=True,
+                # tool spawns rather than only the sudo or docker wrapper - but
+                # the viewer's *session*: a new session has no terminal, and
+                # sudo keeps its authorisation per terminal, so `sudo -n` never
+                # saw one made here. stdin is closed because a background group
+                # that reads the terminal is stopped (nmap reads keys from it).
+                process_group=0,
             )
         except FileNotFoundError:
             return self._settle(run, State.FAILED, None,

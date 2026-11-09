@@ -499,6 +499,22 @@ together. Do not `query_one(RowList)`: it matches both.
   `create_subprocess_exec`. Nothing anywhere re-joins it into a string. Whether
   a command needs root is **derived from its flags** (`needs_root`), never
   declared per preset, so a pasted command is classified like a shipped one.
+- **A tool runs in the viewer's session, never a new one.** `seek.runner`
+  starts it with `process_group=0` (its own group, so cancelling reaches its
+  children) and `stdin=DEVNULL`. It used `start_new_session=True`, and that
+  is why no password-sudo scan could ever start: a new session has no
+  controlling terminal, and sudo keeps its authorisation *per terminal*, so a
+  `sudo -v` - here or "in another terminal", as the old error told the user -
+  never counted (reproduced in a container). stdin is closed because a
+  background group that reads the terminal is stopped, and nmap reads keys.
+  Elevation takes the first route that works (`ScanPlan.via`): root, nmap's
+  file capabilities (`presets.raw_capable`, which also checks the bounding
+  set - a capability outside it makes the exec fail), then sudo.
+  `nmap.runner.sudo_ready` asks by running `sudo -n <nmap> --version`, not
+  `sudo -n -l`: with a password rule beside any unrelated NOPASSWD rule, `-l`
+  says yes and the scan is refused. If sudo would ask, the TUI suspends and
+  runs `sudo -v` (`_sudo_validate`); the browser refuses up front. seek never
+  reads a password.
 - **Copied text is for a person; executed text is never joined.**
   `nmap/remote.py` is the one place an argv becomes a string (`shlex.join`),
   because the result is pasted into a shell by a person. The remote snippet is

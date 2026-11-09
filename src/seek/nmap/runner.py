@@ -7,7 +7,8 @@ here: it is in `seek.runner`, shared with every other tool the app runs. What
 - where the scan writes its files (`-oA`, so `.xml` beside `.nmap`);
 - the progress lines nmap prints when asked, and only when asked;
 - what a successful scan's one-line result says;
-- how a refused `sudo -n` is recognised and explained.
+- whether sudo would run a scan without asking, and how a refused `sudo -n`
+  is recognised and explained.
 
 `State`, `Runner`, `LOG_LIMIT` and `GRACE_SECONDS` are re-exported so that code
 reading about a scan can keep importing them from here.
@@ -15,14 +16,16 @@ reading about a scan can keep importing them from here.
 
 from __future__ import annotations
 
+import asyncio
 import re
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from seek.runner import GRACE_SECONDS, LOG_LIMIT, Run, Runner, State
 
 __all__ = ["GRACE_SECONDS", "LOG_LIMIT", "Runner", "ScanRun", "State",
-           "elevation_help"]
+           "elevation_help", "sudo_ready"]
 
 
 # nmap prints these when asked (`--stats-every`), and at higher verbosity on its
@@ -85,7 +88,7 @@ class ScanRun(Run):
 
 
 _REFUSAL = ("a password is required", "no tty present", "sudo: a terminal is required",
-            "may not run", "not allowed")
+            "you must have a tty", "may not run", "not allowed")
 
 
 def _elevation_refused(lines: list[str]) -> bool:
@@ -93,11 +96,48 @@ def _elevation_refused(lines: list[str]) -> bool:
     return any(hint in lowered for hint in _REFUSAL)
 
 
-def elevation_help(program: str = "nmap") -> str:
-    """What to do when `sudo -n` is refused - said once, in one place."""
+def elevation_help(program: str = "nmap", terminal: bool = False) -> str:
+    """What to do when sudo would ask for a password where nothing can ask -
+    said once, in one place.
+
+    Not "run `sudo -v` in another terminal": sudo keeps its authorisation per
+    terminal by default, so one made elsewhere never applies here.
+    """
+    path = shutil.which(program) or program
+    first = ("sudo did not authorise this scan. "
+             if terminal else
+             "sudo wants a password and this scan cannot ask for one. Start it from "
+             "the terminal viewer, which lets sudo ask; ")
     return (
-        "sudo -n never prompts, and sudo would have asked for a password. "
-        f"Either run seek as root, warm the timestamp with `sudo -v` in another "
-        f"terminal, or give {program} the capability it needs with setcap "
-        "(cap_net_raw,cap_net_admin,cap_net_bind_service+eip) and run it unelevated."
+        f"{first}{'Run' if terminal else 'or run'} seek as root; or let nmap open raw "
+        f"sockets itself - `sudo setcap cap_net_raw,cap_net_admin,"
+        f"cap_net_bind_service+eip {path}` - and seek runs it with --privileged, "
+        "without sudo."
     )
+
+
+async def sudo_ready(argv: list[str]) -> str | None:
+    """`None` when sudo would run this elevated argv's program without asking;
+    otherwise sudo's own reason.
+
+    Asked by running `sudo -n <program> --version`: a harmless run of the very
+    program, which answers exactly "would sudo run it now". `sudo -n -l` does
+    not - with a password rule and any unrelated NOPASSWD rule, it says yes and
+    the scan is then refused. Asked in the viewer's session, like the scan
+    itself, so an authorisation made in this terminal counts.
+    """
+    command = argv[2:] if argv[:2] == ["sudo", "-n"] else argv
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "sudo", "-n", command[0], "--version", stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+            process_group=0)
+    except FileNotFoundError:
+        return "sudo is not installed"
+    except OSError as exc:
+        return f"sudo could not be run: {exc.strerror or exc}"
+    _out, err = await process.communicate()
+    if process.returncode == 0:
+        return None
+    lines = err.decode("utf-8", "replace").strip().splitlines()
+    return lines[-1] if lines else f"sudo -n {command[0]} exited {process.returncode}"

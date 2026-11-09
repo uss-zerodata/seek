@@ -16,9 +16,11 @@ name rather than passed through - see `parse_command`.
 from __future__ import annotations
 
 import ipaddress
+import os
 import re
 import shlex
 import shutil
+import struct
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime
@@ -35,6 +37,9 @@ class Probe:
     path: str | None = None
     version: str | None = None
     reason: str | None = None
+    # The binary has the file capabilities for raw sockets: a privileged scan
+    # runs as the user with `--privileged`, and needs no sudo.
+    capable: bool = False
 
     @property
     def available(self) -> bool:
@@ -71,7 +76,51 @@ def probe(program: str = "nmap") -> Probe:
     # A program that answers --version with something else is still not nmap we
     # can reason about, but it is on the path and runnable - say what we saw.
     return Probe(path=path, version=match.group(1) if match else None,
-                 reason=None if match else f"{path} did not report an nmap version")
+                 reason=None if match else f"{path} did not report an nmap version",
+                 capable=raw_capable(path))
+
+
+_CAP_NET_ADMIN, _CAP_NET_RAW = 12, 13
+_VFS_CAP_FLAGS_EFFECTIVE = 0x1
+
+
+def raw_capable(path: str) -> bool:
+    """Does this binary carry `cap_net_raw` and `cap_net_admin`, permitted and
+    effective - what `setcap cap_net_raw,cap_net_admin,...+eip` gives it?
+
+    Read from the `security.capability` attribute (`struct vfs_cap_data`: a
+    little-endian magic word whose low bit is "effective", then the low 32
+    permitted bits). Only Linux has it; anywhere else, or without the
+    attribute, the answer is no.
+    """
+    getxattr = getattr(os, "getxattr", None)
+    if getxattr is None:
+        return False
+    try:
+        data = getxattr(path, "security.capability")
+    except OSError:
+        return False
+    if len(data) < 8:
+        return False
+    magic, permitted = struct.unpack_from("<II", data)
+    needed = (1 << _CAP_NET_ADMIN) | (1 << _CAP_NET_RAW)
+    if not magic & _VFS_CAP_FLAGS_EFFECTIVE or permitted & needed != needed:
+        return False
+    # A capability outside this process's bounding set makes the exec itself
+    # fail (EPERM) - a container without NET_ADMIN, measured. Then sudo it is.
+    return _bounding() & needed == needed
+
+
+def _bounding() -> int:
+    """This process's capability bounding set; all bits when it cannot be read."""
+    try:
+        with open("/proc/self/status", encoding="ascii") as status:
+            for line in status:
+                if line.startswith("CapBnd:"):
+                    return int(line.split()[1], 16)
+    except (OSError, ValueError):
+        pass
+    return ~0
 
 
 # --- privileges -------------------------------------------------------------

@@ -95,6 +95,9 @@ class ScanPlan:
     out_base: Path
     elevated: bool
     privilege: str
+    # How a command that needs root gets it: "" (it does not, or seek is root),
+    # "capabilities" (nmap's own, with --privileged) or "sudo".
+    via: str = ""
     # Why it cannot start *here* - nmap missing, the directory not writable.
     # The plan still exists, because it can be copied to another machine.
     blocked: str | None = None
@@ -653,12 +656,18 @@ class Session:
         # The targets are whatever survived the edit, in the order given.
         scan_args = [a for a in args if a not in targets]
         chosen = [a for a in args if a in targets] or targets
-        elevate = presets_mod.needs_root(scan_args) and os.geteuid() != 0
-        argv = presets_mod.build_argv(self.config.nmap_path, scan_args, chosen,
+        needs = presets_mod.needs_root(scan_args) and os.geteuid() != 0
+        via = ("capabilities" if self.nmap.capable else "sudo") if needs else ""
+        run_args = scan_args
+        if via == "capabilities" and "--privileged" not in scan_args:
+            # nmap uses its capabilities only when told it is privileged.
+            run_args = [*scan_args, "--privileged"]
+        elevate = via == "sudo"
+        argv = presets_mod.build_argv(self.config.nmap_path, run_args, chosen,
                                       str(out_base), elevate)
         blocked = self.scan_blocked()
         return ScanPlan(preset, argv, chosen, out_base, elevate,
-                        presets_mod.privileged_labels(scan_args), blocked=blocked,
+                        presets_mod.privileged_labels(scan_args), via=via, blocked=blocked,
                         copy_local=remote.local_text(argv) if self.nmap.available else None,
                         copy_remote=remote.nmap_snippet(scan_args, chosen, out_base.name))
 

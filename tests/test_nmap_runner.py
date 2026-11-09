@@ -188,6 +188,10 @@ async def test_the_scope_and_the_xml_path_read_from_the_run(tmp_path):
     assert run.scope == "2 targets"
 
 
-async def test_elevation_help_names_all_three_ways_out():
+async def test_elevation_help_names_the_ways_out():
     text = run_mod.elevation_help()
-    assert "root" in text and "sudo -v" in text and "setcap" in text
+    assert "terminal viewer" in text and "root" in text and "setcap" in text
+    assert "--privileged" in text
+    assert "another terminal" not in text, "sudo's authorisation is per terminal"
+    inside = run_mod.elevation_help(terminal=True)
+    assert "terminal viewer" not in inside and "setcap" in inside
