@@ -11,6 +11,7 @@ import tomllib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from seek import notify
 from seek.nmap.presets import DEFAULT_PRESETS, CommandError, parse_args
 from seek.paths import config_file
 
@@ -137,6 +138,12 @@ class Config:
     vulndb_path: str = ""
     # Older than this, the viewer offers to update it - asks, never fetches.
     vulndb_stale_days: int = 7
+    # An ntfy-compatible webhook told when a scan or capture ends - the review
+    # shows it and can change it per run. Empty: nothing is sent. The message
+    # names the preset, the outcome and the time; never a target.
+    notify_url: str = ""
+    # ...and at 25, 50 and 75 % done, as the tool reports it.
+    notify_progress: bool = False
     # name -> nmap arguments. Unlike the other tables this one *replaces* the
     # default when the user defines any: a curated list of the commands you
     # actually run should be exactly what the app offers.
@@ -185,6 +192,8 @@ _SCALAR_KEYS: dict[str, type | tuple[type, ...]] = {
     "gowitness_settle_cap_ms": int,
     "vulndb_path": str,
     "vulndb_stale_days": int,
+    "notify_url": str,
+    "notify_progress": bool,
 }
 # Minimum (and where one is meaningful, maximum) for each numeric key.
 # Types alone were checked before, which let values through that quietly break
@@ -281,6 +290,10 @@ def _validate(raw: dict, source: Path) -> Config:
             raise ConfigError(f"{source}: '{key}' must be a table of string values")
         setattr(cfg, key, dict(value))
     _check_presets(cfg, source)
+    try:
+        cfg.notify_url = notify.normalise(cfg.notify_url)
+    except notify.NotifyError as exc:
+        raise ConfigError(f"{source}: 'notify_url' {exc}") from None
     if cfg.default_editor not in cfg.editors:
         raise ConfigError(
             f"{source}: default_editor '{cfg.default_editor}' is not in [editors]"
@@ -422,6 +435,8 @@ _EXAMPLE_COMMENTS = {
     "gowitness_settle_cap_ms": "...or after this long, whatever the page is doing",
     "vulndb_path": "the vulnerability database; empty means vulndb.sqlite3 in the state dir",
     "vulndb_stale_days": "offer an update when the vulnerability database is older than this",
+    "notify_url": "ntfy-compatible webhook told when a scan or capture ends; empty: off",
+    "notify_progress": "also notify at 25, 50 and 75 % done",
 }
 
 

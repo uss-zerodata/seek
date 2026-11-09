@@ -66,6 +66,11 @@ class Run:
     result: str = ""                     # the one-line outcome, for the run list
     log: deque[str] = field(default_factory=lambda: deque(maxlen=LOG_LIMIT))
     dropped: int = 0                     # lines the bound pushed out
+    # Where to say that it ended (ntfy-compatible; "" is off), and whether to
+    # say it at 25/50/75 % too. `milestone` is the last percentage said.
+    notify_url: str = ""
+    notify_progress: bool = False
+    milestone: int = 0
 
     @property
     def running(self) -> bool:
@@ -104,6 +109,16 @@ class Run:
     def progress(self) -> str:
         """What to show in the run list while it is running."""
         return "running"
+
+    def fraction(self) -> float | None:
+        """How far along, 0..1, or `None` when the tool has not said."""
+        return None
+
+    @property
+    def notify_name(self) -> str:
+        """What a notification calls this run - a name the user chose, never
+        anything about the targets."""
+        return self.label
 
     def summarise(self) -> str:
         """The one-line result of a successful run."""

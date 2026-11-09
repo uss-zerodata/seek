@@ -252,7 +252,8 @@ def test_the_capture_is_offered_among_the_scan_presets():
     assert '<option value="${CAPTURE}" ${initial === CAPTURE ? "selected" : ""}>' in dialog
     assert "${esc(captureOff)}" in dialog, "unavailable is shown with its reason, not hidden"
     assert '"/api/v1/captures/review"' in dialog
-    assert "await capture()" in dialog and ACTIONS_JS.count('"/api/v1/captures/runs"') == 1
+    assert "await capture(notifyChoice(form))" in dialog, "with this run's notification"
+    assert ACTIONS_JS.count('"/api/v1/captures/runs"') == 1
     assert 'newScan(CAPTURE)' in ACTIONS_JS, "the export dialog's capture opens the review"
 
 

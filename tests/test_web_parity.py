@@ -358,3 +358,24 @@ def test_every_terminal_key_has_a_browser_key():
     assert missing == [], f"no browser key for {missing}"
 
 
+
+
+def test_a_browser_start_carries_its_notification_choice(tmp_path, monkeypatch):
+    sess = _session(tmp_path)
+    sess.config.notify_url = "https://notify.example.test/default"
+    started = []
+    monkeypatch.setattr(sess, "start_scan", lambda run, origin="": started.append(run))
+    client = _client(sess)
+    name = _preset(sess)
+    review = client.post("/api/v1/scans/review",
+                         json={"preset": name, "targets": ["192.0.2.1"]}).json()
+    assert review["notify_url"] == "https://notify.example.test/default"
+    bad = client.post("/api/v1/scans", json={"preset": name, "targets": ["192.0.2.1"],
+                                              "notify_url": "ftp://x/y"})
+    assert bad.status_code == 422 and started == []
+    ok = client.post("/api/v1/scans", json={"preset": name, "targets": ["192.0.2.1"],
+                                             "notify_url": "ntfy.example.test/mine",
+                                             "notify_progress": True})
+    assert ok.status_code == 200, ok.text
+    assert started[0].notify_url == "https://ntfy.example.test/mine"
+    assert started[0].notify_progress

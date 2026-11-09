@@ -127,6 +127,7 @@ src/seek/
     capture.py      one argv for both backends, output layout, the CaptureRun
     results.py      the capture database -> Capture records, indexed by URL
   runner.py         supervision shared by every tool: stream, cancel, settle
+  notify.py         ntfy-format notifications: URL check, minimal messages, send
   vulndb/           the local vulnerability database - public data only, no Textual
     versions.py     release-order comparison; `None` = undecidable, never "safe"
     store.py        SQLite schema, read-only `Store` for sessions, `open_write` for updates
@@ -478,6 +479,17 @@ together. Do not `query_one(RowList)`: it matches both.
   the reason as its label; the status bar carries `◉ gowitness not found`. A
   feature that vanishes teaches nothing about why. `ChoiceScreen` takes a
   `disabled` set for exactly this.
+- **A scan dialog gives way; its choices do not.** The four scan-flow modals
+  (`scope.py`) share `_FRAME` (84 wide but `max-width: 100%`, `max-height:
+  100%`) and `_Fits`: the one `.flex` part - the scope, the preset list, the
+  command, the reviewed arguments - gets its `max-height` from the room the
+  rest of the frame leaves, recomputed on mount, on resize and when a
+  neighbour changes height. CSS alone cannot do it: an `fr` part makes an
+  auto-height frame fill the whole screen. With 300 addresses the old fixed
+  frames pushed start and the key line off an 80x24 terminal.
+  `test_every_scan_dialog_fits_with_hundreds_of_targets` holds it at three
+  sizes. Textual's `Checkbox` draws `X` on and off alike - `_Tick` draws
+  `[x]` / `[ ]`.
 - **A modal offers choices as an `OptionList`, never a stack of `Button`s.**
   Textual buttons are three rows tall: six export recipes needed more than
   twenty, ran off a 24-row terminal, and put the last choice out of reach with
@@ -515,6 +527,18 @@ together. Do not `query_one(RowList)`: it matches both.
   says yes and the scan is refused. If sudo would ask, the TUI suspends and
   runs `sudo -v` (`_sudo_validate`); the browser refuses up front. seek never
   reads a password.
+- **A notification says nothing about the engagement.** `seek/notify.py`
+  builds a message from the preset or tool name, the outcome and the elapsed
+  time, and is never handed anything else. That is why `CaptureRun.notify_name`
+  exists: its `label` carries a directory name. The session sends: milestones
+  from `on_line` (when `Run.fraction()` crosses 25/50/75), the end from
+  `on_done`. Each send is a thread, and one run's sends are chained
+  (`_last_notice`) because concurrent threads delivered "finished" before
+  "75 %". A failure is `Run.append`ed to the log, never a state change. A URL
+  with credentials is refused: no authentication is supported, and the URL is
+  shown in every review. The config holds the default, and the plan carries
+  it. The review returns the run's own choice on `ReviewScreen.notify_url` /
+  `notify_progress`, and the web takes it on `ScanPlanIn` / `CaptureIn`.
 - **Copied text is for a person; executed text is never joined.**
   `nmap/remote.py` is the one place an argv becomes a string (`shlex.join`),
   because the result is pasted into a shell by a person. The remote snippet is

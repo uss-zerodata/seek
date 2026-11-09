@@ -212,6 +212,17 @@ vector, the scope, the file it will write and whether it will be elevated.
 Nothing runs until that review is confirmed. Opened on a directory with no scans
 in it, the viewer starts at the editor instead of exiting.
 
+**Notifications.** Set `notify_url` in the config (for example
+`notify_url = "notify.hektor.cc/test"`; `https://` is added when no scheme is
+given) and seek POSTs an [ntfy](https://ntfy.sh)-format message there when a
+scan or a gowitness capture finishes, fails or is cancelled. With
+`notify_progress = true` it also sends one at 25, 50 and 75 % done, as the tool
+reports it. Every review shows both, so one run can use another URL, or none.
+A message names the preset (or "gowitness capture"), the outcome and the time
+taken, and nothing else: no target, address, host name, URL, path or tool
+output leaves the machine. A failed delivery never changes the run; it is a
+line in the run's log.
+
 **Scanning from another machine.** The review — for a scan, and for a gowitness
 capture — also copies the command: `y` copies a snippet for another machine,
 `Y` the command exactly as it would run here. The snippet calls plain `nmap` or

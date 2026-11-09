@@ -109,6 +109,20 @@ function blockedLine(plan, back) {
     `<br>run elsewhere: copy ${esc(back)} back into the scan directory`;
 }
 
+// Where to say that a run ended - shown with the configured default, changeable
+// for this run. Filled once: a later review must not undo the reader's edit.
+const NOTIFY_FIELDS = `<p><label>notify <input type="text" name="notify_url" placeholder="an ntfy URL, told when it ends - empty: no notification"></label>
+  <label><input type="checkbox" name="notify_progress"> and at 25 / 50 / 75 %</label></p>`;
+
+function fillNotify(form, plan) {
+  if (form.dataset.notifyFilled) return;
+  form.dataset.notifyFilled = "1";
+  form.notify_url.value = plan.notify_url || "";
+  form.notify_progress.checked = Boolean(plan.notify_progress);
+}
+
+const notifyChoice = (form) => ({ notify_url: form.notify_url.value, notify_progress: form.notify_progress.checked });
+
 async function exportDialog() {
   const v = view();
   let options;
@@ -151,9 +165,9 @@ async function exportDialog() {
   });
 }
 
-async function capture() {
+async function capture(choice = {}) {
   try {
-    const run = await send("POST", "/api/v1/captures/runs", view());
+    const run = await send("POST", "/api/v1/captures/runs", { ...view(), ...choice });
     say(`capturing: ${run.label}`);
     return true;
   } catch (e) { say(e.message); return false; }
@@ -195,6 +209,7 @@ async function newScan(initial = "") {
         <option value="${CAPTURE}" ${initial === CAPTURE ? "selected" : ""}>gowitness · screenshots of the HTTP(S) services${captureOff ? ` - ${esc(captureOff)}` : ""}</option></select></label></p>
       <p class="nmap-only"><label>scope<br><textarea name="targets" rows="4" placeholder="one address, range or name per line">${esc(scope)}</textarea></label></p>
       <p class="nmap-only"><label>command<br><textarea name="command" rows="3"></textarea></label></p>
+      ${NOTIFY_FIELDS}
       <div class="review dim small"></div>`,
     `<button value="start" class="primary">Start the scan</button> ${COPY_BUTTONS} <button value="cancel">Cancel</button>`,
     "Esc leaves - nothing runs until you start it");
@@ -211,6 +226,7 @@ async function newScan(initial = "") {
     try {
       const plan = await send("POST", "/api/v1/captures/review", view());
       current = plan;
+      fillNotify(form, plan);
       box.innerHTML = `${plan.urls.length} URL(s) from ${esc(source)} · writes ${esc(plan.where)}` +
         `<br><code>${esc(plan.urls.slice(0, 5).join("  "))}${plan.urls.length > 5 ? " …" : ""}</code>` +
         blockedLine(plan, "its gowitness/ directory");
@@ -230,6 +246,7 @@ async function newScan(initial = "") {
         { preset: form.preset.value, targets: targets(), command: edited ? form.command.value : null });
       if (!edited) form.command.value = plan.command;
       current = plan.error ? null : plan;
+      fillNotify(form, plan);
       box.innerHTML = scanReview(plan);
       start.disabled = Boolean(plan.error || plan.blocked);
     } catch (e) { current = null; box.innerHTML = `<span class="c-red">${esc(e.message)}</span>`; }
@@ -241,12 +258,12 @@ async function newScan(initial = "") {
   d.addEventListener("close", async () => {
     if (d.returnValue !== "start") return;
     if (capturing()) {
-      if (await capture() && root?.dataset.tab !== "scans") window.location.href = "/v/scans";
+      if (await capture(notifyChoice(form)) && root?.dataset.tab !== "scans") window.location.href = "/v/scans";
       return;
     }
     try {
       const run = await send("POST", "/api/v1/scans",
-        { preset: form.preset.value, targets: targets(), command: form.command.value });
+        { preset: form.preset.value, targets: targets(), command: form.command.value, ...notifyChoice(form) });
       say(`started ${run.label}`);
       if (root?.dataset.tab !== "scans") window.location.href = "/v/scans";
     } catch (e) { say(e.message); }
@@ -302,12 +319,14 @@ async function scanGaps() {
   const d = dialog("Scan unversioned ports", `
       <p class="dim small">${esc(plan.note)}</p>
       <p><label>command<br><textarea name="command" rows="3">${esc(plan.command)}</textarea></label></p>
+      ${NOTIFY_FIELDS}
       <div class="review dim small"></div>`,
     `<button value="start" class="primary">Start the scan</button> ${COPY_BUTTONS} <button value="cancel">Cancel</button>`,
     "Esc leaves - nothing runs until you start it");
   const form = d.querySelector("form");
   let current = null;
   copyControls(d, () => current);
+  fillNotify(form, plan);
   const body = () => ({ preset: plan.preset, targets: plan.targets, command: form.command.value });
   const review = async () => {
     const box = form.querySelector(".review");
@@ -323,7 +342,7 @@ async function scanGaps() {
   d.addEventListener("close", async () => {
     if (d.returnValue !== "start") return;
     try {
-      const run = await send("POST", "/api/v1/scans", body());
+      const run = await send("POST", "/api/v1/scans", { ...body(), ...notifyChoice(form) });
       say(`started ${run.label}`);
       if (root?.dataset.tab !== "scans") window.location.href = "/v/scans";
     } catch (e) { say(e.message); }

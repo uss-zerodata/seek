@@ -294,6 +294,14 @@ class CaptureRun(Run):
             self.captured += 1
 
     @property
+    def notify_name(self) -> str:
+        # `label` carries the directory name, which may name the engagement.
+        return "gowitness capture"
+
+    def fraction(self) -> float | None:
+        return self.finished / self.total if self.total else None
+
+    @property
     def finished(self) -> int:
         """Targets that ended, either way."""
         return self.captured + self.failed

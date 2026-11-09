@@ -1236,3 +1236,99 @@ async def test_the_command_hands_over_captures_found_anywhere(tmp_path, monkeypa
     assert result.exit_code == 0, result.output
     assert seen["found"] == ["basic.xml"], "the named database is not a scan candidate"
     assert seen["databases"] == ["named.sqlite3", "web/deep/capture.sqlite3"]
+
+
+async def test_the_review_offers_the_configured_notification_per_run(tmp_path):
+    from textual.widgets import Checkbox, Input
+
+    config = Config(nmap_path=_stub(tmp_path), nmap_presets={"Quick": "-sV"},
+                    scan_output_dir=str(tmp_path), notify_url="http://127.0.0.1:9/seek",
+                    notify_progress=True)
+    app = _app(tmp_path, "basic", config=config)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        await _to_review(pilot, app)
+        url = app.screen.query_one("#notify-url", Input)
+        assert url.value == "http://127.0.0.1:9/seek"
+        assert app.screen.query_one("#notify-progress", Checkbox).value
+        url.value = "ftp://nope/x"
+        await _choose(pilot, app, "start")
+        assert isinstance(app.screen, ReviewScreen), "a bad URL keeps the review open"
+        assert app.runner.runs == []
+        url.value = ""                          # no notification for this run
+        await _choose(pilot, app, "start")
+        for _ in range(40):
+            await pilot.pause(0.1)
+            if app.runner.runs:
+                break
+        assert app.runner.runs[0].notify_url == ""
+        assert app.config.notify_url == "http://127.0.0.1:9/seek", "only this run changed"
+
+
+async def test_the_review_fits_a_small_terminal_with_long_paths(tmp_path):
+    """The choices sat below the edge at 80x24 once paths were long: nothing to
+    scroll, no way to start. The command scrolls on its own instead."""
+    deep = tmp_path / ("very-long-engagement-directory-name-" * 3)
+    deep.mkdir()
+    config = Config(nmap_path=_stub(tmp_path), nmap_presets={"Quick": "-sS -sV"},
+                    scan_output_dir=str(deep), notify_url="https://notify.example.test/t")
+    app = _app(deep, "basic", config=config)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0.3)
+        await _to_review(pilot, app)
+        frame = app.screen.query_one("#frame").region
+        assert frame.right <= 80 and frame.bottom <= 24
+        for widget in app.screen.query("OptionList, Checkbox, Label.muted"):
+            assert widget.region.bottom <= frame.bottom, widget
+            assert widget.region.height > 0, widget
+
+
+def _fits(app, where: str) -> None:
+    frame = app.screen.query_one("#frame").region
+    width, height = app.size
+    assert frame.right <= width and frame.bottom <= height, f"{where}: frame off screen"
+    inner_bottom = frame.bottom - 1                    # the border's last row
+    for widget in app.screen.query("#frame > *"):
+        assert widget.region.height > 0, f"{where}: {widget} squeezed out"
+        assert widget.region.bottom <= inner_bottom, f"{where}: {widget} below the edge"
+
+
+@pytest.mark.parametrize("size", [(60, 18), (80, 24), (120, 40)])
+async def test_every_scan_dialog_fits_with_hundreds_of_targets(tmp_path, size):
+    """The frames were 84 columns and sized in rows; a long scope or command
+    pushed the choices and keys off the screen, with nothing to scroll."""
+    config = Config(nmap_path=_stub(tmp_path), nmap_presets={"Quick": "-sS -sV"},
+                    scan_output_dir=str(tmp_path))
+    app = _app(tmp_path, "basic", config=config)
+    many = "\n".join(f"10.0.{i // 250}.{i % 250 + 1}" for i in range(300))
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause(0.3)
+        await pilot.press("n")
+        await pilot.pause(0.4)
+        app.screen.query_one(TextArea).text = many
+        await pilot.pause(0.4)
+        _fits(app, "scope")
+        await pilot.press("ctrl+s")
+        await pilot.pause(0.4)
+        _fits(app, "preset")
+        await _choose(pilot, app, "Quick")
+        await pilot.pause(0.4)
+        _fits(app, "command")
+        await pilot.press("ctrl+s")
+        await pilot.pause(0.6)
+        assert isinstance(app.screen, ReviewScreen)
+        _fits(app, "review")
+
+
+async def test_the_progress_switch_reads_without_colour(tmp_path):
+    from seek.tui.nmap.scope import _Tick
+
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        await _to_review(pilot, app)
+        tick = app.screen.query_one(_Tick)
+        assert str(tick.render()).startswith("[ ]")
+        tick.value = True
+        await pilot.pause(0.1)
+        assert str(tick.render()).startswith("[x]")

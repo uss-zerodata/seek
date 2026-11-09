@@ -1863,14 +1863,16 @@ class NmapApp(App[int]):
                      "capabilities": "nmap's own capabilities, --privileged — "}
                     .get(plan.via, "direct — "))
         body.append(plan.privilege or "no elevated flags")
-        confirmed = await self.push_screen_wait(ReviewScreen(
+        review = ReviewScreen(
             "Start this scan?", body, "start the scan", blocked=plan.blocked,
             copy_local=plan.copy_local, copy_remote=plan.copy_remote,
             results=f"run elsewhere: copy {plan.out_base.name}.{{xml,nmap,gnmap}} "
-                    f"back into {_short(self.scan_dir)}"))
-        if not confirmed:
+                    f"back into {_short(self.scan_dir)}",
+            notify_url=plan.notify_url, notify_progress=plan.notify_progress)
+        if not await self.push_screen_wait(review):
             return
         run = plan.run()
+        run.notify_url, run.notify_progress = review.notify_url, review.notify_progress
         if run.elevated and not await self._authorise(run):
             return
         self._run_scan(run)
@@ -1946,12 +1948,14 @@ class NmapApp(App[int]):
         body.append(f"{_short(run.paths.root)}\n")
         body.append(f"  {'backend':<11}", style="dim")
         body.append(run.backend or "none here")
-        confirmed = await self.push_screen_wait(ReviewScreen(
+        review = ReviewScreen(
             "Start this capture?", body, "start the capture", blocked=run.blocked,
             copy_local=run.copy_local, copy_remote=run.copy_remote,
             results="run elsewhere: copy its gowitness/ directory back into "
-                    f"{_short(self.scan_dir)}"))
-        if confirmed:
+                    f"{_short(self.scan_dir)}",
+            notify_url=run.notify_url, notify_progress=run.notify_progress)
+        if await self.push_screen_wait(review):
+            run.notify_url, run.notify_progress = review.notify_url, review.notify_progress
             await self._run_capture(run)
 
     async def _run_capture(self, run: gw_capture.CaptureRun) -> None:

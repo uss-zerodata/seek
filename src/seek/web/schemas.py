@@ -344,6 +344,9 @@ class ScanPlanIn(BaseModel):
     preset: str
     targets: list[str] = []
     command: str | None = None       # the edited command; the preset's when absent
+    # This run's notification; the configured default when absent, "" for none.
+    notify_url: str | None = None
+    notify_progress: bool | None = None
 
 
 class ScanPlanOut(BaseModel):
@@ -360,6 +363,8 @@ class ScanPlanOut(BaseModel):
     blocked: str = ""                # why it cannot start here; it can still be copied
     copy_local: str | None = None    # the argv as one shell line; None without nmap here
     copy_remote: str = ""            # the snippet for a machine with only nmap
+    notify_url: str = ""             # the configured default, for the review to show
+    notify_progress: bool = False
 
 
 class CapturePlanOut(BaseModel):
@@ -370,12 +375,16 @@ class CapturePlanOut(BaseModel):
     blocked: str = ""
     copy_local: str | None = None
     copy_remote: str = ""
+    notify_url: str = ""
+    notify_progress: bool = False
 
 
 class CaptureIn(BaseModel):
     tab: str = ""
     path: str = ""
     q: str = ""
+    notify_url: str | None = None    # as on ScanPlanIn
+    notify_progress: bool | None = None
 
 
 # --- the search across everything -------------------------------------------------------

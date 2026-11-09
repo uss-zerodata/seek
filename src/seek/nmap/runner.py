@@ -67,6 +67,9 @@ class ScanRun(Run):
         if match:
             self.hosts_up = int(match.group(2))
 
+    def fraction(self) -> float | None:
+        return None if self.percent is None else self.percent / 100
+
     def progress(self) -> str:
         bits = []
         if self.percent is not None:

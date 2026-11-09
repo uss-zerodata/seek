@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import http.client
 import os
 import threading
 from collections.abc import Callable
@@ -30,6 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+from seek import notify
 from seek.config import Config
 from seek.gowitness import capture as gw_capture
 from seek.gowitness import detect as gw_detect
@@ -103,10 +105,14 @@ class ScanPlan:
     blocked: str | None = None
     copy_local: str | None = None    # None when there is no local nmap to run it
     copy_remote: str = ""
+    # The configured defaults; the review may change them for this run.
+    notify_url: str = ""
+    notify_progress: bool = False
 
     def run(self) -> ScanRun:
         return ScanRun(preset=self.preset, argv=self.argv, targets=self.targets,
-                       out_base=self.out_base, elevated=self.elevated)
+                       out_base=self.out_base, elevated=self.elevated,
+                       notify_url=self.notify_url, notify_progress=self.notify_progress)
 
 
 @dataclass
@@ -222,6 +228,7 @@ class Session:
         self._scanned_for: object = None
         self._listeners: list[Callable[[Event], None]] = []
         self._tasks: set[asyncio.Task] = set()
+        self._last_notice: dict[int, asyncio.Task] = {}   # run id -> its newest message
 
     # --- events -------------------------------------------------------------------
 
@@ -668,6 +675,8 @@ class Session:
         blocked = self.scan_blocked()
         return ScanPlan(preset, argv, chosen, out_base, elevate,
                         presets_mod.privileged_labels(scan_args), via=via, blocked=blocked,
+                        notify_url=self.config.notify_url,
+                        notify_progress=self.config.notify_progress,
                         copy_local=remote.local_text(argv) if self.nmap.available else None,
                         copy_remote=remote.nmap_snippet(scan_args, chosen, out_base.name))
 
@@ -715,6 +724,7 @@ class Session:
         return gw_capture.CaptureRun(
             argv=argv, paths=paths, urls=urls, backend=self.gowitness.backend or "",
             blocked=self.capture_blocked(),
+            notify_url=cfg.notify_url, notify_progress=cfg.notify_progress,
             copy_local=remote.local_text(argv) if self.gowitness.available else None,
             copy_remote=remote.capture_snippet(urls, collect_all=cfg.gowitness_collect_all,
                                                settle_ms=cfg.gowitness_settle_ms,
@@ -764,10 +774,18 @@ class Session:
                done: Callable[[Run], None]) -> asyncio.Task:
         def on_line(line: str) -> None:
             self.emit(Event("line", origin, run, line))
+            if run.notify_url and run.notify_progress:
+                while mark := notify.crossed(run.fraction(), run.milestone):
+                    run.milestone = mark
+                    self._notify(run, origin, notify.milestone(
+                        run.notify_name, mark, run.elapsed))
 
         def on_done(finished: Run) -> None:
             done(finished)
             self.emit(Event("run", origin, finished))
+            if finished.notify_url:
+                self._notify(finished, origin, notify.ended(
+                    finished.notify_name, str(finished.state), finished.elapsed))
 
         def on_start(started: Run) -> None:
             self.emit(Event("run", origin, started))
@@ -777,6 +795,36 @@ class Session:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return task
+
+    def _notify(self, run: Run, origin: str, message: notify.Message) -> None:
+        """Send in a thread; a failure is a line in the run's log, never a
+        change to the run - the scan did what it did either way.
+
+        One run's messages go out in order - each waits for the one before -
+        or "finished" could overtake "75 %"."""
+        before = self._last_notice.get(id(run))
+
+        async def deliver() -> None:
+            if before is not None:
+                await asyncio.wait([before])
+            try:
+                await asyncio.to_thread(notify.send, run.notify_url, message)
+            except (OSError, ValueError, http.client.HTTPException) as exc:
+                reason = getattr(exc, "reason", None) or exc
+                line = f"[seek] notification failed: {reason}"
+                run.append(line)
+                self.emit(Event("line", origin, run, line))
+
+        task = asyncio.get_running_loop().create_task(deliver())
+        self._last_notice[id(run)] = task
+        self._tasks.add(task)
+
+        def settled(done: asyncio.Task) -> None:
+            self._tasks.discard(done)
+            if self._last_notice.get(id(run)) is done:
+                del self._last_notice[id(run)]
+
+        task.add_done_callback(settled)
 
     def _scan_done(self, run: Run) -> None:
         if self.owner is not None:

@@ -10,7 +10,7 @@
 
 ## features
 
-- [ ] offer to copy the nmap and gowhitness command to clipboard
+- [x] offer to copy the nmap and gowhitness command to clipboard
 - [ ] tagging feature to mark hosts, services and ports as done
 - [x] please add a query feature to filter hosts, services and ports by using more advanced queries within the search bar. in the best case, these queries should be joinable with logical operators (AND, OR, NOT), whilst still allowing the current simple filter logic to be used. for example, the user should be able to filter hosts by:
   - up/down status (e.g. `up:22`, `up:80/tcp`, `down:443/tcp`)

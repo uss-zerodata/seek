@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
+from seek import notify
 from seek.gowitness.capture import CaptureRun
 from seek.nmap import presets as presets_mod
 from seek.nmap.runner import elevation_help, sudo_ready
@@ -110,6 +111,7 @@ def _plan(sess, body: s.ScanPlanIn):
     out.argv, out.targets = plan.argv, plan.targets
     out.out_base, out.elevated, out.privilege = str(plan.out_base), plan.elevated, plan.privilege
     out.via = plan.via
+    out.notify_url, out.notify_progress = plan.notify_url, plan.notify_progress
     out.blocked = plan.blocked or ""
     out.copy_local, out.copy_remote = plan.copy_local, plan.copy_remote
     return out, plan
@@ -158,6 +160,7 @@ async def start_scan(body: s.ScanPlanIn, request: Request):
     if plan.blocked:
         raise HTTPException(409, plan.blocked)
     run = plan.run()
+    _notify_choice(run, body)
     if run.elevated:
         # Nothing here can let sudo ask, so a scan it would not run is refused
         # before it starts rather than failing once it has.
@@ -177,7 +180,19 @@ async def start_scan(body: s.ScanPlanIn, request: Request):
 def _capture_out(run) -> s.CapturePlanOut:
     return s.CapturePlanOut(argv=run.argv, urls=run.urls, where=str(run.paths.root),
                             backend=run.backend, blocked=run.blocked or "",
-                            copy_local=run.copy_local, copy_remote=run.copy_remote)
+                            copy_local=run.copy_local, copy_remote=run.copy_remote,
+                            notify_url=run.notify_url, notify_progress=run.notify_progress)
+
+
+def _notify_choice(run, body) -> None:
+    """Apply the review's notification choice to a run; 422 for a bad URL."""
+    try:
+        if body.notify_url is not None:
+            run.notify_url = notify.normalise(body.notify_url)
+    except notify.NotifyError as exc:
+        raise HTTPException(422, f"notification URL: {exc}") from None
+    if body.notify_progress is not None:
+        run.notify_progress = body.notify_progress
 
 
 @router.post("/captures/review", response_model=s.CapturePlanOut)
@@ -202,6 +217,7 @@ async def start_capture(body: s.CaptureIn, request: Request):
         run = await run_in_threadpool(sess.plan_capture, records)
         if run.blocked:
             raise ScanError(run.blocked)
+        _notify_choice(run, body)
         sess.start_capture(run, origin="web")
     except (ScanError, Busy) as exc:
         raise HTTPException(409, str(exc)) from None
