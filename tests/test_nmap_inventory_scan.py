@@ -91,10 +91,14 @@ def test_nothing_to_do(tmp_path):
         sess.draft_version_gaps(versioned)
 
 
-def test_unavailable_nmap_is_named(tmp_path):
+def test_unavailable_nmap_blocks_the_start_not_the_plan(tmp_path):
     sess = _session(tmp_path, nmap="/nonexistent/nmap")
-    with pytest.raises(ScanError, match="cannot scan"):
-        sess.draft_version_gaps(records_for(sess.scans.hosts))
+    command, _note, out_base, targets = sess.draft_version_gaps(
+        records_for(sess.scans.hosts))
+    plan = sess.plan_scan(presets.VERSION_GAPS_PRESET, command, targets, out_base)
+    assert plan.blocked and plan.blocked.startswith("cannot scan")
+    assert plan.copy_local is None, "nothing here to run it"
+    assert plan.copy_remote.startswith("sudo nmap ") and str(tmp_path) not in plan.copy_remote
 
 
 def test_the_result_joins_the_inventory(tmp_path):
@@ -136,7 +140,14 @@ def test_the_browser_is_told_when_there_is_nothing_to_do(tmp_path):
     client = TestClient(create_app(CachedSource(lambda: sess.scans, lambda: sess.shots),
                                    sess))
     response = client.post("/api/v1/scans/gaps", json={"tab": "hosts"})
-    assert response.status_code == 409 and "cannot scan" in response.json()["detail"]
+    body = response.json()
+    assert response.status_code == 200, "a plan without nmap can still be copied"
+    assert body["blocked"].startswith("cannot scan") and body["copy_local"] is None
+    assert body["copy_remote"].startswith("sudo nmap ")
+    started = client.post("/api/v1/scans", json={"preset": body["preset"],
+                                                  "targets": body["targets"],
+                                                  "command": body["command"]})
+    assert started.status_code == 409 and "cannot scan" in started.json()["detail"]
 
 
 @pytest.mark.asyncio

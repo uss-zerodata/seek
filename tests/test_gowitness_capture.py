@@ -359,3 +359,47 @@ def test_the_session_passes_the_configured_wait(tmp_path, monkeypatch):
     monkeypatch.setattr("seek.nmap.session.export_urls", lambda records: list(records))
     run = session.plan_capture(["https://192.0.2.1:443"])
     assert settle_script(4000, 30_000) in run.argv
+
+
+def _planning_session(tmp_path, monkeypatch, probe):
+    from seek.config import Config
+    from seek.nmap.session import Session
+
+    session = Session(Config(nmap_path="/nonexistent/nmap"), [], tmp_path,
+                      databases=[], scans=None)
+    session.gowitness = probe
+    monkeypatch.setattr("seek.nmap.session.export_urls", lambda records: list(records))
+    return session
+
+
+def test_a_plan_writes_nothing(tmp_path, monkeypatch):
+    """A review that is cancelled or only copied leaves the disk as it was."""
+    session = _planning_session(tmp_path, monkeypatch, NATIVE)
+    run = session.plan_capture(["https://192.0.2.1:443"])
+    assert run.blocked is None and run.copy_local and run.copy_remote
+    assert not run.paths.root.exists()
+
+
+def test_without_gowitness_a_plan_can_still_be_copied(tmp_path, monkeypatch):
+    import pytest
+
+    from seek.nmap.session import ScanError
+
+    session = _planning_session(tmp_path, monkeypatch, Probe(reason="not on PATH"))
+    run = session.plan_capture(["https://192.0.2.1:443"])
+    assert run.blocked == "gowitness unavailable: not on PATH"
+    assert run.copy_local is None
+    assert "https://192.0.2.1:443" in run.copy_remote and str(tmp_path) not in run.copy_remote
+    with pytest.raises(ScanError, match="unavailable"):
+        session.start_capture(run)
+    assert not run.paths.root.exists()
+
+
+def test_a_busy_capture_blocks_the_start_and_keeps_its_list(tmp_path, monkeypatch):
+    session = _planning_session(tmp_path, monkeypatch, NATIVE)
+    running = CaptureRun(argv=["sleep"], paths=_paths(tmp_path), urls=["http://a:80"])
+    write_urls(running.paths, running.urls)
+    session.captures._current = running
+    run = session.plan_capture(["https://192.0.2.1:443"])
+    assert run.blocked and "already running" in run.blocked
+    assert running.paths.urls.read_text() == "http://a:80\n"

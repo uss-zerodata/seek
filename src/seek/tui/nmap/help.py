@@ -86,7 +86,7 @@ _GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("", "— or hand the URLs to gowitness and capture them"),
     ]),
     ("Capture (gowitness)", [
-        ("x", "the export dialog runs a capture over this view's URLs"),
+        ("x", "the export dialog reviews a capture of this view's URLs"),
         ("", "results land on the host and service records themselves;"),
         ("", "d opens the same record with every header and console line"),
         ("i", "open a capture's screenshot in the system image viewer; with"),
@@ -114,6 +114,10 @@ _GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
     ("Scan", [
         ("n", "new scan: scope, preset, command, then a review before it runs"),
+        ("y", "in a review: copy it for another machine (bare nmap/gowitness,"),
+        ("", "relative paths) - works without the tool here; copy the output back"),
+        ("", "into the scan directory and it is read like any other scan"),
+        ("Y", "in a review: copy the command exactly as it would run here"),
         ("o", "cycle a scan's report: overview, what it added, raw output"),
         ("", "(on a host or service record, o opens the raw log instead)"),
         ("p", "freeze the log to read it — the scan keeps running"),

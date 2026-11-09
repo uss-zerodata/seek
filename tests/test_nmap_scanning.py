@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 from textual.geometry import Region
-from textual.widgets import Button, DataTable, Label, OptionList, Tabs, TextArea
+from textual.widgets import DataTable, Label, OptionList, Tabs, TextArea
 
 from seek.config import Config
 from seek.nmap.merge import load
@@ -97,15 +97,66 @@ async def test_without_nmap_the_viewer_is_otherwise_unchanged(tmp_path):
         assert [r.cells[0] for r in app._rows] == ["192.0.2.1", "192.0.2.2", "192.0.2.3"]
 
 
-async def test_a_scan_action_without_nmap_explains_rather_than_failing(tmp_path):
-    config = Config(nmap_path=str(tmp_path / "nope"), scan_output_dir=str(tmp_path))
+async def _to_review(pilot, app, targets="10.0.0.1\n"):
+    await pilot.press("n")
+    await pilot.pause(0.4)
+    app.screen.query_one(TextArea).text = targets
+    await pilot.pause(0.3)
+    await pilot.press("ctrl+s")
+    await pilot.pause(0.4)
+    await _choose(pilot, app, "Quick")
+    await pilot.pause(0.3)
+    await pilot.press("ctrl+s")             # the command, unedited
+    await pilot.pause(0.4)
+
+
+async def test_without_nmap_the_review_refuses_to_start_but_copies(tmp_path, monkeypatch):
+    copied = []
+    monkeypatch.setattr("seek.tui.nmap.scope.copy_to_clipboard", copied.append)
+    config = Config(nmap_path=str(tmp_path / "nope"), nmap_presets={"Quick": "-sS"},
+                    scan_output_dir=str(tmp_path))
     app = _app(tmp_path, "basic", config=config)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.3)
-        await pilot.press("n")
-        await pilot.pause(0.4)
+        await _to_review(pilot, app)
+        assert isinstance(app.screen, ReviewScreen)
+        options = app.screen.query_one(OptionList)
+        start = options.get_option("start")
+        assert start.disabled and "nope" in str(start.prompt)
+        ids = [options.get_option_at_index(i).id for i in range(options.option_count)]
+        assert "local" not in ids, "no local nmap to copy for"
+        await pilot.press("y")
+        await pilot.pause(0.2)
+        assert copied and copied[0].startswith("sudo nmap -sS -oA ")
+        assert str(tmp_path) not in copied[0]
+        await pilot.press("Y")              # not available: says so, copies nothing
+        await pilot.pause(0.2)
+        assert len(copied) == 1
+        await pilot.press("escape")
+        await pilot.pause(0.3)
         assert app.runner.runs == [], "nothing was started"
-        assert not isinstance(app.screen, ScopeScreen)
+
+
+async def test_without_a_clipboard_the_text_is_shown(tmp_path, monkeypatch):
+    from seek.actions import ActionError
+    from seek.tui.nmap.scope import CopyTextScreen
+
+    def no_clipboard(_text):
+        raise ActionError("no clipboard mechanism available")
+
+    monkeypatch.setattr("seek.tui.nmap.scope.copy_to_clipboard", no_clipboard)
+    app = _app(tmp_path, "basic")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        await _to_review(pilot, app)
+        await pilot.press("Y")
+        await pilot.pause(0.3)
+        assert isinstance(app.screen, CopyTextScreen)
+        shown = app.screen.query_one(TextArea).text
+        assert "-oA" in shown and str(tmp_path) in shown, "as shown: this machine's paths"
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+        assert isinstance(app.screen, ReviewScreen), "back to the review, not out of it"
 
 
 # --- the Scans tab ----------------------------------------------------------
@@ -151,17 +202,8 @@ async def test_without_nmap_the_scans_tab_says_what_is_missing(tmp_path):
 
 async def _run_a_scan(pilot, app, targets="10.0.0.1\n"):
     """scope → preset → command → review → run, the way a user does it."""
-    await pilot.press("n")
-    await pilot.pause(0.4)
-    app.screen.query_one(TextArea).text = targets
-    await pilot.pause(0.3)
-    await pilot.press("ctrl+s")
-    await pilot.pause(0.4)
-    await _choose(pilot, app, "Quick")
-    await pilot.pause(0.3)
-    await pilot.press("ctrl+s")             # the command, unedited
-    await pilot.pause(0.4)
-    app.screen.query_one(Button).press()
+    await _to_review(pilot, app, targets)
+    await _choose(pilot, app, "start")
     await pilot.pause(0.6)
 
 
@@ -251,7 +293,7 @@ async def test_a_scope_with_no_valid_target_is_refused(tmp_path):
         assert "not an address" in _render(screen.query_one("#summary"))
 
 
-async def test_an_unwritable_scan_directory_stops_before_the_review(tmp_path):
+async def test_an_unwritable_scan_directory_blocks_the_start_not_the_review(tmp_path):
     import os
     if os.geteuid() == 0:
         pytest.skip("root can write anywhere")
@@ -270,7 +312,11 @@ async def test_an_unwritable_scan_directory_stops_before_the_review(tmp_path):
         await pilot.pause(0.4)
         await _choose(pilot, app, "Quick")
         await pilot.pause(0.4)
-        assert not isinstance(app.screen, (CommandScreen, ReviewScreen))
+        await pilot.press("ctrl+s")
+        await pilot.pause(0.4)
+        assert isinstance(app.screen, ReviewScreen), "it can still be copied"
+        start = app.screen.query_one(OptionList).get_option("start")
+        assert start.disabled and "cannot write" in str(start.prompt)
         assert app.runner.runs == []
 
 
@@ -320,9 +366,12 @@ async def test_a_second_scan_is_refused_while_one_runs(tmp_path):
             await pilot.pause(0.1)
             if app.runner.runs:
                 break
-        await pilot.press("n")
-        await pilot.pause(0.4)
-        assert not isinstance(app.screen, ScopeScreen), "refused, naming the running one"
+        await _to_review(pilot, app)
+        start = app.screen.query_one(OptionList).get_option("start")
+        assert start.disabled and "already running" in str(start.prompt)
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+        assert len(app.runner.runs) == 1
         app.runner.cancel()
         await pilot.pause(1.0)
 
@@ -404,7 +453,7 @@ async def test_the_export_dialog_offers_scanning_when_nmap_is_there(tmp_path):
         await pilot.pause(0.2)
 
 
-async def test_the_export_dialog_hides_scanning_without_nmap(tmp_path):
+async def test_the_export_dialog_offers_planning_without_nmap(tmp_path):
     config = Config(nmap_path=str(tmp_path / "nope"), scan_output_dir=str(tmp_path))
     app = _app(tmp_path, "basic", config=config)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -413,7 +462,8 @@ async def test_the_export_dialog_hides_scanning_without_nmap(tmp_path):
         await pilot.pause(0.4)
         options = app.screen.query_one(OptionList)
         ids = [options.get_option_at_index(i).id for i in range(options.option_count)]
-        assert "scan" not in ids
+        assert "scan" in ids
+        assert "to copy" in str(options.get_option("scan").prompt)
         await pilot.press("escape")
         await pilot.pause(0.2)
 

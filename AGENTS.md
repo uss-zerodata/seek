@@ -111,6 +111,7 @@ src/seek/
     export.py       Record (host + optional service), field catalogue, writers
     presets.py      is nmap here, preset -> argv, privilege from flags, targets
     runner.py       one scan: launch, stream, cancel, classify. No Textual.
+    remote.py       a plan as text to copy: as run here, or a snippet for another machine
     diff.py         what a scan added to what was already known
     cpe.py          CPE 2.2/2.3 bindings + the alias table (one product, every spelling, its CPE)
     inventory.py    software inventory: recognisers -> observations -> reconciled components
@@ -498,6 +499,16 @@ together. Do not `query_one(RowList)`: it matches both.
   `create_subprocess_exec`. Nothing anywhere re-joins it into a string. Whether
   a command needs root is **derived from its flags** (`needs_root`), never
   declared per preset, so a pasted command is classified like a shipped one.
+- **Copied text is for a person; executed text is never joined.**
+  `nmap/remote.py` is the one place an argv becomes a string (`shlex.join`),
+  because the result is pasted into a shell by a person. The remote snippet is
+  built by the same `build_argv` / `scan_argv` as the local run - bare program,
+  relative paths, native backend - so the two forms cannot drift on a flag.
+  Planning never depends on the tool being here: `Session.scan_blocked` /
+  `capture_blocked` put *why it cannot start* on the plan (`blocked`), the
+  review disables start and still copies, and `start_capture` writes
+  `urls.txt` - a plan writes nothing, so a cancelled or copied review leaves
+  the disk alone and a running capture's list is never replaced.
 - **The shipped presets are derived from `nmap.md`**, the project's own nmap
   reference: its phase numbering (01 discovery, 02 services, 03 service
   specific) is the preset order and the output file names. A preset holds

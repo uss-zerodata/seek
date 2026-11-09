@@ -70,6 +70,45 @@ function esc(text) {
   return String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+// --- copying a reviewed command ----------------------------------------------------------
+
+// The text comes from the server's plan, the same string the terminal copies.
+// When the clipboard is refused the text is shown, selected, to copy by hand.
+async function copyText(text, what) {
+  try { await navigator.clipboard.writeText(text); say(`copied the ${what}`); return; }
+  catch { /* shown below */ }
+  const d = dialog(`No clipboard here - select the ${what} and copy it yourself`,
+    `<p><textarea readonly rows="8" class="copy-text">${esc(text)}</textarea></p>`,
+    '<button value="close" class="primary">Close</button>');
+  d.querySelector("textarea").select();
+}
+
+// `y` copies for another machine, `Y` as shown - the review's keys in the terminal.
+// `plan()` is the latest review, or null while there is none.
+function copyControls(d, plan) {
+  const copy = (form) => {
+    const p = plan();
+    const text = p && (form === "remote" ? p.copy_remote : p.copy_local);
+    if (!text) { say(form === "local" ? "not available here - copy for another machine with y" : "nothing to copy yet"); return; }
+    copyText(text, form === "remote" ? "command for another machine" : "command");
+  };
+  d.querySelectorAll("button[data-copy]").forEach((b) => b.addEventListener("click", () => copy(b.dataset.copy)));
+  d.addEventListener("keydown", (e) => {
+    if (e.target.closest("textarea, input, select") || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === "y" || e.key === "Y") { e.preventDefault(); copy(e.key === "y" ? "remote" : "local"); }
+  });
+}
+
+const COPY_BUTTONS = `<button type="button" data-copy="remote">Copy for another machine <kbd>y</kbd></button>
+  <button type="button" data-copy="local">Copy as shown <kbd>Y</kbd></button>`;
+
+// What a review says beyond the command: why it cannot start here, and how a
+// run made elsewhere comes back.
+function blockedLine(plan, back) {
+  return (plan.blocked ? `<br><span class="c-red">${esc(plan.blocked)}</span> - copy it to run on a machine that can` : "") +
+    `<br>run elsewhere: copy ${esc(back)} back into the scan directory`;
+}
+
 async function exportDialog() {
   const v = view();
   let options;
@@ -82,11 +121,11 @@ async function exportDialog() {
       <p><label>as <select name="fmt">${options.formats.map((f) => `<option value="${f.key}">${esc(f.label)}</option>`).join("")}</select></label>
          <span class="dim small fixed" hidden>the port list is always one line</span></p>`,
     `<button value="download" class="primary">Download</button> <button value="copy">Copy</button>
-         <button value="capture" ${options.capture ? "disabled" : ""}>Capture the URLs with gowitness</button>
-         <button value="scan" ${options.scan ? "disabled" : ""}>Scan these hosts…</button>
+         <button value="capture">Capture the URLs with gowitness…</button>
+         <button value="scan">Scan these hosts…</button>
          <button value="cancel">Cancel</button>
-         ${options.capture ? `<span class="why">capture: ${esc(options.capture)}</span>` : ""}
-         ${options.scan ? `<span class="why">scan: ${esc(options.scan)}</span>` : ""}`);
+         ${options.capture ? `<span class="why">capture: ${esc(options.capture)} - it can still be planned and copied</span>` : ""}
+         ${options.scan ? `<span class="why">scan: ${esc(options.scan)} - it can still be planned and copied</span>` : ""}`);
   const form = d.querySelector("form");
   const sync = () => {
     form.querySelector(".fields").hidden = form.which.value !== "custom";
@@ -98,7 +137,7 @@ async function exportDialog() {
   sync();
   d.addEventListener("close", async () => {
     const choice = d.returnValue;
-    if (choice === "capture") { capture(); return; }
+    if (choice === "capture") { newScan(CAPTURE); return; }
     if (choice === "scan") { newScan(); return; }
     if (choice !== "download" && choice !== "copy") return;
     const q = new URLSearchParams({ ...v, which: form.which.value, fmt: form.fmt.value });
@@ -120,13 +159,22 @@ async function capture() {
   } catch (e) { say(e.message); return false; }
 }
 
+// One review text for every scan dialog.
+function scanReview(plan) {
+  if (plan.error) return `<span class="c-red">${esc(plan.error)}</span>`;
+  const base = plan.out_base.split("/").pop();
+  return `runs <code>${esc(plan.argv.join(" "))}</code><br>${plan.targets.length} target(s) · writes ${esc(plan.out_base)}.{xml,nmap,gnmap}` +
+    (plan.elevated ? `<br><strong>needs root</strong> (${esc(plan.privilege)}) - through <code>sudo -n</code>, never a prompt` : "") +
+    blockedLine(plan, `${base}.{xml,nmap,gnmap}`);
+}
+
 // The screenshot capture sits among the scan presets: to the reader it is one
 // more thing to run against these hosts. It is not an nmap preset - it has no
 // command to edit and its targets are the HTTP(S) URLs of the marks or the
 // list, exactly what the export dialog's capture sends.
 const CAPTURE = "__gowitness__";
 
-async function newScan() {
+async function newScan(initial = "") {
   let presets;
   try { presets = await send("GET", "/api/v1/scans/presets"); } catch (e) { say(e.message); return; }
   let scope = "";
@@ -143,26 +191,33 @@ async function newScan() {
   } catch { /* the capture's own request will say */ }
   const d = dialog("New scan", `
       <p><label>preset <select name="preset">${presets.map((p) => `<option value="${esc(p.name)}">${esc(p.name)}${p.needs_root ? " · root" : ""}</option>`).join("")}
-        <option value="${CAPTURE}" ${captureOff ? "disabled" : ""}>gowitness · screenshots of the HTTP(S) services${captureOff ? ` - ${esc(captureOff)}` : ""}</option></select></label></p>
+        <option value="${CAPTURE}" ${initial === CAPTURE ? "selected" : ""}>gowitness · screenshots of the HTTP(S) services${captureOff ? ` - ${esc(captureOff)}` : ""}</option></select></label></p>
       <p class="nmap-only"><label>scope<br><textarea name="targets" rows="4" placeholder="one address, range or name per line">${esc(scope)}</textarea></label></p>
       <p class="nmap-only"><label>command<br><textarea name="command" rows="3"></textarea></label></p>
       <div class="review dim small"></div>`,
-    '<button value="start" class="primary">Start the scan</button> <button value="cancel">Cancel</button>',
+    `<button value="start" class="primary">Start the scan</button> ${COPY_BUTTONS} <button value="cancel">Cancel</button>`,
     "Esc leaves - nothing runs until you start it");
   const form = d.querySelector("form");
   const start = form.querySelector("button[value=start]");
   let edited = false;
+  let current = null;
+  copyControls(d, () => current);
   const targets = () => form.targets.value.split(/[\s,]+/).filter(Boolean);
   const capturing = () => form.preset.value === CAPTURE;
-  // What a capture would photograph: the URLs the export writes, counted.
+  // What a capture would photograph and run - the plan the terminal reviews.
   const reviewCapture = async (box) => {
-    let urls = [];
-    try { urls = (await send("GET", `/api/v1/export?${new URLSearchParams({ ...view(), which: "urls" })}`)).trim().split("\n").filter(Boolean); }
-    catch { /* none */ }
-    box.innerHTML = urls.length
-      ? `${urls.length} URL(s) from ${esc(source)}<br><code>${esc(urls.slice(0, 5).join("  "))}${urls.length > 5 ? " …" : ""}</code>`
-      : `<span class="c-red">no HTTP or HTTPS service in ${esc(source)}</span>`;
-    start.disabled = !urls.length;
+    current = null;
+    try {
+      const plan = await send("POST", "/api/v1/captures/review", view());
+      current = plan;
+      box.innerHTML = `${plan.urls.length} URL(s) from ${esc(source)} · writes ${esc(plan.where)}` +
+        `<br><code>${esc(plan.urls.slice(0, 5).join("  "))}${plan.urls.length > 5 ? " …" : ""}</code>` +
+        blockedLine(plan, "its gowitness/ directory");
+      start.disabled = Boolean(plan.blocked);
+    } catch (e) {
+      box.innerHTML = `<span class="c-red">${esc(e.message)}</span>`;
+      start.disabled = true;
+    }
   };
   const review = async () => {
     const box = form.querySelector(".review");
@@ -173,12 +228,10 @@ async function newScan() {
       const plan = await send("POST", "/api/v1/scans/review",
         { preset: form.preset.value, targets: targets(), command: edited ? form.command.value : null });
       if (!edited) form.command.value = plan.command;
-      box.innerHTML = plan.error
-        ? `<span class="c-red">${esc(plan.error)}</span>`
-        : `runs <code>${esc(plan.argv.join(" "))}</code><br>${plan.targets.length} target(s) · writes ${esc(plan.out_base)}.{xml,nmap,gnmap}` +
-          (plan.elevated ? `<br><strong>needs root</strong> (${esc(plan.privilege)}) - through <code>sudo -n</code>, never a prompt` : "");
-      start.disabled = Boolean(plan.error);
-    } catch (e) { box.innerHTML = `<span class="c-red">${esc(e.message)}</span>`; }
+      current = plan.error ? null : plan;
+      box.innerHTML = scanReview(plan);
+      start.disabled = Boolean(plan.error || plan.blocked);
+    } catch (e) { current = null; box.innerHTML = `<span class="c-red">${esc(e.message)}</span>`; }
   };
   form.preset.addEventListener("change", () => { edited = false; review(); });
   form.targets.addEventListener("change", () => { edited = false; review(); });
@@ -249,20 +302,20 @@ async function scanGaps() {
       <p class="dim small">${esc(plan.note)}</p>
       <p><label>command<br><textarea name="command" rows="3">${esc(plan.command)}</textarea></label></p>
       <div class="review dim small"></div>`,
-    '<button value="start" class="primary">Start the scan</button> <button value="cancel">Cancel</button>',
+    `<button value="start" class="primary">Start the scan</button> ${COPY_BUTTONS} <button value="cancel">Cancel</button>`,
     "Esc leaves - nothing runs until you start it");
   const form = d.querySelector("form");
+  let current = null;
+  copyControls(d, () => current);
   const body = () => ({ preset: plan.preset, targets: plan.targets, command: form.command.value });
   const review = async () => {
     const box = form.querySelector(".review");
     try {
       const out = await send("POST", "/api/v1/scans/review", body());
-      box.innerHTML = out.error
-        ? `<span class="c-red">${esc(out.error)}</span>`
-        : `runs <code>${esc(out.argv.join(" "))}</code><br>${out.targets.length} target(s) · writes ${esc(out.out_base)}.{xml,nmap,gnmap}` +
-          (out.elevated ? `<br><strong>needs root</strong> (${esc(out.privilege)}) - through <code>sudo -n</code>, never a prompt` : "");
-      form.querySelector("button[value=start]").disabled = Boolean(out.error);
-    } catch (e) { box.innerHTML = `<span class="c-red">${esc(e.message)}</span>`; }
+      current = out.error ? null : out;
+      box.innerHTML = scanReview(out);
+      form.querySelector("button[value=start]").disabled = Boolean(out.error || out.blocked);
+    } catch (e) { current = null; box.innerHTML = `<span class="c-red">${esc(e.message)}</span>`; }
   };
   form.command.addEventListener("input", () => { clearTimeout(review.t); review.t = setTimeout(review, 300); });
   review();

@@ -5,7 +5,8 @@ Three screens, in the order they are met:
 - `ScopeScreen` — what to scan, when the viewer was opened on nothing to read.
 - `CommandScreen` — the preset expanded into a command, editable.
 - `ReviewScreen` — the exact argv and what it will do, which is the second of
-  the two confirmations. Nothing starts a process until this returns.
+  the two confirmations. Nothing starts a process until this returns. It is
+  also where a plan is copied, to run here by hand or on another machine.
 
 The review is deliberately not a yes/no on a one-line question: a scan is an
 action against someone else's network, and the argv, the scope, the file it
@@ -22,9 +23,10 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Label, OptionList, Static, TextArea
+from textual.widgets import Label, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
+from seek.actions import ActionError, copy_to_clipboard
 from seek.nmap.presets import Scope, needs_root, parse_args
 
 
@@ -228,9 +230,16 @@ class CommandScreen(ModalScreen[str | None]):
 
 
 class ReviewScreen(ModalScreen[bool]):
-    """The second confirmation: the exact argv and what it will do."""
+    """The last step before a run: what will run, and what else can be done with it.
 
-    BINDINGS = [("escape,q", "cancel", "Back")]
+    Shared by a scan and a capture. The choices are one line each: start - or,
+    when it cannot start here, the reason, disabled - and the two copy forms,
+    which keep the review open. `True` only for start.
+    """
+
+    BINDINGS = [("escape,q", "cancel", "Back"),
+                ("y", "copy('remote')", "Copy for another machine"),
+                ("Y", "copy('local')", "Copy as shown")]
     DEFAULT_CSS = """
     ReviewScreen { align: center middle; }
     ReviewScreen > Vertical {
@@ -239,44 +248,88 @@ class ReviewScreen(ModalScreen[bool]):
     }
     ReviewScreen #warn { color: $warning; }
     ReviewScreen .muted { color: $text-muted; }
-    ReviewScreen Button { margin: 1 0 0 0; width: 100%; }
+    ReviewScreen OptionList { height: auto; margin: 1 0 0 0; }
     """
 
-    def __init__(self, argv: list[str], targets: list[str], out_base: str,
-                 elevated: bool, privilege: str) -> None:
+    def __init__(self, heading: str, body: Text, start_label: str, *,
+                 blocked: str | None, copy_local: str | None, copy_remote: str,
+                 results: str) -> None:
         super().__init__()
-        self._argv = argv
-        self._targets = targets
-        self._out_base = out_base
-        self._elevated = elevated
-        self._privilege = privilege
+        self._heading = heading
+        self._body = body
+        self._start_label = start_label
+        self._blocked = blocked
+        self._copies = {"remote": copy_remote, "local": copy_local}
+        self._results = results
 
     def compose(self) -> ComposeResult:
-        body = Text()
-        body.append(" ".join(self._argv[:2]) + " ", style="bold")
-        body.append(" ".join(self._argv[2:]) + "\n\n")
-        body.append(f"  {'scope':<11}", style="dim")
-        body.append(f"{len(self._targets)} target(s): "
-                    + ", ".join(self._targets[:4])
-                    + (" …" if len(self._targets) > 4 else "") + "\n")
-        body.append(f"  {'writes':<11}", style="dim")
-        body.append(f"{self._out_base}.{{xml,nmap,gnmap}}\n")
-        body.append(f"  {'privilege':<11}", style="dim")
-        body.append("sudo -n — " if self._elevated else "direct — ")
-        body.append(self._privilege or "no elevated flags")
+        options = [Option(f"⊘ {self._blocked}" if self._blocked else self._start_label,
+                          id="start", disabled=bool(self._blocked)),
+                   Option("y  copy for another machine (native binary, relative paths)",
+                          id="remote")]
+        if self._copies["local"] is not None:
+            options.append(Option("Y  copy as shown (this machine's paths)", id="local"))
         with Vertical():
-            yield Label("Start this scan?")
-            yield Static(body)
+            yield Label(self._heading)
+            yield Static(self._body)
             yield Static("⚠ scan only what you are authorised to scan", id="warn")
-            yield Button("Start the scan", id="start")
-            yield Label("↵ start · Esc back", classes="muted")
+            yield OptionList(*options)
+            yield Static(self._results, classes="muted")
+            yield Label("↵ choose · y/Y copy · Esc back", classes="muted")
 
     def on_mount(self) -> None:
-        self.query_one(Button).focus()
+        self.query_one(OptionList).focus()
 
-    @on(Button.Pressed, "#start")
-    def _start(self, _event: Button.Pressed) -> None:
-        self.dismiss(True)
+    @on(OptionList.OptionSelected)
+    def _chosen(self, event: OptionList.OptionSelected) -> None:
+        if event.option.id == "start":
+            self.dismiss(True)
+        else:
+            self.action_copy(event.option.id or "")
+
+    def action_copy(self, form: str) -> None:
+        text = self._copies.get(form)
+        if text is None:
+            self.notify("not available here - copy for another machine with y",
+                        severity="warning")
+            return
+        what = "command for another machine" if form == "remote" else "command"
+        try:
+            copy_to_clipboard(text)
+        except ActionError:
+            self.app.push_screen(CopyTextScreen(
+                f"No clipboard here - select the {what} and copy it yourself", text))
+            return
+        self.notify(f"copied the {what}")
 
     def action_cancel(self) -> None:
         self.dismiss(False)
+
+
+class CopyTextScreen(ModalScreen[None]):
+    """Text that could not reach a clipboard, shown so it can be selected."""
+
+    BINDINGS = [("escape,q", "close", "Close")]
+    DEFAULT_CSS = """
+    CopyTextScreen { align: center middle; }
+    CopyTextScreen > Vertical {
+        width: 90%; height: auto; max-height: 90%; background: $panel;
+        border: round $primary; padding: 1 2;
+    }
+    CopyTextScreen TextArea { height: auto; max-height: 24; }
+    CopyTextScreen .muted { color: $text-muted; }
+    """
+
+    def __init__(self, heading: str, text: str) -> None:
+        super().__init__()
+        self._heading = heading
+        self._text = text
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label(self._heading)
+            yield TextArea(self._text, read_only=True, soft_wrap=False)
+            yield Label("Esc close", classes="muted")
+
+    def action_close(self) -> None:
+        self.dismiss(None)

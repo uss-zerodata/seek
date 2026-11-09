@@ -263,6 +263,10 @@ class CaptureRun(Run):
     # Which directory's capture this is, when the viewer was opened on several
     # and "capture" alone would list two runs under one name.
     where: str = ""
+    # Set on a plan only: why it cannot start here, and the two copy forms.
+    blocked: str | None = None
+    copy_local: str | None = None
+    copy_remote: str = ""
 
     @property
     def failed(self) -> int:

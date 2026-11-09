@@ -217,6 +217,37 @@ def test_the_review_is_what_the_terminal_would_run(tmp_path):
     assert review["argv"] == sess.plan_scan(name, command, ["192.0.2.1"], out_base).argv
 
 
+def test_the_copied_commands_are_the_terminals(tmp_path):
+    from seek.nmap import remote
+
+    sess = _session(tmp_path)
+    name = _preset(sess, root=True)
+    review = _client(sess).post("/api/v1/scans/review",
+                                json={"preset": name, "targets": ["192.0.2.1"]}).json()
+    command, _note, out_base = sess.draft_command(name, ["192.0.2.1"])
+    plan = sess.plan_scan(name, command, ["192.0.2.1"], out_base)
+    assert review["copy_local"] == remote.local_text(plan.argv)
+    assert review["copy_remote"] == plan.copy_remote
+    snippet = review["copy_remote"]
+    assert snippet.startswith("sudo nmap ") and str(tmp_path) not in snippet
+
+
+def test_a_capture_review_without_gowitness_copies_and_writes_nothing(tmp_path):
+    from seek.gowitness.detect import Probe
+
+    sess = _session(tmp_path)
+    sess.gowitness = Probe(reason="not on PATH")
+    client = _client(sess)
+    review = client.post("/api/v1/captures/review", json={"tab": "hosts"})
+    assert review.status_code == 200
+    body = review.json()
+    assert body["urls"] and body["blocked"] == "gowitness unavailable: not on PATH"
+    assert body["copy_local"] is None and body["copy_remote"].startswith("mkdir -p gowitness/")
+    started = client.post("/api/v1/captures/runs", json={"tab": "hosts"})
+    assert started.status_code == 409 and "not on PATH" in started.json()["detail"]
+    assert not (tmp_path / "gowitness").exists()
+
+
 def test_a_shell_metacharacter_is_refused_by_name(tmp_path):
     client = _client(_session(tmp_path))
     sess_preset = _preset(_session(tmp_path))

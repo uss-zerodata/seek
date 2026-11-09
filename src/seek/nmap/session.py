@@ -39,7 +39,7 @@ from seek.gowitness.results import canonical_url
 from seek.nmap import inventory as inventory_mod
 from seek.nmap import merge as merge_mod
 from seek.nmap import presets as presets_mod
-from seek.nmap import rawlog, timeline
+from seek.nmap import rawlog, remote, timeline
 from seek.nmap.export import Record, export_ports, export_urls, records_for, service_urls
 from seek.nmap.models import ScanSet
 from seek.nmap.runner import ScanRun
@@ -95,6 +95,11 @@ class ScanPlan:
     out_base: Path
     elevated: bool
     privilege: str
+    # Why it cannot start *here* - nmap missing, the directory not writable.
+    # The plan still exists, because it can be copied to another machine.
+    blocked: str | None = None
+    copy_local: str | None = None    # None when there is no local nmap to run it
+    copy_remote: str = ""
 
     def run(self) -> ScanRun:
         return ScanRun(preset=self.preset, argv=self.argv, targets=self.targets,
@@ -569,16 +574,11 @@ class Session:
     def draft_command(self, preset: str, targets: list[str]) -> tuple[str, str, Path]:
         """The editable command line for a preset over targets, what it writes,
         and its output base. Refused with the reason the terminal gives."""
-        if not self.nmap.available:
-            raise ScanError(f"cannot scan: {self.nmap.reason}")
         presets = self.config.nmap_presets
         if preset not in presets:
             raise ScanError(f"no preset {preset!r}")
         if not targets:
             raise ScanError("no targets")
-        problem = presets_mod.writable(self.scan_dir)
-        if problem is not None:
-            raise ScanError(f"cannot write the scan here: {problem}")
         out_base = presets_mod.output_base(self.scan_dir, preset)
         args = presets[preset]
         if presets_mod.PORTS_PLACEHOLDER in args:
@@ -616,14 +616,9 @@ class Session:
         the union of the gaps; the note says how many pairs that adds, so the
         cost is read before anything runs.
         """
-        if not self.nmap.available:
-            raise ScanError(f"cannot scan: {self.nmap.reason}")
         gaps = self.version_gaps(records)
         if not gaps:
             raise ScanError("every open port here already has a version - nothing to scan")
-        problem = presets_mod.writable(self.scan_dir)
-        if problem is not None:
-            raise ScanError(f"cannot write the scan here: {problem}")
         tcp = sorted({s.port for ss in gaps.values() for s in ss if s.protocol == "tcp"})
         udp = sorted({s.port for ss in gaps.values() for s in ss if s.protocol == "udp"})
         if udp:
@@ -661,8 +656,33 @@ class Session:
         elevate = presets_mod.needs_root(scan_args) and os.geteuid() != 0
         argv = presets_mod.build_argv(self.config.nmap_path, scan_args, chosen,
                                       str(out_base), elevate)
+        blocked = self.scan_blocked()
         return ScanPlan(preset, argv, chosen, out_base, elevate,
-                        presets_mod.privileged_labels(scan_args))
+                        presets_mod.privileged_labels(scan_args), blocked=blocked,
+                        copy_local=remote.local_text(argv) if self.nmap.available else None,
+                        copy_remote=remote.nmap_snippet(scan_args, chosen, out_base.name))
+
+    def scan_blocked(self) -> str | None:
+        """Why a scan cannot start on this machine, or `None`. Planning and
+        copying do not depend on it - only starting does."""
+        if not self.nmap.available:
+            return f"cannot scan: {self.nmap.reason}"
+        busy = self.runner.busy()
+        if busy is not None:
+            return f"a scan is already running: {busy.label} - cancel it first (c)"
+        problem = presets_mod.writable(self.scan_dir)
+        if problem is not None:
+            return f"cannot write the scan here: {problem}"
+        return None
+
+    def capture_blocked(self) -> str | None:
+        """Why a capture cannot start on this machine, or `None`."""
+        if not self.gowitness.available:
+            return f"gowitness unavailable: {self.gowitness.reason}"
+        busy = self.captures.busy()
+        if busy is not None:
+            return f"a capture is already running: {busy.label}"
+        return None
 
     def plan_capture(self, records) -> gw_capture.CaptureRun:
         """A gowitness capture of the HTTP(S) URLs of these records.
@@ -673,26 +693,23 @@ class Session:
         probed. Refused rather than started when there is nothing to capture: a
         capture of nothing looks like a capture that found nothing.
         """
-        if not self.gowitness.available:
-            raise ScanError(f"gowitness unavailable: {self.gowitness.reason}")
-        busy = self.captures.busy()
-        if busy is not None:
-            raise ScanError(f"a capture is already running: {busy.label}")
         urls = export_urls(records)
         if not urls:
             raise ScanError("nothing to capture - no HTTP or HTTPS service in this selection")
         paths = gw_capture.capture_dir(self.scan_dir)
-        try:
-            gw_capture.write_urls(paths, urls)
-        except OSError as exc:
-            raise ScanError(f"could not write the URL list: {exc.strerror or exc}") from None
+        cfg = self.config
         argv = gw_capture.scan_argv(self.gowitness, paths,
-                                    chrome_path=self.config.gowitness_chrome_path,
-                                    collect_all=self.config.gowitness_collect_all,
-                                    settle_ms=self.config.gowitness_settle_ms,
-                                    settle_cap_ms=self.config.gowitness_settle_cap_ms)
-        return gw_capture.CaptureRun(argv=argv, paths=paths, urls=urls,
-                                     backend=self.gowitness.backend or "")
+                                    chrome_path=cfg.gowitness_chrome_path,
+                                    collect_all=cfg.gowitness_collect_all,
+                                    settle_ms=cfg.gowitness_settle_ms,
+                                    settle_cap_ms=cfg.gowitness_settle_cap_ms)
+        return gw_capture.CaptureRun(
+            argv=argv, paths=paths, urls=urls, backend=self.gowitness.backend or "",
+            blocked=self.capture_blocked(),
+            copy_local=remote.local_text(argv) if self.gowitness.available else None,
+            copy_remote=remote.capture_snippet(urls, collect_all=cfg.gowitness_collect_all,
+                                               settle_ms=cfg.gowitness_settle_ms,
+                                               settle_cap_ms=cfg.gowitness_settle_cap_ms))
 
     # --- runs ---------------------------------------------------------------------
 
@@ -704,12 +721,23 @@ class Session:
         busy = self.runner.busy()
         if busy is not None:
             raise Busy(f"a scan is already running: {busy.label}")
+        problem = presets_mod.writable(self.scan_dir)
+        if problem is not None:
+            raise ScanError(f"cannot write the scan here: {problem}")
         return self._start(self.runner, run, origin, self._scan_done)
 
     def start_capture(self, run: gw_capture.CaptureRun, origin: str = "") -> asyncio.Task:
         busy = self.captures.busy()
         if busy is not None:
             raise Busy(f"a capture is already running: {busy.label}")
+        if not self.gowitness.available:
+            raise ScanError(f"gowitness unavailable: {self.gowitness.reason}")
+        # Written now, not when planned: a review that is cancelled or only
+        # copied writes nothing, and a running capture's list is never replaced.
+        try:
+            gw_capture.write_urls(run.paths, run.urls)
+        except OSError as exc:
+            raise ScanError(f"could not write the URL list: {exc.strerror or exc}") from None
         return self._start(self.captures, run, origin, self._capture_done)
 
     def cancel(self, tool: str) -> Run | None:

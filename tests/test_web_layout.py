@@ -246,11 +246,21 @@ def test_every_dialog_is_the_one_frame():
 
 def test_the_capture_is_offered_among_the_scan_presets():
     """One dialog for everything that can be run against these hosts. It starts
-    the capture the export dialog starts - one request, one scope rule."""
-    dialog = ACTIONS_JS.split("async function newScan()")[1].split("\nasync function ")[0]
-    assert '<option value="${CAPTURE}" ${captureOff ? "disabled" : ""}>' in dialog
+    the capture the export dialog starts - one request, one scope rule. Without
+    gowitness it stays choosable: its review can still be copied."""
+    dialog = ACTIONS_JS.split("async function newScan(")[1].split("\nasync function ")[0]
+    assert '<option value="${CAPTURE}" ${initial === CAPTURE ? "selected" : ""}>' in dialog
     assert "${esc(captureOff)}" in dialog, "unavailable is shown with its reason, not hidden"
+    assert '"/api/v1/captures/review"' in dialog
     assert "await capture()" in dialog and ACTIONS_JS.count('"/api/v1/captures/runs"') == 1
+    assert 'newScan(CAPTURE)' in ACTIONS_JS, "the export dialog's capture opens the review"
+
+
+def test_every_review_dialog_copies_with_the_terminals_keys():
+    for name in ("newScan(", "scanGaps("):
+        dialog = ACTIONS_JS.split(f"async function {name}")[1].split("\nasync function ")[0]
+        assert "${COPY_BUTTONS}" in dialog and "copyControls(d," in dialog, name
+    assert 'e.key === "y" || e.key === "Y"' in ACTIONS_JS
 
 
 def test_a_refreshed_list_leaves_the_cursor_and_the_record_alone():

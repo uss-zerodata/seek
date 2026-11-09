@@ -1168,7 +1168,8 @@ class NmapApp(App[int]):
                     "certificate is read when it is scanned")
         elif self._active_tab == "scans" and not self.nmap.available:
             headline = "Scanning is unavailable"
-            hint = f"{self.nmap.reason} · everything else in the viewer still works"
+            hint = (f"{self.nmap.reason} · n still plans a scan to copy to another "
+                    "machine · everything else in the viewer still works")
         elif self._active_tab == "scans":
             headline = "No scans yet"
             hint = "every scan file present shows here as a history · n runs one"
@@ -1719,15 +1720,11 @@ class NmapApp(App[int]):
 
     @work(exclusive=True, group="modal")
     async def _start_scan_flow(self, targets: list[str] | None) -> None:
-        """Scope → preset → command → review → run. Any step can back out."""
-        if not self.nmap.available:
-            self.notify(f"cannot scan: {self.nmap.reason}", severity="error")
-            return
-        running = self.runner.busy()
-        if running is not None:
-            self.notify(f"{running.preset} is still running — cancel it first (c)",
-                        severity="warning")
-            return
+        """Scope → preset → command → review → run. Any step can back out.
+
+        Without nmap, or with a scan running, the flow still reaches the
+        review: starting is what is refused there, and the plan can be copied
+        to a machine that can run it."""
         if targets is None:
             targets = await self.push_screen_wait(ScopeScreen())
             if not targets:
@@ -1825,11 +1822,6 @@ class NmapApp(App[int]):
     async def _start_gap_scan(self) -> None:
         """`U`: version the open ports of the marks - or of the rows on screen -
         that no source has versioned, through the same command and review."""
-        running = self.runner.busy()
-        if running is not None and self.nmap.available:
-            self.notify(f"{running.preset} is still running — cancel it first (c)",
-                        severity="warning")
-            return
         records, _source = self._export_source()
         try:
             # The inventory may be built here for the first time; that walks
@@ -1858,8 +1850,22 @@ class NmapApp(App[int]):
                 continue
             break
 
+        body = Text()
+        body.append(" ".join(plan.argv[:2]) + " ", style="bold")
+        body.append(" ".join(plan.argv[2:]) + "\n\n")
+        body.append(f"  {'scope':<11}", style="dim")
+        body.append(f"{len(plan.targets)} target(s): " + ", ".join(plan.targets[:4])
+                    + (" …" if len(plan.targets) > 4 else "") + "\n")
+        body.append(f"  {'writes':<11}", style="dim")
+        body.append(f"{plan.out_base}.{{xml,nmap,gnmap}}\n")
+        body.append(f"  {'privilege':<11}", style="dim")
+        body.append("sudo -n — " if plan.elevated else "direct — ")
+        body.append(plan.privilege or "no elevated flags")
         confirmed = await self.push_screen_wait(ReviewScreen(
-            plan.argv, plan.targets, str(plan.out_base), plan.elevated, plan.privilege))
+            "Start this scan?", body, "start the scan", blocked=plan.blocked,
+            copy_local=plan.copy_local, copy_remote=plan.copy_remote,
+            results=f"run elsewhere: copy {plan.out_base.name}.{{xml,nmap,gnmap}} "
+                    f"back into {_short(self.scan_dir)}"))
         if not confirmed:
             return
         self._run_scan(plan.run())
@@ -1871,7 +1877,7 @@ class NmapApp(App[int]):
         self.notify(f"started {run.preset}")
         try:
             await self.session.start_scan(run, origin="tui")
-        except SessionBusy as exc:
+        except (SessionBusy, ScanError) as exc:
             self.notify(str(exc), severity="warning")
 
     # --- captures ----------------------------------------------------------
@@ -1889,14 +1895,29 @@ class NmapApp(App[int]):
 
     @work(exclusive=True, group="capture")
     async def _start_capture(self, records: list) -> None:
-        """Capture the selection, if there is anything in it to capture."""
+        """Review a capture of the selection, if there is anything to capture,
+        and run it on confirmation - or copy it to run elsewhere."""
         try:
             run = self.session.plan_capture(records)
         except ScanError as exc:
-            self.notify(str(exc), severity="error" if "unavailable" in str(exc)
-                        or "could not" in str(exc) else "warning", timeout=12)
+            self.notify(str(exc), severity="warning", timeout=12)
             return
-        await self._run_capture(run)
+        body = Text()
+        body.append(" ".join(run.argv[:3]) + " …\n\n", style="bold")
+        body.append(f"  {'urls':<11}", style="dim")
+        body.append(f"{len(run.urls)}: " + ", ".join(run.urls[:3])
+                    + (" …" if len(run.urls) > 3 else "") + "\n")
+        body.append(f"  {'writes':<11}", style="dim")
+        body.append(f"{_short(run.paths.root)}\n")
+        body.append(f"  {'backend':<11}", style="dim")
+        body.append(run.backend or "none here")
+        confirmed = await self.push_screen_wait(ReviewScreen(
+            "Start this capture?", body, "start the capture", blocked=run.blocked,
+            copy_local=run.copy_local, copy_remote=run.copy_remote,
+            results="run elsewhere: copy its gowitness/ directory back into "
+                    f"{_short(self.scan_dir)}"))
+        if confirmed:
+            await self._run_capture(run)
 
     async def _run_capture(self, run: gw_capture.CaptureRun) -> None:
         self._log_frozen = False
@@ -1908,7 +1929,7 @@ class NmapApp(App[int]):
         # looks like a capture that never started.
         try:
             await self.session.start_capture(run, origin="tui")
-        except SessionBusy as exc:
+        except (SessionBusy, ScanError) as exc:
             self.notify(str(exc), severity="warning")
 
     def _on_run_started(self, run) -> None:
@@ -3097,13 +3118,14 @@ class NmapApp(App[int]):
             return
         choices = [(key, label) for key, (label, _, _) in exporter.EXPORTS.items()]
         choices.append(("custom", "custom… (pick the fields)"))
-        disabled: set[str] = set()
-        if self.nmap.available:
-            choices.append(("scan", "scan these hosts with nmap…"))
-        # Shown whether or not it can be run: a hidden feature is an
-        # undiscoverable one, while a disabled one with its reason teaches what
-        # is missing. The count is shown before committing because a few
-        # hundred URLs is a capture measured in minutes.
+        # Offered without the tool too: the review can copy the command to a
+        # machine that has it.
+        choices.append(("scan", "scan these hosts with nmap…" if self.nmap.available
+                        else f"plan an nmap scan to copy — {self.nmap.reason}"))
+        # Shown whether or not it can be run here, with the reason when it
+        # cannot: a hidden feature is an undiscoverable one. The count is shown
+        # before committing because a few hundred URLs is a capture measured in
+        # minutes.
         urls = len(self._capture_urls(records))
         if self.gowitness.available:
             # Where it will write, before it writes: with several directories
@@ -3112,11 +3134,10 @@ class NmapApp(App[int]):
             choices.append(("capture",
                             f"capture {urls} url(s) with gowitness… → {where}"))
         else:
-            disabled.add("capture")
-            choices.append(("capture",
-                            f"capture screenshots — {self.gowitness.reason}"))
+            choices.append(("capture", f"plan a capture of {urls} url(s) to copy — "
+                            f"{self.gowitness.reason}"))
         which = await self.push_screen_wait(
-            ChoiceScreen(f"Export {source}:", choices, disabled=disabled))
+            ChoiceScreen(f"Export {source}:", choices))
         if which is None:
             return
         if which == "capture":

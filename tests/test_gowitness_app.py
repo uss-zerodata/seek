@@ -175,30 +175,34 @@ async def test_the_export_dialog_offers_a_capture(tmp_path):
         assert "capture" not in app.screen._disabled
 
 
-async def test_the_capture_entry_is_shown_but_disabled_when_unavailable(tmp_path):
-    """A hidden feature is undiscoverable; a disabled one with its reason
-    teaches what is missing."""
+async def test_without_gowitness_the_capture_can_be_planned_and_copied(tmp_path, monkeypatch):
+    """Not hidden, not disabled: the review says why it cannot start here and
+    copies the capture for a machine that has gowitness."""
+    from textual.widgets import OptionList
+
+    from seek.tui.nmap.scope import ReviewScreen
+
+    copied = []
+    monkeypatch.setattr("seek.tui.nmap.scope.copy_to_clipboard", copied.append)
     app = _app(tmp_path, available=False)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause(0.3)
         await pilot.press("x")
         await pilot.pause(0.4)
         labels = dict(app.screen._choices)
-        assert "capture" in labels, "the entry was hidden rather than disabled"
-        assert "capture" in app.screen._disabled
         assert "not on PATH" in labels["capture"]
-
-
-async def test_a_disabled_entry_cannot_be_chosen(tmp_path):
-    app = _app(tmp_path, available=False)
-    async with app.run_test(size=(100, 30)) as pilot:
-        await pilot.pause(0.3)
-        await pilot.press("x")
+        app.screen.choose("capture")
         await pilot.pause(0.4)
-        screen = app.screen
-        screen.choose("capture")
+        assert isinstance(app.screen, ReviewScreen)
+        start = app.screen.query_one(OptionList).get_option("start")
+        assert start.disabled and "not on PATH" in str(start.prompt)
+        await pilot.press("y")
         await pilot.pause(0.2)
-        assert app.screen is screen, "a disabled choice was accepted"
+        assert copied and copied[0].startswith("mkdir -p gowitness/screenshots")
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+        assert app.captures.runs == []
+        assert not (tmp_path / "gowitness").exists(), "a plan writes nothing"
 
 
 # --- the status bar ------------------------------------------------------

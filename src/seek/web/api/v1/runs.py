@@ -83,8 +83,7 @@ async def cancel(tool: str, request: Request):
 
 @router.get("/scans/presets", response_model=list[s.PresetOut])
 def scan_presets(sess=Depends(session)):
-    if not sess.nmap.available:
-        raise HTTPException(409, f"cannot scan: {sess.nmap.reason}")
+    # Listed without nmap too: a plan can be copied to a machine that has it.
     return [s.PresetOut(name=name, args=args,
                         needs_root=presets_mod.needs_root(args.split()))
             for name, args in sess.config.nmap_presets.items()]
@@ -95,8 +94,6 @@ def _plan(sess, body: s.ScanPlanIn):
     if body.preset == presets_mod.VERSION_GAPS_PRESET:
         # Drafted from a view by `/scans/gaps`, not from a preset and a scope:
         # what comes back is the command that draft produced, maybe edited.
-        if not sess.nmap.available:
-            raise ScanError(f"cannot scan: {sess.nmap.reason}")
         if not body.command:
             raise ScanError("the unversioned-ports scan is drafted by /scans/gaps")
         command, note = body.command, ""
@@ -111,6 +108,8 @@ def _plan(sess, body: s.ScanPlanIn):
         return out, None
     out.argv, out.targets = plan.argv, plan.targets
     out.out_base, out.elevated, out.privilege = str(plan.out_base), plan.elevated, plan.privilege
+    out.blocked = plan.blocked or ""
+    out.copy_local, out.copy_remote = plan.copy_local, plan.copy_remote
     return out, plan
 
 
@@ -154,15 +153,36 @@ async def start_scan(body: s.ScanPlanIn, request: Request):
         raise HTTPException(409, str(exc)) from None
     if plan is None:
         raise HTTPException(422, out.error)
+    if plan.blocked:
+        raise HTTPException(409, plan.blocked)
     run = plan.run()
     try:
         sess.start_scan(run, origin="web")
-    except Busy as exc:
+    except (ScanError, Busy) as exc:
         raise HTTPException(409, str(exc)) from None
     return run_out(run)
 
 
 # --- captures ------------------------------------------------------------------------
+
+
+def _capture_out(run) -> s.CapturePlanOut:
+    return s.CapturePlanOut(argv=run.argv, urls=run.urls, where=str(run.paths.root),
+                            backend=run.backend, blocked=run.blocked or "",
+                            copy_local=run.copy_local, copy_remote=run.copy_remote)
+
+
+@router.post("/captures/review", response_model=s.CapturePlanOut)
+async def capture_review(body: s.CaptureIn, request: Request) -> s.CapturePlanOut:
+    """What a capture of the marks - or the listed rows - would run. Nothing
+    is written; the review may only be copied."""
+    sess, cache = session(request), places(request)
+    records, _label = await run_in_threadpool(_source, sess, cache, body.tab, body.path, body.q)
+    try:
+        run = await run_in_threadpool(sess.plan_capture, records)
+    except ScanError as exc:
+        raise HTTPException(409, str(exc)) from None
+    return _capture_out(run)
 
 
 @router.post("/captures/runs", response_model=s.RunOut)
@@ -172,6 +192,8 @@ async def start_capture(body: s.CaptureIn, request: Request):
     records, _label = await run_in_threadpool(_source, sess, cache, body.tab, body.path, body.q)
     try:
         run = await run_in_threadpool(sess.plan_capture, records)
+        if run.blocked:
+            raise ScanError(run.blocked)
         sess.start_capture(run, origin="web")
     except (ScanError, Busy) as exc:
         raise HTTPException(409, str(exc)) from None

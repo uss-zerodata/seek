@@ -356,6 +356,19 @@ class ScanPlanOut(BaseModel):
     elevated: bool = False
     privilege: str = ""               # what needs root, as the terminal says it
     error: str = ""                  # why this command would not be run
+    blocked: str = ""                # why it cannot start here; it can still be copied
+    copy_local: str | None = None    # the argv as one shell line; None without nmap here
+    copy_remote: str = ""            # the snippet for a machine with only nmap
+
+
+class CapturePlanOut(BaseModel):
+    argv: list[str]
+    urls: list[str]
+    where: str
+    backend: str = ""
+    blocked: str = ""
+    copy_local: str | None = None
+    copy_remote: str = ""
 
 
 class CaptureIn(BaseModel):

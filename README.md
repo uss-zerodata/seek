@@ -212,6 +212,18 @@ vector, the scope, the file it will write and whether it will be elevated.
 Nothing runs until that review is confirmed. Opened on a directory with no scans
 in it, the viewer starts at the editor instead of exiting.
 
+**Scanning from another machine.** The review — for a scan, and for a gowitness
+capture — also copies the command: `y` copies a snippet for another machine,
+`Y` the command exactly as it would run here. The snippet calls plain `nmap` or
+`gowitness` (never docker), uses `sudo` when the flags need root, writes to
+paths relative to where you paste it, and for a capture writes its own URL list —
+no path of this machine is in it. This works without nmap or gowitness
+installed here: the review says why it cannot start, and copying still works.
+To bring the results back, copy the `.xml`/`.nmap`/`.gnmap` files, or the
+`gowitness/` directory, into a scan directory; they are read like any scan made
+outside seek. If no clipboard is available, the text is shown to select by hand.
+The browser's review dialogs have the same two buttons and keys.
+
 The **Scans** tab is a **history**: every scan file present — whether this
 session ran it or it was there on disk — ordered by the time it started, each
 diffed against the state before it. So a fresh scan dropped into the directory
@@ -432,7 +444,8 @@ from.
 
 **Screenshot the web servers with gowitness.** The export dialog's last entry
 hands the URL list to [gowitness](https://github.com/sensepost/gowitness)
-instead of writing it to a file, and what comes back lands on the host and
+instead of writing it to a file — after a review of the command, which can also
+copy it to run elsewhere — and what comes back lands on the host and
 service records themselves: HTTP status, page title, server, detected
 technologies, a TLS summary, and the screenshot's path. `i` opens one
 screenshot in your image viewer; `W` serves the report and opens a browser at
