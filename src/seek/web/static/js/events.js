@@ -26,6 +26,14 @@ function connect() {
     if (session) session.textContent = session.dataset.loaded;
     status();
   });
+  // The server is stopping on purpose: say so, and do not reconnect - an
+  // EventSource otherwise retries every two seconds into a closed port.
+  source.addEventListener("closing", () => {
+    source.close();
+    document.body.classList.add("offline");
+    const stopped = "the web interface was stopped - w in seek starts it again";
+    if (session) session.textContent = stopped; else setLive(stopped);
+  });
   source.addEventListener("error", () => {
     document.body.classList.add("offline");
     const lost = "connection to seek lost - the viewer may have been closed";

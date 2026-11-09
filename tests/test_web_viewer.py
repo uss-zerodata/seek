@@ -74,7 +74,10 @@ async def test_w_starts_the_interface_once_and_opens_the_selected_host(tmp_path,
         await pilot.press("down")
         await pilot.pause(0.1)
         other = app._current_row().target.address
-        await _press_w(pilot, app)
+        await pilot.press("w")                  # running: `w` asks first
+        await pilot.pause(0.3)
+        app.screen.choose("open")
+        await _settled(pilot, lambda: opened[-1].endswith(other))
         assert (app._web._server, app._web._task) == (server, task), "reused"
         assert opened[-1].endswith(f"/v/hosts?path=h%3A{other}")
         status = str(app.query_one("#status", Static).render())
@@ -210,3 +213,95 @@ async def test_quitting_asks_about_a_scan_started_in_the_browser(tmp_path):
         assert app.is_running
         app.runner.cancel()
         await pilot.pause(1.0)
+
+
+def _port_open(port: int) -> bool:
+    with socket.socket() as sock:
+        return sock.connect_ex(("127.0.0.1", port)) == 0
+
+
+async def _settled(pilot, test, tries: int = 50) -> None:
+    for _ in range(tries):
+        await pilot.pause(0.1)
+        if test():
+            return
+
+
+async def test_w_while_running_asks_and_can_stop_it(tmp_path, opened, monkeypatch):
+    from seek.tui.menu import ChoiceScreen
+
+    copied = []
+    monkeypatch.setattr(app_mod.actions, "copy_to_clipboard", copied.append)
+    port = _free_port()
+    app = _app(tmp_path, port)
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.3)
+        await _press_w(pilot, app)
+        before = len(opened)
+        await pilot.press("w")
+        await pilot.pause(0.3)
+        assert isinstance(app.screen, ChoiceScreen)
+        app.screen.choose("open")
+        await _settled(pilot, lambda: len(opened) > before)
+        assert len(opened) == before + 1, "open: the browser again, as before"
+        await pilot.press("w")
+        await pilot.pause(0.3)
+        app.screen.choose("copy")
+        await pilot.pause(0.2)
+        assert copied == [f"http://127.0.0.1:{port}"]
+        await pilot.press("w")
+        await pilot.pause(0.3)
+        app.screen.choose("stop")
+        await _settled(pilot, lambda: not app._web.running)
+        assert not app._web.running and not _port_open(port)
+        assert app.is_running, "the viewer carries on"
+        await _press_w(pilot, app)
+        assert app._web.running and _port_open(port), "w starts it again"
+
+
+async def test_the_browsers_stop_stops_only_the_interface(tmp_path, opened):
+    port = _free_port()
+    app = _app(tmp_path, port)
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.3)
+        await _press_w(pilot, app)
+        url = f"http://127.0.0.1:{port}"
+
+        def stop():
+            request = urllib.request.Request(url + "/api/v1/web/stop", data=b"{}",
+                                             method="POST", headers={"Origin": url})
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return json.load(response)
+
+        assert (await asyncio.to_thread(stop)) == {"stopping": True, "ends": "web"}
+        await _settled(pilot, lambda: not app._web.running)
+        assert not _port_open(port) and app.is_running
+
+
+async def test_stopping_leaves_a_running_scan_alone(tmp_path, opened):
+    from seek.nmap.runner import ScanRun
+
+    port = _free_port()
+    app = _app(tmp_path, port)
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.3)
+        await _press_w(pilot, app)
+        run = ScanRun(preset="stub", argv=["sleep", "3"], targets=["t"],
+                      out_base=tmp_path / "o")
+        app.session.start_scan(run, origin="tui")
+        await pilot.pause(0.3)
+        app.action_stop_web()
+        await _settled(pilot, lambda: not app._web.running)
+        assert run.running, "the scan carries on"
+        app.runner.cancel()
+        await pilot.pause(0.5)
+
+
+async def test_the_palette_says_when_there_is_nothing_to_stop(tmp_path, opened):
+    said = []
+    app = _app(tmp_path, _free_port())
+    app.notify = lambda message, **_kw: said.append(str(message))
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.3)
+        app.action_stop_web()
+        assert "the web interface is not running" in said

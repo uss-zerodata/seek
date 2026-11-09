@@ -97,11 +97,17 @@ def _load_stack():
 
 class WebServer:
     def __init__(self, source: ModelSource, host: str = "127.0.0.1", port: int = 7272,
-                 session=None) -> None:
+                 session=None, on_stop=None, mode: str = "viewer") -> None:
+        """`on_stop` is what the browser's Stop does - stop this interface in
+        the viewer, end the process for `seek nmap serve` - and `mode` says
+        which, so the page can say so before it is confirmed."""
         self.source = source
         self.session = session
         self.host = host
         self.port = port
+        self.on_stop = on_stop
+        self.mode = mode
+        self._app = None
         self._server = None
         self._task: asyncio.Task | None = None
 
@@ -124,9 +130,14 @@ class WebServer:
         self.port = _probe(self.host, self.port)
         uvicorn, create_app, server_cls = await asyncio.to_thread(_load_stack)
         _quiet()
-        config = uvicorn.Config(create_app(self.source, self.session),
-                                host=self.host, port=self.port, log_config=None,
-                                log_level="critical", access_log=False, lifespan="off")
+        app = create_app(self.source, self.session)
+        app.state.on_stop, app.state.mode = self.on_stop, self.mode
+        # Two seconds for responses in flight. The event streams never end on
+        # their own - `stop()` ends them - and with no limit uvicorn's graceful
+        # shutdown would wait for them for ever.
+        config = uvicorn.Config(app, host=self.host, port=self.port, log_config=None,
+                                log_level="critical", access_log=False, lifespan="off",
+                                timeout_graceful_shutdown=2)
         server = server_cls(config)
         task = asyncio.get_running_loop().create_task(server.serve())
         deadline = time.monotonic() + _STARTUP_TIMEOUT
@@ -139,20 +150,26 @@ class WebServer:
             # Tests ask for any free port; report the one the kernel gave.
             with contextlib.suppress(Exception):
                 self.port = server.servers[0].sockets[0].getsockname()[1]
-        self._server, self._task = server, task
+        self._server, self._task, self._app = server, task, app
 
     def stop(self) -> None:
-        """Ask the server to stop; it finishes on the loop by itself."""
+        """Ask the server to stop; it finishes on the loop by itself. Open pages
+        are told first (`closing`), so they say "stopped", not "lost"."""
+        if self._app is not None:
+            self._app.state.closing.set()
         if self._server is not None:
             self._server.should_exit = True
 
     async def aclose(self, timeout: float = 3.0) -> None:
+        """Stop and wait until the port is closed. `running` stays true until
+        then: clearing the task first made a stopped-but-still-listening
+        server read as gone to whoever asked in between."""
         task = self._task
         self.stop()
-        self._server = self._task = None
         if task is not None:
             with contextlib.suppress(asyncio.TimeoutError, asyncio.CancelledError):
                 await asyncio.wait_for(task, timeout)
+        self._server = self._task = None
 
     def url_for(self, row, gallery: bool = False) -> str:
         """The page for what a viewer row stands for; the gallery otherwise.

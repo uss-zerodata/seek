@@ -32,6 +32,7 @@ export const KEYS = [
   [["p"], "freeze", "freeze the log view (the scan keeps running)"],
   [["d"], "full", "the record full-width"],
   [["i"], "shots", "the row's screenshots"],
+  [["Q"], "stopWeb", "stop the web interface (asks first)"],
   [["?"], "help", "this list"],
 ];
 

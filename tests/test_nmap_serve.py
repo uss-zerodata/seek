@@ -89,3 +89,61 @@ def test_dot_slash_serve_is_the_directory(tmp_path, monkeypatch):
     assert cli._typed_serve() is False
     monkeypatch.setattr(sys, "argv", ["seek", "nmap", "serve", "./scans"])
     assert cli._typed_serve() is True
+
+
+def _post(url: str, origin: str | None = None):
+    request = urllib.request.Request(url, data=b"{}", method="POST",
+                                     headers={"Content-Type": "application/json",
+                                              **({"Origin": origin} if origin else {})})
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.status, json.load(response)
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.load(exc)
+
+
+@pytest.mark.asyncio
+async def test_the_browsers_stop_ends_serve_like_ctrl_c(tmp_path, capsys):
+    session = _session(tmp_path)
+    ready: list[str] = []
+    task = asyncio.create_task(serve_mod.serve(session, on_ready=ready.append))
+    while not ready:
+        await asyncio.sleep(0.05)
+    assert (await asyncio.to_thread(_get, ready[0] + "/api/v1/web"))["mode"] == "serve"
+    status, _ = await asyncio.to_thread(_post, ready[0] + "/api/v1/web/stop",
+                                        "https://evil.example")
+    assert status == 403 and not task.done(), "another site cannot stop it"
+    status, body = await asyncio.to_thread(_post, ready[0] + "/api/v1/web/stop", ready[0])
+    assert status == 200 and body == {"stopping": True, "ends": "process"}
+    assert await asyncio.wait_for(task, 5) == 0
+    assert "stopped" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_an_open_page_is_told_and_does_not_hold_the_stop(tmp_path):
+    """The event stream never ends by itself; stopping must not wait for it."""
+    import time
+
+    session = _session(tmp_path)
+    stop = asyncio.Event()
+    ready: list[str] = []
+    task = asyncio.create_task(serve_mod.serve(session, stop=stop, on_ready=ready.append))
+    while not ready:
+        await asyncio.sleep(0.05)
+    seen: list[str] = []
+
+    def listen():
+        with urllib.request.urlopen(ready[0] + "/api/v1/events", timeout=10) as stream:
+            for raw in stream:
+                seen.append(raw.decode())
+                if raw.startswith(b"event: closing"):
+                    return
+
+    reader = asyncio.ensure_future(asyncio.to_thread(listen))
+    await asyncio.sleep(0.5)
+    began = time.monotonic()
+    stop.set()
+    await asyncio.wait_for(task, 5)
+    await asyncio.wait_for(reader, 5)
+    assert time.monotonic() - began < 2, "the stop did not wait out the open stream"
+    assert any(line.startswith("event: closing") for line in seen)

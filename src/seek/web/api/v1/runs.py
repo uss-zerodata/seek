@@ -244,18 +244,30 @@ async def events(request: Request):
     sess = session(request)
     sub, stop = sess.subscribe()
 
+    closing: asyncio.Event = request.app.state.closing
+
     async def stream():
         try:
             yield "retry: 2000\n\n"
             while True:
+                if closing.is_set():
+                    # The interface is stopping: say so, and end - the server
+                    # does not wait for a stream that would never end itself.
+                    yield "event: closing\ndata: {}\n\n"
+                    return
                 if await request.is_disconnected():
                     return
-                try:
-                    event = await asyncio.wait_for(sub.queue.get(), _PING_SECONDS)
-                except TimeoutError:
+                get = asyncio.ensure_future(sub.queue.get())
+                wake = asyncio.ensure_future(closing.wait())
+                done, pending = await asyncio.wait({get, wake}, timeout=_PING_SECONDS,
+                                                   return_when=asyncio.FIRST_COMPLETED)
+                for waiting in pending:
+                    waiting.cancel()
+                if get in done:
+                    event = get.result()
+                    yield f"event: {event.type}\ndata: {_event_json(event)}\n\n"
+                elif not closing.is_set():
                     yield ": ping\n\n"
-                    continue
-                yield f"event: {event.type}\ndata: {_event_json(event)}\n\n"
         finally:
             stop()
 

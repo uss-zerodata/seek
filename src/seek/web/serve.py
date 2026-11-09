@@ -83,8 +83,11 @@ async def serve(session: Session, open_browser: bool = False,
     from seek.web.server import WebError, WebServer
     from seek.web.source import CachedSource
 
+    stop = stop or asyncio.Event()
+    # The browser's Stop is Ctrl+C: the same event, the same way out.
     server = WebServer(CachedSource(lambda: session.scans, lambda: session.shots),
-                       session.config.web_host, session.config.web_port, session=session)
+                       session.config.web_host, session.config.web_port, session=session,
+                       on_stop=stop.set, mode="serve")
     try:
         await server.start()
     except WebError as exc:
@@ -100,7 +103,6 @@ async def serve(session: Session, open_browser: bool = False,
         from seek.tui.nmap.app import _open_browser
         await asyncio.to_thread(_open_browser, server.url)
 
-    stop = stop or asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set)

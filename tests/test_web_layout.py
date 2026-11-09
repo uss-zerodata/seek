@@ -290,3 +290,15 @@ def test_the_builder_dialog_is_accessible_and_stateless():
     assert "Measure now?" in dialog, "the measurement is confirmed before it is sent"
     assert "Discard the answers?" in dialog
     assert "state, measured" in dialog, "the state travels with every request"
+
+
+def test_the_interface_can_be_stopped_from_the_page_and_says_so():
+    footer = (WEB / "templates/overview.html").read_text().split('<footer class="keys">')[1]
+    assert 'data-action="stopWeb"' in footer and 'data-key-of="stopWeb"' in footer
+    stop = ACTIONS_JS.split("async function stopWeb(")[1].split("\n}\n")[0]
+    assert '"/api/v1/web"' in stop and '"/api/v1/web/stop"' in stop
+    assert "Ctrl+C" in stop, "serve mode says the process ends"
+    events = (WEB / "static/js/events.js").read_text()
+    closing = events.split('addEventListener("closing"')[1].split("});")[0]
+    assert "source.close()" in closing, "no reconnecting into a closed port"
+    assert "was stopped" in closing

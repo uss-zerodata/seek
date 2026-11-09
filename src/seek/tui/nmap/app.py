@@ -1904,8 +1904,52 @@ class NmapApp(ScanFlows, App[int]):
         both worth keeping off the event loop, so the work is a thread; the row
         is taken here, where the cursor is, and handed over by attribute
         because Textual reprs a worker's arguments.
+
+        Once it is running, `w` asks first: open the browser here, copy the
+        address, or stop it - the only way to stop it short of quitting.
         """
+        if self._web is not None and self._web.running:
+            self._web_row, self._web_gallery = self._current_row(), False
+            self._web_menu()
+            return
         self._open_web_at(self._current_row())
+
+    @work(exclusive=True, group="modal")
+    async def _web_menu(self) -> None:
+        url = self._web.url
+        answer = await self.push_screen_wait(ChoiceScreen(
+            f"The web interface is running on {url}",
+            [("open", "open the browser at this row"), ("copy", "copy the address"),
+             ("stop", "stop the web interface")]))
+        if answer == "open":
+            self._open_web()
+        elif answer == "copy":
+            try:
+                actions.copy_to_clipboard(url)
+            except actions.ActionError:
+                from seek.tui.nmap.scope import CopyTextScreen
+                self.push_screen(CopyTextScreen(
+                    "No clipboard here - select the address and copy it yourself", url))
+                return
+            self.notify(f"copied {url}")
+        elif answer == "stop":
+            self.action_stop_web()
+
+    def action_stop_web(self) -> None:
+        """Stop the web interface - from the `w` menu, the palette, or the
+        browser's own Stop button (`WebServer.on_stop`). The viewer and any
+        running scan carry on."""
+        if self._web is None or not self._web.running:
+            self.notify("the web interface is not running")
+            return
+        self._stop_web()
+
+    @work(exclusive=True, group="web-stop")
+    async def _stop_web(self) -> None:
+        url = self._web.url
+        await self._web.aclose()
+        self.notify(f"web interface stopped · {url} is closed · w starts it again")
+        self._refresh_status()
 
     def _open_web_at(self, row: vdefs.Row | None, gallery: bool = False) -> None:
         self._web_row, self._web_gallery = row, gallery
@@ -1924,7 +1968,8 @@ class NmapApp(ScanFlows, App[int]):
 
         if self._web is None:
             self._web = WebServer(self._web_source(), self.config.web_host,
-                                  self.config.web_port, session=self.session)
+                                  self.config.web_port, session=self.session,
+                                  on_stop=self.action_stop_web)
         fresh = not self._web.running
         try:
             await self._web.start()

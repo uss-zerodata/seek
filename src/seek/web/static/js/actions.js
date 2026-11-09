@@ -524,4 +524,24 @@ export function help(keys) {
     '<button value="close" class="primary">Close</button>');
 }
 
-export const handlers = { mark, clearMarks, export: exportDialog, newScan, scanGaps, updateVulndb, cancel, freeze, shots };
+// --- stopping the interface ----------------------------------------------------------
+
+// What Stop ends is the server's to say: in the viewer, this interface (the
+// terminal carries on); for `seek nmap serve`, the process, as Ctrl+C does.
+async function stopWeb() {
+  let state;
+  try { state = await send("GET", "/api/v1/web"); } catch (e) { say(e.message); return; }
+  if (!state.stoppable) { say("this interface cannot be stopped from here"); return; }
+  const serving = state.mode === "serve";
+  const d = dialog("Stop the web interface?", serving
+    ? "<p>This ends <code>seek nmap serve</code>, as Ctrl+C would - a scan or capture still running is cancelled.</p>"
+    : "<p>The web interface closes. seek keeps running in the terminal, scans included; <kbd>w</kbd> there starts it again.</p>",
+    '<button value="stop" class="primary">Stop</button> <button value="cancel">Keep it running</button>');
+  d.addEventListener("close", async () => {
+    if (d.returnValue !== "stop") return;
+    try { await send("POST", "/api/v1/web/stop"); say("stopping…"); }
+    catch (e) { say(e.message); }
+  });
+}
+
+export const handlers = { mark, clearMarks, export: exportDialog, newScan, scanGaps, updateVulndb, cancel, freeze, stopWeb, shots };

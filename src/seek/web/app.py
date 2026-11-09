@@ -8,6 +8,7 @@ a network with no route out. The OpenAPI description is still served.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -18,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from seek.web import media
 from seek.web.api.v1 import builder as builder_api
 from seek.web.api.v1 import captures, hosts, inventory, services, vulndb
+from seek.web.api.v1 import control as control_api
 from seek.web.api.v1 import marks as marks_api
 from seek.web.api.v1 import records as records_api
 from seek.web.api.v1 import runs as runs_api
@@ -31,6 +33,7 @@ STATIC = Path(__file__).parent / "static"
 
 ROUTERS = [
     builder_api.router,
+    control_api.router,
     hosts.router,
     services.router,
     captures.router,
@@ -70,6 +73,9 @@ def create_app(source: ModelSource, session=None) -> FastAPI:
                   openapi_url="/api/openapi.json")
     app.state.source = source
     app.state.session = session
+    # Set by `WebServer`: what Stop does here, and which kind of server this is.
+    app.state.on_stop, app.state.mode = None, "viewer"
+    app.state.closing = asyncio.Event()
     app.state.places = ViewCache()
     for router in ROUTERS:
         app.include_router(router)

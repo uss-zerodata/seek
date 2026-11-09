@@ -623,6 +623,15 @@ or for a browser on a second screen. `--open` opens the browser once it
 listens; Ctrl+C cancels any scan or capture still running, says which, and
 stops. A directory that happens to be called `serve` is named `./serve`.
 
+**Stopping it.** While the web interface runs in the viewer, `w` asks whether to
+open it at the selected row, copy its address, or stop it. The command palette
+also has "Stop the web interface". Stopping closes the port and leaves the
+viewer and any running scan alone; `w` starts it again. The browser has a Stop
+button (`Q`), confirmed first. In the viewer it stops only the web interface.
+For `seek nmap serve` it ends the server exactly as Ctrl+C does, and the
+confirmation says so. Pages still open say the interface was stopped and stop
+reconnecting.
+
 State-changing requests are accepted only from the interface's own pages, so a
 page on another site cannot drive it through your browser. There are no
 accounts: it listens on loopback only.

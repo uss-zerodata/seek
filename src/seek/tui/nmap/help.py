@@ -93,7 +93,8 @@ _GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("", "several, pick one - or see them all side by side in the browser"),
         ("W", "serve the report and open it at the selected result"),
         ("w", "the web interface: hosts, services and every screenshot from"),
-        ("", "every capture database, in a browser - opened at the selected row"),
+        ("", "every capture database, in a browser - opened at the selected row;"),
+        ("", "while it runs, w asks: open it here, copy the address, or stop it"),
     ]),
     ("Software inventory", [
         ("Inventory tab", "every product and version, from nmap, its scripts and"),

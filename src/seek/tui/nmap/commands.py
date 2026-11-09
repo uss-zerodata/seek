@@ -49,6 +49,8 @@ _STATIC: list[tuple[str, str, str, object]] = [
     ("Update the vulnerability database", "Download NVD, OSV and endoflife.date data (A)",
      "action_update_vulndb", None),
     ("Cancel the running scan", "Ends the process (c)", "action_cancel_scan", None),
+    ("Stop the web interface", "Close its port; the viewer carries on (w, then stop)",
+     "action_stop_web", None),
     ("Freeze the log", "Stops the view, not the scan (p)", "action_freeze_log", None),
     ("Report view", "Overview, diff or raw output (o)", "action_report_mode", None),
     ("Mark selected row", "Collect it for export (m)", "action_mark", None),
