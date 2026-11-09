@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 
 import pytest
 from textual.containers import Vertical
@@ -578,7 +579,15 @@ async def test_esc_clears_query_before_quitting(tree):
         assert app.query_one("#tree", Vertical).display is True
 
 
-async def test_open_from_detail_view_runs_the_action(tree):
+async def test_open_from_detail_view_runs_the_action(tree, tmp_path, monkeypatch):
+    # The editor is resolved on PATH before anything is run, and a missing one
+    # is reported instead of exec'd. A runner without the default editor
+    # (nvim) failed this test on that alone, so it gets a stand-in.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "nvim").write_text("#!/bin/sh\nexit 0\n")
+    (bin_dir / "nvim").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
     app = SeekApp(_session(tree))
     async with app.run_test(size=(120, 40)) as pilot:
         await _settle(pilot)

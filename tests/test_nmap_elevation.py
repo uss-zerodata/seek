@@ -155,7 +155,8 @@ def _app(tmp_path, monkeypatch, answers: list[str | None]):
 
     prompted = []
     monkeypatch.setattr(app_mod, "sudo_ready", sudo_ready)
-    monkeypatch.setattr(app_mod, "_sudo_validate", lambda: prompted.append(["sudo", "-v"]))
+    monkeypatch.setattr(app_mod, "_sudo_validate",
+                        lambda _why: prompted.append(["sudo", "-v"]))
     app = app_mod.NmapApp(prepare(load([FIX / "basic.xml"])),
                           Config(nmap_path="nmap", scan_output_dir=str(tmp_path)),
                           sources=[FIX / "basic.xml"], scan_dir=tmp_path)

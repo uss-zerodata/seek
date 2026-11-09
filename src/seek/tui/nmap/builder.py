@@ -3,9 +3,16 @@
 
 Layout, wide (120 columns or more): the step list, the step's content and help
 for the focused item side by side, then the command, then the keys. Narrow: the
-step list folds into one line and help moves behind `?`. The frame is the scan
-flow's `_FRAME`, and the list is the `_Fits` part, so the step line, the
-command and the keys stay on screen at 60x18 while the list scrolls.
+step list folds into one line and help moves behind `?`.
+
+**The builder is full height, and its list is `1fr`.** The other scan dialogs
+size to their content and measure what is left (`_Fits`); the builder did too,
+and lost a race: its command line can grow a row a refresh *after* the list's
+height was measured, which put the command under the frame's edge at 60x18 -
+locally rarely, on a slower CI runner every time. A full-height frame lets
+Textual give the list what the title, the command and the keys leave in one
+layout pass, with nothing measured; and the dialog keeps its size from step
+to step instead of growing and shrinking under the reader.
 """
 
 from __future__ import annotations
@@ -29,7 +36,7 @@ from seek.nmap import options as catalogue
 from seek.nmap import timing
 from seek.nmap.recent import Earlier, text
 from seek.tui.menu import ChoiceScreen
-from seek.tui.nmap.scope import _FRAME, PresetScreen, _Fits
+from seek.tui.nmap.scope import _FRAME, PresetScreen
 
 WIDE = 120
 _MARK = {"done": "✓", "current": "●", "ahead": "○", "skipped": "–"}
@@ -133,7 +140,7 @@ class ChooserScreen(PresetScreen):
         self.dismiss(None)
 
 
-class BuilderScreen(_Fits, ModalScreen[tuple[str, list[str], str] | None]):
+class BuilderScreen(ModalScreen[tuple[str, list[str], str] | None]):
     """The guided builder. Returns (profile, arguments, goal) or None."""
 
     BINDINGS = [
@@ -149,17 +156,17 @@ class BuilderScreen(_Fits, ModalScreen[tuple[str, list[str], str] | None]):
         *[Binding(str(n), f"jump({n})", show=False) for n in range(1, 9)],
     ]
     DEFAULT_CSS = _FRAME.format(name="BuilderScreen") + """
-    BuilderScreen > #frame { width: 150; }
-    BuilderScreen #body { height: auto; }
+    BuilderScreen > #frame { width: 150; height: 100%; }
+    BuilderScreen #body { height: 1fr; }
     BuilderScreen #steps { width: 16; display: none; }
-    BuilderScreen #content { width: 1fr; height: auto; }
+    BuilderScreen #content { width: 1fr; height: 1fr; }
     BuilderScreen #help { width: 34; display: none; padding: 0 0 0 2; color: $text-muted; }
     BuilderScreen.wide #steps, BuilderScreen.wide #help { display: block; }
     BuilderScreen.wide #stepline { display: none; }
     BuilderScreen.helping #help { display: block; width: 1fr; }
     BuilderScreen.helping #content { display: none; }
     BuilderScreen #question { text-style: bold; }
-    BuilderScreen OptionList { height: auto; min-height: 3; background: transparent; }
+    BuilderScreen OptionList { height: 1fr; min-height: 3; background: transparent; }
     BuilderScreen #filter-box, BuilderScreen #edit { display: none; border: none;
         height: 1; padding: 0 1; }
     BuilderScreen #filter-box.on, BuilderScreen #edit.on { display: block; }
@@ -196,7 +203,7 @@ class BuilderScreen(_Fits, ModalScreen[tuple[str, list[str], str] | None]):
                     yield Label(id="question")
                     yield Input(id="filter-box", placeholder="filter options by name or "
                                 "description")
-                    yield OptionList(id="list", classes="flex")
+                    yield OptionList(id="list")
                     yield Input(id="edit")
                     yield Static(id="error")
                     yield Static(id="notes")
@@ -209,9 +216,8 @@ class BuilderScreen(_Fits, ModalScreen[tuple[str, list[str], str] | None]):
         self._show()
         self.query_one("#list", OptionList).focus()
 
-    def on_resize(self, event) -> None:
+    def on_resize(self, _event) -> None:
         self._wide()
-        super().on_resize(event)
 
     def _wide(self) -> None:
         self.set_class(self.size.width >= WIDE, "wide")
@@ -253,7 +259,6 @@ class BuilderScreen(_Fits, ModalScreen[tuple[str, list[str], str] | None]):
         notes = self.query_one("#notes", Static)
         notes.update(Text("\n".join(self._notes), style="dim"))
         notes.set_class(bool(self._notes), "on")
-        self.call_after_refresh(self._fit)
 
     def _width(self) -> int:
         """The text width of a list row - OptionList wraps and ignores no_wrap,
@@ -389,9 +394,6 @@ class BuilderScreen(_Fits, ModalScreen[tuple[str, list[str], str] | None]):
         line.append(text(args))
         line.append(f"  ‹{len(self.facts.targets)} target(s)›", style="dim")
         self.query_one("#command", Static).update(line)
-        # The command's new height is laid out a refresh after the update, so
-        # the fit has to wait for that one, not the next.
-        self.call_after_refresh(self.call_after_refresh, self._fit)
 
     def _help(self) -> None:
         key = self._highlighted()
@@ -595,7 +597,6 @@ class BuilderScreen(_Fits, ModalScreen[tuple[str, list[str], str] | None]):
         error = self.query_one("#error", Static)
         error.update(Text(message, style=style))
         error.set_class(bool(message), "on")
-        self.call_after_refresh(self._fit)
 
     # --- measuring --------------------------------------------------------------------
 

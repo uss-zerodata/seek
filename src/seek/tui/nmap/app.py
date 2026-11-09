@@ -1928,9 +1928,7 @@ class NmapApp(App[int]):
             return False
         try:
             with self.suspend():
-                print(f"\nseek: {run.preset} needs root ({' '.join(run.argv[2:4])} …).\n"
-                      "sudo asks for your password; seek never sees it.\n", flush=True)
-                _sudo_validate()
+                _sudo_validate(f"{run.preset} needs root ({' '.join(run.argv[2:4])} …)")
         except SuspendNotSupported:
             self.notify(elevation_help(self.config.nmap_path), severity="error", timeout=20)
             return False
@@ -3317,9 +3315,11 @@ class NmapApp(App[int]):
             self.notify(f"write failed: {exc}", severity="error")
 
 
-def _sudo_validate() -> None:
-    """Let sudo ask for the password on the terminal - a module function so
-    tests can replace it without patching `subprocess`."""
+def _sudo_validate(why: str) -> None:
+    """Say why, then let sudo ask for the password on the terminal - a module
+    function so tests can replace it (and its text) without patching
+    `subprocess` or the terminal."""
+    print(f"\nseek: {why}.\nsudo asks for your password; seek never sees it.\n", flush=True)
     subprocess.run(["sudo", "-v"], check=False)  # noqa: S603, S607 - fixed argv
 
 
