@@ -124,7 +124,7 @@ class WebServer:
         self.port = _probe(self.host, self.port)
         uvicorn, create_app, server_cls = await asyncio.to_thread(_load_stack)
         _quiet()
-        config = uvicorn.Config(create_app(self.source, self.session, self.origin),
+        config = uvicorn.Config(create_app(self.source, self.session),
                                 host=self.host, port=self.port, log_config=None,
                                 log_level="critical", access_log=False, lifespan="off")
         server = server_cls(config)
@@ -140,10 +140,6 @@ class WebServer:
             with contextlib.suppress(Exception):
                 self.port = server.servers[0].sockets[0].getsockname()[1]
         self._server, self._task = server, task
-
-    def origin(self) -> str:
-        """What a request from the interface's own pages carries as `Origin`."""
-        return self.url
 
     def stop(self) -> None:
         """Ask the server to stop; it finishes on the loop by itself."""

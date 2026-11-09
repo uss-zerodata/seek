@@ -79,3 +79,24 @@ def test_the_known_ports_become_a_placeholder_again():
     files = [_scan("nmap -sV -p 22,80,443 10.0.0.5", 1)]
     assert recent(files, None, known_ports="22,80,443")[0].args == "-sV -p{ports}"
     assert recent(files, None, known_ports="22")[0].args == "-sV -p 22,80,443"
+
+
+def test_two_processes_keep_each_others_commands(tmp_path):
+    """The viewer and `seek nmap serve` each hold a history; neither may erase
+    what the other recorded."""
+    path = tmp_path / "h.json"
+    viewer, server = CommandHistory(path), CommandHistory(path)
+    viewer.record(["nmap", "-sS", "10.0.0.1"], when=1)
+    server.record(["nmap", "-sU", "10.0.0.1"], when=2)
+    viewer.record(["nmap", "-sV", "10.0.0.1"], when=3)
+    assert set(CommandHistory(path).entries) == {"-sS", "-sU", "-sV"}
+
+
+def test_the_entries_a_reader_holds_never_change_under_it(tmp_path):
+    history = CommandHistory(tmp_path / "h.json")
+    history.record(["nmap", "-sS", "x"], when=1)
+    held = history.entries
+    for args in ("-sU", "-sV", "-O", "-A"):
+        history.record(["nmap", args, "x"], when=2)
+    assert list(held) == ["-sS"], "a new dict is swapped in; the old one is untouched"
+    assert not (tmp_path / "h.json.tmp").exists(), "written whole, then moved into place"

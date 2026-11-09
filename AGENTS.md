@@ -55,7 +55,7 @@ compare against the baseline recorded in the script's docstring.
 If a stale-virtualenv warning is noisy, prefix commands with `env -u VIRTUAL_ENV`.
 
 Python **3.11+** (uses `tomllib`, `enum.StrEnum`). Runtime deps are kept minimal:
-`typer`, `textual`, `rich` (via textual), `pyperclip`, and `fastapi`, `uvicorn`,
+`typer`, `textual`, `rich` (via textual), and `fastapi`, `uvicorn`,
 `jinja2` for the nmap viewer's web interface (shipped in the package on purpose -
 one application, no extra install); `pathspec` is an optional extra used only
 for `.gitignore` support. Tests use `httpx2` for FastAPI's `TestClient`.
@@ -124,6 +124,7 @@ src/seek/
     detail.py       full record for the selected row (scripts, vulnerabilities)
     reader.py       `d`: that record full-screen - scroll, search, step entries
     app.py          NmapApp: table + detail pane, one filter, one breadcrumb
+    flows.py        ScanFlows mixin: the scan, capture and vulnerability-database flows
     scans.py        the Scans tab: run list + the three report modes
     scope.py        scope editor, editable command, the review before it runs
     builder.py      the chooser (build / recent / frequent / presets) and the builder screen

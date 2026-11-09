@@ -87,3 +87,17 @@ def test_help_and_earlier_commands(tmp_path):
     assert lines[-1].endswith("man-host-discovery.html")
     earlier = client.get("/api/v1/scans/recent").json()
     assert earlier["recent"][0]["args"] == "-sS -T4 -p{ports}"
+
+
+def test_the_builders_facts_are_kept_per_model_and_scope(tmp_path, monkeypatch):
+    sess, client = _client(tmp_path)
+    built = []
+    real = sess._build_facts
+    monkeypatch.setattr(sess, "_build_facts", lambda t: (built.append(t), real(t))[1])
+    out = _step(client)
+    for choice in ("services", "tcp", "known"):
+        out = _step(client, out["state"], action="choose", value=choice)
+    assert len(built) == 1, "one walk over the hosts for four clicks"
+    sess.publish(sess.scans.__class__(hosts=list(sess.scans.hosts), files=sess.scans.files))
+    _step(client, out["state"])
+    assert len(built) == 2, "a new model is walked again"

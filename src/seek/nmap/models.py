@@ -99,11 +99,6 @@ class Service:
     sources: list[str] = field(default_factory=list)
 
     @property
-    def cert_names(self) -> list[str]:
-        """Just the names this service's own certificate claims."""
-        return [n for n, source in self.names if source == "certificate"]
-
-    @property
     def key(self) -> tuple[str, int]:
         return (self.protocol, self.port)
 

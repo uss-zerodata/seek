@@ -286,7 +286,6 @@ def test_the_names_are_attached_at_load_not_re_derived_per_view():
     host = _hosts("scripts")[0]
     svc = next(s for s in host.services if s.port == 443)
     assert svc.names == [("example.test", "certificate")], "prepare attached them"
-    assert svc.cert_names == ["example.test"], "and the certificate ones are nameable"
 
 
 # --- the names a multi-site host gives away ---------------------------------
@@ -322,11 +321,6 @@ def test_an_advisory_link_is_not_a_name_the_server_answers_to():
     """`http-vuln-*` scripts cite URLs; those hosts are not this host."""
     assert name_mod.host_names(_hosts("vuln")[0]) == []
 
-
-def test_the_sources_behind_a_hosts_names_can_be_summarised():
-    assert name_mod.sources_of(_hosts("vhosts")[0]) == [
-        "certificate", "certificate transparency", "host identity", "redirect",
-        "resolved"]
 
 
 def test_every_vhost_becomes_a_url_on_the_port_that_revealed_it():

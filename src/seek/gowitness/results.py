@@ -180,10 +180,6 @@ class Capture:
         present = {key.lower() for key, _ in self.headers}
         return [label for name, label in SECURITY_HEADERS if name not in present]
 
-    def present_security_headers(self) -> list[str]:
-        present = {key.lower() for key, _ in self.headers}
-        return [label for name, label in SECURITY_HEADERS if name in present]
-
     def derived_system(self) -> tuple[str, str]:
         """A candidate product name and where it came from, or two empties.
 

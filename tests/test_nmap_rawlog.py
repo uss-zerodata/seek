@@ -147,7 +147,7 @@ def test_a_port_the_scan_did_not_write_about_yields_nothing():
 
 def test_entries_are_the_scans_that_recorded_the_subject():
     scans = _model("basic", "scripts", "xml-only")
-    entries = rawlog.entries_for(_host(scans, "192.0.2.1"), scans.files)
+    entries = rawlog.Scanned(scans.files).entries(_host(scans, "192.0.2.1"))
     assert [e.label for e in entries] == ["basic"]
     assert entries[0].written, "basic.xml has a .nmap beside it"
     assert entries[0].summary() == "2 port(s) open"
@@ -158,13 +158,13 @@ def test_entries_are_in_scan_order():
     scans = _model("scripts", "basic")           # given in the other order
     scans.files.sort(key=lambda f: f.name)       # and stored in another again
     host = _host(scans, "192.0.2.1")
-    entries = rawlog.entries_for(host, scans.files)
+    entries = rawlog.Scanned(scans.files).entries(host)
     assert [e.scan.start for e in entries] == sorted(e.scan.start for e in entries)
 
 
 def test_a_scan_with_no_output_file_is_still_an_entry():
     scans = _model("xml-only")
-    entry = rawlog.entries_for(_host(scans, "198.51.100.7"), scans.files)[0]
+    entry = rawlog.Scanned(scans.files).entries(_host(scans, "198.51.100.7"))[0]
     assert not entry.written and entry.path is None
 
 
@@ -172,7 +172,7 @@ def test_entries_for_a_service_are_the_scans_that_saw_that_port():
     scans = _model("basic", "scripts")
     host = _host(scans, "192.0.2.1")
     ssh = next(s for s in host.services if s.port == 22)
-    assert [e.label for e in rawlog.entries_for(host, scans.files, ssh)] == ["basic"]
+    assert [e.label for e in rawlog.Scanned(scans.files).entries(host, ssh)] == ["basic"]
 
 
 def test_listing_entries_never_opens_a_file(monkeypatch):
@@ -184,7 +184,7 @@ def test_listing_entries_never_opens_a_file(monkeypatch):
 
     monkeypatch.setattr(Path, "read_text", refuse)
     for host in scans.hosts:
-        rawlog.entries_for(host, scans.files)
+        rawlog.Scanned(scans.files).entries(host)
 
 
 # --- reading an entry --------------------------------------------------------
@@ -193,7 +193,7 @@ def test_listing_entries_never_opens_a_file(monkeypatch):
 def test_reading_an_entry_returns_the_scoped_block():
     scans = _model("basic")
     host = _host(scans, "192.0.2.1")
-    entry = rawlog.entries_for(host, scans.files)[0]
+    entry = rawlog.Scanned(scans.files).entries(host)[0]
     excerpt = rawlog.read(rawlog.Request(entry, host))
     assert not excerpt.reconstructed and not excerpt.problem
     assert excerpt.lines[0].endswith("(192.0.2.1)")
@@ -202,7 +202,7 @@ def test_reading_an_entry_returns_the_scoped_block():
 def test_a_scan_with_no_output_file_is_reconstructed_and_says_so():
     scans = _model("xml-only")
     host = _host(scans, "198.51.100.7")
-    excerpt = rawlog.read(rawlog.Request(rawlog.entries_for(host, scans.files)[0], host))
+    excerpt = rawlog.read(rawlog.Request(rawlog.Scanned(scans.files).entries(host)[0], host))
     assert excerpt.reconstructed, "the caller has to be able to label it"
     assert excerpt.lines[0] == "Nmap scan report for lone.example (198.51.100.7)"
     assert any(line.startswith("25/tcp") for line in excerpt.lines)
@@ -213,7 +213,8 @@ def test_a_reconstructed_port_shows_only_that_port():
     scans = _model("xml-only")
     host = _host(scans, "198.51.100.7")
     svc = next(s for s in host.services if s.port == 587)
-    excerpt = rawlog.read(rawlog.Request(rawlog.entries_for(host, scans.files, svc)[0], host, svc))
+    entry = rawlog.Scanned(scans.files).entries(host, svc)[0]
+    excerpt = rawlog.read(rawlog.Request(entry, host, svc))
     assert any(line.startswith("587/tcp") for line in excerpt.lines)
     assert not any(line.startswith("25/tcp") for line in excerpt.lines)
 
@@ -221,7 +222,7 @@ def test_a_reconstructed_port_shows_only_that_port():
 def test_a_subject_the_file_does_not_mention_is_reported_not_empty():
     scans = _model("basic")
     host = _host(scans, "192.0.2.3")
-    excerpt = rawlog.read(rawlog.Request(rawlog.entries_for(host, scans.files)[0], host))
+    excerpt = rawlog.read(rawlog.Request(rawlog.Scanned(scans.files).entries(host)[0], host))
     assert excerpt.lines == []
     assert "says nothing about 192.0.2.3" in excerpt.problem
 
@@ -229,7 +230,7 @@ def test_a_subject_the_file_does_not_mention_is_reported_not_empty():
 def test_a_file_that_cannot_be_read_is_reported_not_raised(tmp_path):
     scans = _model("basic")
     host = _host(scans, "192.0.2.1")
-    entry = rawlog.entries_for(host, scans.files)[0]
+    entry = rawlog.Scanned(scans.files).entries(host)[0]
     entry.path = tmp_path / "gone.nmap"
     excerpt = rawlog.read(rawlog.Request(entry, host))
     assert excerpt.lines == [] and "could not be read" in excerpt.problem
@@ -239,7 +240,7 @@ def test_a_caller_can_supply_the_text_it_has_already_read():
     """So the viewer can cache files without this module owning a cache."""
     scans = _model("basic")
     host = _host(scans, "192.0.2.1")
-    entry = rawlog.entries_for(host, scans.files)[0]
+    entry = rawlog.Scanned(scans.files).entries(host)[0]
     supplied = rawlog.read(rawlog.Request(entry, host), source=_text("basic"))
     assert supplied.lines == rawlog.read(rawlog.Request(entry, host)).lines
 
@@ -257,10 +258,10 @@ def test_reading_raw_text_leaves_the_model_untouched():
 
     before = snapshot()
     for host in scans.hosts:
-        for entry in rawlog.entries_for(host, scans.files):
+        for entry in rawlog.Scanned(scans.files).entries(host):
             rawlog.read(rawlog.Request(entry, host))
             for svc in host.services:
-                for one in rawlog.entries_for(host, scans.files, svc):
+                for one in rawlog.Scanned(scans.files).entries(host, svc):
                     rawlog.read(rawlog.Request(one, host, svc))
     assert snapshot() == before
 
@@ -272,7 +273,7 @@ def test_a_service_that_is_not_on_the_host_is_refused():
     elsewhere = next(s for s in _host(scans, "198.51.100.7").services
                      if s.port == 587)
     assert elsewhere.key not in {s.key for s in host.services}
-    entry = rawlog.entries_for(host, scans.files)[0]
+    entry = rawlog.Scanned(scans.files).entries(host)[0]
     assert "not on this host" in rawlog.read(rawlog.Request(entry, host, elsewhere)).problem
 
 

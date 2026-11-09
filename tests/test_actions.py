@@ -65,35 +65,33 @@ def test_opener_argv(monkeypatch):
     assert actions.opener_argv(Path("/x/y")) == ["open", "/x/y"]
 
 
-def test_clipboard_fallback_selection(monkeypatch):
-    calls = []
+def _fake_run(calls):
+    def run(argv, **kw):
+        calls.append((argv, kw["input"]))
 
-    class FakePyperclip:
-        @staticmethod
-        def copy(text):
-            raise RuntimeError("no display")
-
-    monkeypatch.setitem(__import__("sys").modules, "pyperclip", FakePyperclip)
-    monkeypatch.setattr(actions.shutil, "which", lambda name: name == "xclip")
-
-    def fake_run(argv, **kw):
-        calls.append(argv)
-        class R:
+        class Done:
             returncode = 0
-        return R()
+        return Done()
+    return run
 
-    monkeypatch.setattr(actions.subprocess, "run", fake_run)
-    actions.copy_to_clipboard("hello")
-    assert calls and calls[0][0] == "xclip"
+
+def test_clipboard_uses_the_first_program_present(monkeypatch):
+    calls = []
+    monkeypatch.setattr(actions.shutil, "which", lambda name: name == "xclip")
+    monkeypatch.setattr(actions.subprocess, "run", _fake_run(calls))
+    actions.copy_to_clipboard("héllo")
+    assert calls == [(["xclip", "-selection", "clipboard"], "héllo".encode())]
+
+
+def test_windows_clip_gets_utf16_so_non_ascii_survives(monkeypatch):
+    calls = []
+    monkeypatch.setattr(actions.shutil, "which", lambda name: name == "clip.exe")
+    monkeypatch.setattr(actions.subprocess, "run", _fake_run(calls))
+    actions.copy_to_clipboard("héllo")
+    assert calls[0][1].decode("utf-16") == "héllo"
 
 
 def test_clipboard_unavailable(monkeypatch):
-    class FakePyperclip:
-        @staticmethod
-        def copy(text):
-            raise RuntimeError("nope")
-
-    monkeypatch.setitem(__import__("sys").modules, "pyperclip", FakePyperclip)
     monkeypatch.setattr(actions.shutil, "which", lambda name: None)
     with pytest.raises(ActionError):
         actions.copy_to_clipboard("hello")

@@ -195,6 +195,21 @@ def test_a_change_from_another_origin_is_refused(tmp_path):
                       ).status_code == 200, "reading is not guarded"
 
 
+@pytest.mark.parametrize("own", ["http://localhost:7272", "http://127.0.0.1:7272",
+                                 "http://localhost:9000", "http://[::1]:7272"])
+def test_a_change_from_the_address_the_page_was_opened_on_is_accepted(tmp_path, own):
+    """`localhost` instead of `127.0.0.1`, or an SSH forward on another port:
+    the page's origin is the address the request went to, whatever it is."""
+    sess = _session(tmp_path)
+    client = TestClient(create_app(CachedSource(lambda: sess.scans, lambda: sess.shots),
+                                   sess), base_url=own)
+    response = client.post("/api/v1/marks", json={"tab": "hosts", "step": "h:192.0.2.1"},
+                           headers={"Origin": own})
+    assert response.status_code == 200, response.text
+    assert client.post("/api/v1/marks", json={"tab": "hosts", "step": "h:192.0.2.1"},
+                       headers={"Origin": "https://evil.example"}).status_code == 403
+
+
 # --- scans from the browser -----------------------------------------------------------------
 
 

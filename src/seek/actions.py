@@ -98,17 +98,16 @@ _CLIPBOARD_FALLBACKS = (
 
 
 def copy_to_clipboard(text: str) -> None:
-    try:
-        import pyperclip
-
-        pyperclip.copy(text)
-        return
-    except Exception:  # noqa: BLE001 - pyperclip raises many things
-        pass
+    """Through the platform's own clipboard program - Wayland, X11, macOS,
+    Windows, WSL - the same set a clipboard library would try, without one."""
     for argv in _CLIPBOARD_FALLBACKS:
         if shutil.which(argv[0]):
+            # Windows' clip reads UTF-16 with a byte-order mark; UTF-8 bytes
+            # turn every non-ASCII character into two wrong ones.
+            data = (("\ufeff" + text).encode("utf-16-le") if argv[0].startswith("clip")
+                    else text.encode("utf-8"))
             try:
-                subprocess.run(argv, input=text.encode("utf-8"), check=True)
+                subprocess.run(argv, input=data, check=True)  # noqa: S603 - fixed argv
                 return
             except (OSError, subprocess.CalledProcessError):
                 continue

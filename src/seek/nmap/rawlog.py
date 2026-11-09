@@ -138,17 +138,6 @@ class Scanned:
         return out
 
 
-def entries_for(host: Host, files: list[ScanFile],
-                service: Service | None = None) -> list[Entry]:
-    """The scans that recorded this subject, indexing the files as it goes.
-
-    The convenient form, for a caller with a handful of files and no reason to
-    keep an index. Anything drawing a record repeatedly should hold a
-    :class:`Scanned` instead.
-    """
-    return Scanned(files).entries(host, service)
-
-
 def _address_of(rest: str) -> str:
     """The address a report line names, whichever of its two shapes it is."""
     parenthesised = _PARENTHESISED.match(rest)

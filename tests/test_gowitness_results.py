@@ -216,13 +216,12 @@ def test_the_security_headers_looked_for_are_reported_both_ways():
     captures, _ = _read()
     for c in captures:
         labels = {label for _n, label in res.SECURITY_HEADERS}
-        assert set(c.present_security_headers()) | set(c.missing_security_headers()) == labels
-        assert not set(c.present_security_headers()) & set(c.missing_security_headers())
+        assert set(c.missing_security_headers()) <= labels
 
 
 def test_a_missing_security_header_is_knowable():
     c = res.Capture(url="u", headers=[("X-Frame-Options", "DENY")])
-    assert "x-frame-options" in c.present_security_headers()
+    assert "x-frame-options" not in c.missing_security_headers(), "present is not missing"
     assert "hsts" in c.missing_security_headers()
 
 

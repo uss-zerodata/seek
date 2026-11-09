@@ -162,8 +162,3 @@ def kinds_of(host: Host) -> dict[str, list[str]]:
     return {name: sorted({kind for kind, _ in evidence})
             for name, evidence in _evidence(host).items()}
 
-
-def sources_of(host: Host) -> list[str]:
-    """The kinds of evidence behind a host's names, for a summary column."""
-    return sorted({kind for evidence in _evidence(host).values()
-                   for kind, _ in evidence})

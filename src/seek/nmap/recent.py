@@ -18,6 +18,7 @@ explicit export": it records the user's habits, not the engagement.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import time
@@ -85,23 +86,31 @@ class Earlier:
 
 
 class CommandHistory:
-    """`{args: {"count": n, "last": epoch}}` in a JSON file, capped at `LIMIT`."""
+    """`{args: {"count": n, "last": epoch}}` in a JSON file, capped at `LIMIT`.
+
+    `entries` is never changed once it is set: `record` builds a new dict and
+    swaps it in. The browser's recent list reads it from a server thread while
+    a scan started in the terminal records on the event loop, and changing the
+    dict being iterated raised "dictionary changed size during iteration".
+    """
 
     def __init__(self, path: Path | None) -> None:
         self.path = path
-        self.entries: dict[str, dict] = {}
-        if path is not None:
-            try:
-                raw = json.loads(path.read_text(encoding="utf-8"))
-                self.entries = {k: v for k, v in raw.get("commands", {}).items()
-                                if isinstance(v, dict)}
-            except (OSError, ValueError, AttributeError):
-                self.entries = {}
+        self.entries: dict[str, dict] = self._load()
 
     @classmethod
     def default(cls) -> CommandHistory:
         from seek.paths import state_dir
         return cls(state_dir() / "nmap-commands.json")
+
+    def _load(self) -> dict[str, dict]:
+        if self.path is None:
+            return {}
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+            return {k: v for k, v in raw.get("commands", {}).items() if isinstance(v, dict)}
+        except (OSError, ValueError, AttributeError):
+            return {}
 
     def record(self, argv: list[str], when: float | None = None) -> str | None:
         """Remember a command's arguments - never its targets."""
@@ -109,23 +118,32 @@ class CommandHistory:
         if not args:
             return None
         key = text(args)
-        entry = self.entries.setdefault(key, {"count": 0, "last": 0.0})
+        # From the file as it is now, not as this process last saw it: the
+        # viewer and `seek nmap serve` may both be recording, and writing back
+        # a stale copy erased the other's commands.
+        entries = self._load() if self.path is not None else dict(self.entries)
+        entry = dict(entries.get(key) or {"count": 0, "last": 0.0})
         entry["count"] = int(entry.get("count", 0)) + 1
         entry["last"] = when if when is not None else time.time()
-        if len(self.entries) > LIMIT:
-            oldest = sorted(self.entries, key=lambda k: self.entries[k].get("last", 0))
-            for gone in oldest[:len(self.entries) - LIMIT]:
-                del self.entries[gone]
-        self._write()
+        entries[key] = entry
+        if len(entries) > LIMIT:
+            oldest = sorted(entries, key=lambda k: entries[k].get("last", 0))
+            for gone in oldest[:len(entries) - LIMIT]:
+                del entries[gone]
+        self.entries = entries
+        self._write(entries)
         return key
 
-    def _write(self) -> None:
+    def _write(self, entries: dict[str, dict]) -> None:
+        """Whole or not at all: a write cut short left a file that loaded as
+        empty, and the next write then kept it empty."""
         if self.path is None:
             return
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(json.dumps({"commands": self.entries}, indent=1),
-                                 encoding="utf-8")
+            partial = self.path.with_suffix(".json.tmp")
+            partial.write_text(json.dumps({"commands": entries}, indent=1), encoding="utf-8")
+            os.replace(partial, self.path)
         except OSError:
             pass
 

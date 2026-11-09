@@ -612,10 +612,6 @@ class Entry:
         self.sources, self.cpes = list(sources), list(cpes)
 
     @property
-    def components(self) -> list[Component]:
-        return [c for _h, _s, c in self.places]
-
-    @property
     def confidence(self) -> str:
         return CONFIDENCE[self.rank]
 

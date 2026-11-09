@@ -154,8 +154,9 @@ def _app(tmp_path, monkeypatch, answers: list[str | None]):
         return answers.pop(0)
 
     prompted = []
-    monkeypatch.setattr(app_mod, "sudo_ready", sudo_ready)
-    monkeypatch.setattr(app_mod, "_sudo_validate",
+    from seek.tui.nmap import flows
+    monkeypatch.setattr(flows, "sudo_ready", sudo_ready)
+    monkeypatch.setattr(flows, "_sudo_validate",
                         lambda _why: prompted.append(["sudo", "-v"]))
     app = app_mod.NmapApp(prepare(load([FIX / "basic.xml"])),
                           Config(nmap_path="nmap", scan_output_dir=str(tmp_path)),

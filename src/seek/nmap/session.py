@@ -611,10 +611,29 @@ class Session:
         command = " ".join([self.config.nmap_path, args, *targets])
         return command, f"writes {out_base}.{{xml,nmap,gnmap}}", out_base
 
+    _facts: dict[tuple, builder_mod.Facts] | None = None
+
     def builder_facts(self, targets: list[str]) -> builder_mod.Facts:
         """What the builder may know about these targets: the open ports and
         round trips earlier scans recorded, which were up, and whether a raw
-        scan is possible here at all."""
+        scan is possible here at all.
+
+        Kept per model and target list: the browser's builder asks on every
+        click, and walking 24 200 hosts was 75 ms - in a server thread, but
+        holding the interpreter the terminal is waiting for."""
+        key = tuple(targets)
+        if self._facts is None or self._facts_for is not self.scans:
+            self._facts, self._facts_for = {}, self.scans
+        found = self._facts.get(key)
+        if found is None:
+            found = self._facts[key] = self._build_facts(targets)
+            if len(self._facts) > 16:              # one engagement, a few scopes
+                del self._facts[next(iter(self._facts))]
+        return found
+
+    _facts_for: object = None
+
+    def _build_facts(self, targets: list[str]) -> builder_mod.Facts:
         nets = []
         for target in targets:
             with contextlib.suppress(ValueError):

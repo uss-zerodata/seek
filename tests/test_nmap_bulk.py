@@ -86,10 +86,10 @@ def test_a_re_read_does_not_leave_the_superseded_model_pinned():
     app = NmapApp(_model())
     try:
         gc.collect()
-        after_first = bulk.frozen_count()
+        after_first = gc.get_freeze_count()
         app._publish(_model())
         gc.collect()
-        after_second = bulk.frozen_count()
+        after_second = gc.get_freeze_count()
         # A little slack for what the publication itself allocates; the failure
         # this guards against is a whole model, three orders of magnitude up.
         assert after_second <= after_first + 500, (

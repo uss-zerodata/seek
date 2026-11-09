@@ -127,7 +127,3 @@ def responsive() -> Iterator[None]:
             if _running == 0:
                 sys.setswitchinterval(_restore)
 
-
-def frozen_count() -> int:
-    """How many objects are in the permanent generation. For tests."""
-    return gc.get_freeze_count()

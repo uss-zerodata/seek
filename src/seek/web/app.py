@@ -8,7 +8,6 @@ a network with no route out. The OpenAPI description is still served.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -65,13 +64,8 @@ class _Static(StaticFiles):
         return response
 
 
-def create_app(source: ModelSource, session=None,
-               origin: Callable[[], str] | None = None) -> FastAPI:
-    """The application over `source`; `session` is what the actions change.
-
-    `origin` gives the interface's own `http://host:port` - a callable, since
-    the port is only known once the server is listening.
-    """
+def create_app(source: ModelSource, session=None) -> FastAPI:
+    """The application over `source`; `session` is what the actions change."""
     app = FastAPI(title="seek", docs_url=None, redoc_url=None,
                   openapi_url="/api/openapi.json")
     app.state.source = source
@@ -89,11 +83,18 @@ def create_app(source: ModelSource, session=None,
         site, open in the same browser, from driving the API. A request with
         neither `Origin` nor `Referer` - a script, curl - is a local program
         run by the user, and is let through like the user themselves.
+
+        "Own" is the address *this request* was sent to, not the address the
+        server listens on: the interface is reached as `localhost` as often as
+        `127.0.0.1`, and through an SSH forward on another port entirely, and
+        a fixed address refused every change made that way. Reading is not
+        guarded, and the `Host` is not checked - on purpose: forwarding the
+        port to reach an instance elsewhere is meant to work.
         """
         if request.method not in _SAFE:
             claimed = request.headers.get("origin") or _origin_of(
                 request.headers.get("referer", ""))
-            own = origin() if origin is not None else f"{request.url.scheme}://{request.url.netloc}"
+            own = f"{request.url.scheme}://{request.url.netloc}"
             if claimed and claimed.rstrip("/") != own.rstrip("/"):
                 return JSONResponse({"detail": "refused: request from another origin"},
                                     status_code=403)

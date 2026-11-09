@@ -111,10 +111,6 @@ class ParsedQuery:
         return not self.terms
 
     @property
-    def positive_terms(self) -> tuple[Term, ...]:
-        return tuple(t for t in self.terms if not t.negated)
-
-    @property
     def content_query_len(self) -> int:
         """Length of the longest positive term - gates content search."""
         pos = [len(t.text) for t in self.terms if not t.negated and t.text]

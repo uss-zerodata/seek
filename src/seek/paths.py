@@ -46,3 +46,12 @@ def config_file() -> Path:
 
 def history_file() -> Path:
     return state_dir() / "history"
+
+
+def short_path(path: Path) -> str:
+    """A directory as the user would type it: relative to where seek was started
+    when it is below it, absolute otherwise."""
+    try:
+        return path.resolve().relative_to(Path.cwd().resolve()).as_posix() or "."
+    except (OSError, ValueError):
+        return str(path)
