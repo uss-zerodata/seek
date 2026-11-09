@@ -251,14 +251,13 @@ def _pair(label: str, value: str) -> Text:
 # 20 000-line log rendered on every refresh of the pane is what froze the
 # interface while a scan streamed - see `_log_lines`.
 PANE_TAIL = 500
-_LOG_CACHE: dict[tuple[int, int | None], tuple[tuple, list[Text]]] = {}
 
 
 def _log_lines(run: Run, tail: int | None = None) -> list[Text]:
     """The log as *one* Text - a Text per line was 2.5 million objects for a
     1200-line scan, rebuilt three times a refresh - cached until it grows."""
     key = (run.dropped, len(run.log))
-    cached = _LOG_CACHE.get((id(run), tail))
+    cached = run.rendered.get(tail)
     if cached is not None and cached[0] == key:
         return cached[1]
     lines: list[Text] = []
@@ -273,9 +272,7 @@ def _log_lines(run: Run, tail: int | None = None) -> list[Text]:
         shown = shown[-tail:]
     if shown:
         lines.append(Text("\n".join(f"  {line}" for line in shown)))
-    if len(_LOG_CACHE) > 16:
-        _LOG_CACHE.clear()
-    _LOG_CACHE[(id(run), tail)] = (key, lines)
+    run.rendered[tail] = (key, lines)
     return lines
 
 

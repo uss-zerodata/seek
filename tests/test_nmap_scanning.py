@@ -1372,7 +1372,7 @@ async def test_a_streaming_scan_redraws_a_few_times_a_second(tmp_path):
         assert len(reloads) < 30, f"{len(reloads)} redraws for 600 lines"
 
 
-def test_the_pane_renders_the_newest_part_of_a_long_log():
+async def test_the_pane_renders_the_newest_part_of_a_long_log():
     from seek.nmap.runner import ScanRun
     from seek.tui.nmap import scans as scan_views
 

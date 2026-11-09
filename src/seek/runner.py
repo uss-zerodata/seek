@@ -71,6 +71,9 @@ class Run:
     notify_url: str = ""
     notify_progress: bool = False
     milestone: int = 0
+    # The log as the interface last drew it, per depth - kept on the run so it
+    # dies with it (a cache keyed by `id(run)` can hand a new run a dead one's).
+    rendered: dict = field(default_factory=dict, repr=False, compare=False)
 
     @property
     def running(self) -> bool:

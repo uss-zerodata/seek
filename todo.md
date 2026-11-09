@@ -35,7 +35,7 @@
 - [x] gowhittness results are not being loaded for all provided paths. please check how the gowhitness results are being loaded and make sure that all provided paths are being considered and scanned recursively for gowhitness results.
 - [x] check version numbers for known vulnerabilities against a vulnerability database and highlight the vulnerable services in the service list. this way the user can easily identify application version with known vulnerabilities. 
 - [x] check version numbers for out of date software against the endoflife.date database and highlight the out of date services in the service list. this way the user can easily identify application version which are no longer supported by the vendor and may have known vulnerabilities.
-- [ ] performance is really bad while running a scan. the whole app becomes uncontrollable and during one test i noticed the tui constantly switching tabs between whatever the user last selected and the statistics panel. please perform a full review and fix all performance issues.
+- [x] performance is really bad while running a scan. the whole app becomes uncontrollable and during one test i noticed the tui constantly switching tabs between whatever the user last selected and the statistics panel. please perform a full review and fix all performance issues.
 
 # seek nmap webinterface
 
