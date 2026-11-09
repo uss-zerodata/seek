@@ -2828,6 +2828,8 @@ class NmapApp(ScanFlows, App[int]):
         finally:
             self._reader = None
 
+    _ticks = 0
+
     def _on_tick(self) -> None:
         """Both things that depend on the terminal's size, on one timer."""
         if self._busy is not None:
@@ -2840,6 +2842,13 @@ class NmapApp(ScanFlows, App[int]):
             self._spin += 1
             self._refresh_status()
             self._refresh_empty(self._rows)
+        self._ticks += 1
+        if self._ticks % 5 == 0 and self.view.kind == "scans" and self.session.running():
+            # A run's row shows its elapsed time, and was redrawn only when the
+            # tool printed: a version scan waiting on slow services printed
+            # nothing for minutes, and a clock that stops reads as "hung".
+            # Once a second, through the same throttle the output uses.
+            self._on_scan_line("")
         self._apply_detail_visibility()
         self._check_width()
 

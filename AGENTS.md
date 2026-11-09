@@ -560,9 +560,12 @@ together. Do not `query_one(RowList)`: it matches both.
   time, and is never handed anything else. That is why `CaptureRun.notify_name`
   exists: its `label` carries a directory name. The session sends: milestones
   from `on_line` (when `Run.fraction()` crosses 25/50/75), the end from
-  `on_done`. Each send is a thread, and one run's sends are chained
-  (`_last_notice`) because concurrent threads delivered "finished" before
-  "75 %". A failure is `Run.append`ed to the log, never a state change. A URL
+  `on_done`. One daemon thread (`_send_notices`) sends everything from a
+  queue: in order, because concurrent threads delivered "finished" before
+  "75 %", and a daemon rather than `asyncio.to_thread`, because `asyncio.run`
+  waits for the loop's pool at exit and an unreachable webhook held the
+  terminal for the whole timeout after quitting. A failure is posted back to
+  the loop and `Run.append`ed to the log, never a state change. A URL
   with credentials is refused: no authentication is supported, and the URL is
   shown in every review. The config holds the default, and the plan carries
   it. The review returns the run's own choice on `ReviewScreen.notify_url` /
@@ -767,7 +770,14 @@ together. Do not `query_one(RowList)`: it matches both.
   cached per run and depth (`scans._log_lines`), and `_refresh_detail` coalesces
   to one `_draw_detail` per refresh. The reader (`full=True`) still has every
   line. The browser gets the tail while a run is running, because it re-fetches
-  the record every 400 ms in the same process.
+  the record every 400 ms in the same process. So does the reader (`d`) while a run is live
+  and not frozen: the whole 20 000 lines took 0.9 s to render, four times a
+  second (`record_lines`). A run's row is redrawn once a second by `_on_tick`
+  even when the tool is silent, so its elapsed clock never stops. Output is
+  read with a 16 MiB line limit (`runner.LINE_LIMIT`), and a longer line is
+  cut, not raised: asyncio's 64 KiB default raised out of the read loop, the
+  run stayed "running" for ever, and the undrained pipe blocked nmap. Built
+  commands carry `-v`, because the progress lines are only printed then.
 - **A stale tab report is not a click.** `_activate`/`_sync_tab` set
   `Tabs.active`, and Textual reports that later as `TabActivated`. When a second
   switch comes first (a scan starting while a key was pressed, a lagging loop),

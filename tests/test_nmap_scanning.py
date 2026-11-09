@@ -1380,8 +1380,58 @@ async def test_the_pane_renders_the_newest_part_of_a_long_log():
     for i in range(2000):
         run.append(f"line {i}")
     pane = scan_views._log_lines(run, scan_views.PANE_TAIL)
-    assert "1500 earlier line(s) - d reads the whole log" in pane[0].plain
+    assert "1500 earlier line(s) - the whole log once it ends" in pane[0].plain
     assert pane[-1].plain.endswith("line 1999") and "line 1499\n" not in pane[-1].plain
     reader = scan_views._log_lines(run)
     assert reader[-1].plain.startswith("  line 0"), "the reader keeps everything"
     assert scan_views._log_lines(run, scan_views.PANE_TAIL) is pane, "cached until it grows"
+
+
+async def test_the_reader_of_a_live_run_gets_the_tail_until_it_is_frozen(tmp_path):
+    """The whole of a 20 000-line log took ~0.9 s to render, four times a second."""
+    from seek.config import Config as _Config
+    from seek.nmap.merge import load as _load
+    from seek.nmap.runner import ScanRun
+    from seek.nmap.session import Session
+    from seek.nmap.views import prepare
+    from seek.tui.nmap import record as record_mod
+    from seek.tui.nmap import views as vdefs
+
+    sess = Session(_Config(nmap_path="/nonexistent"), [], tmp_path, databases=[],
+                   scans=prepare(_load([])))
+    run = ScanRun(argv=["nmap"], preset="p", targets=["t"])
+    for i in range(2000):
+        run.append(f"line {i}")
+    row = vdefs.Row(cells=("p",), text="p", target=run)
+
+    def shown(frozen):
+        lines, _ = record_mod.record_lines(row, "Scans", sess, "raw", frozen=frozen, full=True)
+        return lines[0].text.renderables[-1].plain
+
+    assert shown(frozen=False).startswith("  line 1500"), "live: the tail"
+    assert shown(frozen=True).startswith("  line 0"), "frozen: everything"
+    run.state = run.state.__class__("done")
+    assert shown(frozen=False).startswith("  line 0"), "ended: everything"
+
+
+async def test_a_quiet_running_scan_still_shows_time_passing(tmp_path):
+    """No output for a while must not stop the run's elapsed clock."""
+    quiet = _stub(tmp_path, "#!/bin/sh\nsleep 4\n", name="quiet-nmap")
+    config = Config(nmap_path=quiet, nmap_presets={"Quick": "-sT"},
+                    scan_output_dir=str(tmp_path))
+    app = _app(tmp_path, "basic", config=config)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        await _to_review(pilot, app)
+        await _choose(pilot, app, "start")
+
+        def shown_time():
+            row = next(r for r in app._rows if r.target is app.runner.runs[-1])
+            return row.cells[3]
+
+        await pilot.pause(0.6)
+        before = shown_time()
+        await pilot.pause(2.2)
+        assert shown_time() != before, "the clock moved with no output at all"
+        app.runner.cancel()
+        await pilot.pause(0.5)

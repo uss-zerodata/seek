@@ -123,8 +123,11 @@ _NMAP = (
 
 
 async def _drain(session: Session) -> None:
-    for _ in range(100):
-        if not session._tasks:
+    """Until every queued notification was sent and its outcome is on the loop."""
+    for _ in range(250):
+        outbox = session._outbox
+        if outbox is None or outbox.unfinished_tasks == 0:
+            await asyncio.sleep(0.05)               # a failure line is posted back
             return
         await asyncio.sleep(0.02)
 
@@ -171,3 +174,17 @@ async def test_an_unreachable_webhook_changes_nothing_but_the_log(tmp_path):
     _session_, run = await _scan(tmp_path, f"http://127.0.0.1:{port}/t", progress=False)
     assert run.state is State.DONE, "the scan did what it did"
     assert any(line.startswith("[seek] notification failed:") for line in run.log)
+
+
+async def test_quitting_never_waits_for_a_webhook(tmp_path):
+    """`asyncio.run` waits for the loop's thread pool at exit; the sender is a
+    daemon thread of its own, so an unreachable webhook cannot hold the exit."""
+    import threading
+
+    session = _session(tmp_path)
+    run = ScanRun(preset="p", argv=["true"], targets=["t"], out_base=tmp_path / "o",
+                  notify_url="http://127.0.0.1:9/never")
+    session._notify(run, "tui", notify.ended("p", "done", 1))
+    sender = next(t for t in threading.enumerate() if t.name == "seek-notify")
+    assert sender.daemon
+    await _drain(session)

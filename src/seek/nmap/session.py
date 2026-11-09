@@ -26,6 +26,7 @@ import contextlib
 import http.client
 import ipaddress
 import os
+import queue
 import shutil
 import threading
 from collections.abc import Callable
@@ -233,7 +234,7 @@ class Session:
         self._scanned_for: object = None
         self._listeners: list[Callable[[Event], None]] = []
         self._tasks: set[asyncio.Task] = set()
-        self._last_notice: dict[int, asyncio.Task] = {}   # run id -> its newest message
+        self._outbox: queue.Queue | None = None          # notifications, for one sender
 
     # --- events -------------------------------------------------------------------
 
@@ -875,34 +876,37 @@ class Session:
         return task
 
     def _notify(self, run: Run, origin: str, message: notify.Message) -> None:
-        """Send in a thread; a failure is a line in the run's log, never a
-        change to the run - the scan did what it did either way.
+        """Queue a message for the sender thread; a failure is a line in the
+        run's log, never a change to the run - the scan did what it did.
 
-        One run's messages go out in order - each waits for the one before -
-        or "finished" could overtake "75 %"."""
-        before = self._last_notice.get(id(run))
+        One daemon thread sends them all, in the order queued, so "finished"
+        cannot overtake "75 %". Daemon, not the event loop's thread pool:
+        `asyncio.run` waits for that pool when the app ends, so a webhook that
+        dropped packets held the terminal for the whole send timeout after
+        quitting."""
+        if self._outbox is None:
+            self._outbox = queue.Queue()
+            threading.Thread(target=self._send_notices, name="seek-notify",
+                             daemon=True).start()
+        self._outbox.put((asyncio.get_running_loop(), run, origin, message))
 
-        async def deliver() -> None:
-            if before is not None:
-                await asyncio.wait([before])
+    def _send_notices(self) -> None:
+        assert self._outbox is not None
+        while True:
+            loop, run, origin, message = self._outbox.get()
             try:
-                await asyncio.to_thread(notify.send, run.notify_url, message)
+                notify.send(run.notify_url, message)
             except (OSError, ValueError, http.client.HTTPException) as exc:
                 reason = getattr(exc, "reason", None) or exc
                 line = f"[seek] notification failed: {reason}"
-                run.append(line)
-                self.emit(Event("line", origin, run, line))
+                with contextlib.suppress(RuntimeError):   # the loop has closed
+                    loop.call_soon_threadsafe(self._noted, run, origin, line)
+            finally:
+                self._outbox.task_done()
 
-        task = asyncio.get_running_loop().create_task(deliver())
-        self._last_notice[id(run)] = task
-        self._tasks.add(task)
-
-        def settled(done: asyncio.Task) -> None:
-            self._tasks.discard(done)
-            if self._last_notice.get(id(run)) is done:
-                del self._last_notice[id(run)]
-
-        task.add_done_callback(settled)
+    def _noted(self, run: Run, origin: str, line: str) -> None:
+        run.append(line)
+        self.emit(Event("line", origin, run, line))
 
     def _scan_done(self, run: Run) -> None:
         if self.owner is not None:

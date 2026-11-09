@@ -36,6 +36,9 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 LOG_LIMIT = 20_000
+# The longest output line read whole. asyncio's own default is 64 KiB, and one
+# longer line (script output, `-d`) raised out of the read loop.
+LINE_LIMIT = 16 * 1024 * 1024
 """Lines kept per run. `-p- -v` on a /24 produces far more than a screen's
 worth, and an unbounded buffer in a long-lived TUI is a leak with a nice name."""
 
@@ -188,6 +191,7 @@ class Runner:
                 # saw one made here. stdin is closed because a background group
                 # that reads the terminal is stopped (nmap reads keys from it).
                 process_group=0,
+                limit=LINE_LIMIT,
             )
         except FileNotFoundError:
             return self._settle(run, State.FAILED, None,
@@ -198,7 +202,20 @@ class Runner:
 
         self._process = process
         assert process.stdout is not None
-        async for raw in process.stdout:
+        while True:
+            try:
+                raw = await process.stdout.readline()
+            except ValueError:
+                # Longer than LINE_LIMIT. asyncio drops what it buffered of it
+                # and raises; carrying on is what keeps the pipe drained - a
+                # loop that died here left the tool blocked writing and the run
+                # "running" for ever.
+                note = f"[seek] a line longer than {LINE_LIMIT // 1024 // 1024} MiB was cut"
+                run.append(note)
+                on_line(note)
+                continue
+            if not raw:
+                break
             line = raw.decode("utf-8", "replace").rstrip("\n")
             run.append(line)
             on_line(line)

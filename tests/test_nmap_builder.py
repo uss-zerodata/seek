@@ -151,7 +151,7 @@ def test_every_goal_builds_a_command_nmap_would_take(goal, profile):
             pick = builder.recommended(step, state, LAN) or choices(step, state, LAN)[0].key
             state = advance(state, step, pick if step != "goal" else goal)
     args = resolve(state, LAN, profile).args
-    assert args
+    assert "-v" in args, "progress lines are printed only when verbose"
     presets.parse_command("nmap " + text(args))
 
 

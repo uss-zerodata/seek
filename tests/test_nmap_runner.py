@@ -195,3 +195,25 @@ async def test_elevation_help_names_the_ways_out():
     assert "another terminal" not in text, "sudo's authorisation is per terminal"
     inside = run_mod.elevation_help(terminal=True)
     assert "terminal viewer" not in inside and "setcap" in inside
+
+
+async def test_a_very_long_output_line_does_not_stop_the_run(tmp_path, monkeypatch):
+    """asyncio reads 64 KiB a line by default; a longer one raised out of the
+    read loop, left the run "running" for ever and stopped draining the pipe."""
+    import sys
+
+    from seek import runner as base
+
+    code = "print('before'); print('x' * 70000); print('after')"
+    run = ScanRun(preset="long", argv=[sys.executable, "-c", code], targets=["t"],
+                  out_base=tmp_path / "o")
+    await Runner().run(run, lambda _l: None, lambda _r: None)
+    assert run.state is State.DONE and list(run.log)[-1] == "after"
+    assert len(list(run.log)[1]) == 70000, "read whole under the larger limit"
+
+    monkeypatch.setattr(base, "LINE_LIMIT", 1024)       # and past even that one
+    run = ScanRun(preset="longer", argv=[sys.executable, "-c", code], targets=["t"],
+                  out_base=tmp_path / "o")
+    await Runner().run(run, lambda _l: None, lambda _r: None)
+    assert run.state is State.DONE, "settled, not stuck running"
+    assert list(run.log)[-1] == "after" and any("was cut" in line for line in run.log)

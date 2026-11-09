@@ -14,6 +14,7 @@ from seek.gowitness import capture as gw_capture
 from seek.nmap import timeline
 from seek.nmap.runner import ScanRun
 from seek.nmap.session import Session
+from seek.runner import Run
 from seek.tui.nmap import detail as detail_pane
 from seek.tui.nmap import scans as scan_views
 from seek.tui.nmap import views as vdefs
@@ -28,6 +29,12 @@ def record_lines(row: vdefs.Row | None, view_title: str, session: Session,
     if isinstance(target, timeline.Scan):
         return ([detail_pane.Line(scan_views.scan_report(target, report_mode))],
                 f"Scan · {target.label}")
+    if isinstance(target, Run) and target.running and not frozen:
+        # The whole of a live log is up to 20 000 lines and ~0.9 s to render,
+        # and a running run redraws four times a second: the reader froze the
+        # interface. It gets the tail until the run ends or the view is frozen
+        # (`p`), when nothing redraws it and one slow render is fine.
+        full = False
     if isinstance(target, gw_capture.CaptureRun):
         # Checked before ScanRun and separately from it: a capture is a `Run`,
         # not a `ScanRun`, and the record renderer knows nothing about runs.

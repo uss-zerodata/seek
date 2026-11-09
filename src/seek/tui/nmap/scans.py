@@ -267,8 +267,8 @@ def _log_lines(run: Run, tail: int | None = None) -> list[Text]:
         lines.append(Text("  no output yet", style=_KEY))
     shown = list(run.log)
     if tail is not None and len(shown) > tail:
-        lines.append(Text(f"  … {len(shown) - tail} earlier line(s) - d reads the whole log",
-                          style=_KEY))
+        lines.append(Text(f"  … {len(shown) - tail} earlier line(s) - the whole log once "
+                          "it ends, or now: freeze with p, then d", style=_KEY))
         shown = shown[-tail:]
     if shown:
         lines.append(Text("\n".join(f"  {line}" for line in shown)))

@@ -269,6 +269,10 @@ def _goal_layer(state: State, facts: Facts) -> dict[str, str | None]:
     goal = state.answer("goal") or "ports"
     proto = state.answer("protocol") or "tcp"
     layer = parse_args(GOALS.get(goal, ("", ""))[1].split())
+    # Verbose: the progress lines ("About 40% done") that the run list, the
+    # status and the 25/50/75 % notifications read are printed only then.
+    # Without it a built scan said "running" and nothing else until it ended.
+    layer["-v"] = None
     if goal == "live":
         return layer
     if not facts.privileged:
