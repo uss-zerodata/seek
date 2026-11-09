@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic: three hosts, two with the timing nmap records, one without. -->
+<nmaprun scanner="nmap" args="nmap -sS -T4 -p 22,80 -oX timing.xml 192.0.2.10-12" start="1762650000" version="7.94" xmloutputversion="1.05">
+<host><status state="up" reason="syn-ack"/><address addr="192.0.2.10" addrtype="ipv4"/>
+<ports><port protocol="tcp" portid="22"><state state="open" reason="syn-ack"/><service name="ssh"/></port></ports>
+<times srtt="1200" rttvar="400" to="100000"/></host>
+<host><status state="up" reason="syn-ack"/><address addr="192.0.2.11" addrtype="ipv4"/>
+<ports><port protocol="tcp" portid="80"><state state="open" reason="syn-ack"/><service name="http"/></port></ports>
+<times srtt="38500" rttvar="9100" to="100000"/></host>
+<host><status state="up" reason="user-set"/><address addr="192.0.2.12" addrtype="ipv4"/>
+<ports><port protocol="tcp" portid="22"><state state="filtered" reason="no-response"/></port></ports>
+</host>
+<runstats><finished time="1762650030" elapsed="30.00"/><hosts up="3" down="0" total="3"/></runstats>
+</nmaprun>

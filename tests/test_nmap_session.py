@@ -113,3 +113,17 @@ async def test_stopping_a_listener(tmp_path):
     session.clear_marks()
     session.publish(session.scans)
     assert events == []
+
+
+async def test_a_started_scan_is_remembered_without_its_targets(tmp_path):
+    from seek.paths import state_dir
+
+    session = _session(tmp_path)
+    run = ScanRun(preset="stub", argv=[sys.executable, "-c", "print(1)", "-v",
+                                       "192.0.2.77"],
+                  targets=["192.0.2.77"], out_base=tmp_path / "out")
+    await session.start_scan(run)
+    stored = (state_dir() / "nmap-commands.json").read_text()
+    assert "192.0.2.77" not in stored and str(tmp_path) not in stored
+    recent, _frequent = session.earlier_commands()
+    assert recent and recent[0].where == "history"

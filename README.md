@@ -212,6 +212,40 @@ vector, the scope, the file it will write and whether it will be elevated.
 Nothing runs until that review is confirmed. Opened on a directory with no scans
 in it, the viewer starts at the editor instead of exiting.
 
+**Building a command.** After the scope, `n` opens a chooser:
+- **build a command…**, a guided builder;
+- your **recent** and **frequent** commands;
+- the presets.
+
+Type to filter all of them at once. The builder asks one question per step:
+goal → protocol → ports → how hosts are reached → names → network → fine-tune
+→ choose. Every choice says what it gains (`+`) and what it costs (`−`), with
+nmap's own figures (top 100 ports find about 78 % of open TCP ports, top 1000
+about 93 %). The command updates as you move, so each choice is previewed.
+
+The network step takes RTT timeouts from what earlier scans of the targets
+measured. If nothing covers them, it offers to measure now. Before anything is
+sent it says what it will send, to how many hosts, and for how long: a few TCP
+connects to ports known open, or a bounded `nmap -sn`. Every derived value says
+where it came from, for example "earlier scans: slowest of 12 hosts 1.2 ms,
+raised to the 100 ms floor".
+
+**Fine-tune** lists every option nmap documents, in nmap's own eleven groups:
+- `Space` turns a flag on or off; `↵` edits a value, checked as you type;
+- `/` filters; `r` resets a value; `s` lists set options first;
+- options seek controls itself (output files, `-iL`) are shown with the reason.
+
+A value you set always wins. **Choose** shows a **fast** and a **reliable**
+command for the same answers, with what the fast one may miss. Either goes to
+the editable command and the review. Keys: `←` back, `1`–`8` a done step, `?`
+help, `^S` finish, `Esc` leave (it asks before discarding answers). The browser's
+new-scan dialog offers the same chooser and builder.
+
+Earlier commands come from this engagement's scan files, and from
+`nmap-commands.json` in the state directory. That file holds **arguments only**:
+targets, paths and output options are removed before anything is written, so
+one engagement's scope never reaches the next.
+
 **Notifications.** Set `notify_url` in the config (for example
 `notify_url = "notify.hektor.cc/test"`; `https://` is added when no scheme is
 given) and seek POSTs an [ntfy](https://ntfy.sh)-format message there when a

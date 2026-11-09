@@ -24,7 +24,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import http.client
+import ipaddress
 import os
+import shutil
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -38,10 +40,13 @@ from seek.gowitness import detect as gw_detect
 from seek.gowitness import locate as gw_locate
 from seek.gowitness import results as gw_results
 from seek.gowitness.results import canonical_url
+from seek.nmap import builder as builder_mod
 from seek.nmap import inventory as inventory_mod
 from seek.nmap import merge as merge_mod
 from seek.nmap import presets as presets_mod
 from seek.nmap import rawlog, remote, timeline
+from seek.nmap import recent as recent_mod
+from seek.nmap import timing as timing_mod
 from seek.nmap.export import Record, export_ports, export_urls, records_for, service_urls
 from seek.nmap.models import ScanSet
 from seek.nmap.runner import ScanRun
@@ -587,20 +592,55 @@ class Session:
         presets = self.config.nmap_presets
         if preset not in presets:
             raise ScanError(f"no preset {preset!r}")
+        return self.draft_args(preset, presets[preset], targets)
+
+    def draft_args(self, name: str, args: str, targets: list[str]) -> tuple[str, str, Path]:
+        """`draft_command` for any arguments - a preset's, an earlier command's,
+        or the builder's. `name` names the output files."""
         if not targets:
             raise ScanError("no targets")
-        out_base = presets_mod.output_base(self.scan_dir, preset)
-        args = presets[preset]
+        out_base = presets_mod.output_base(self.scan_dir, name)
         if presets_mod.PORTS_PLACEHOLDER in args:
             # The reference workflow greps the open ports out of the previous
             # scan's .gnmap and feeds them to -p. The model already knows them.
             known = export_ports(records_for(self.scans.hosts))
             if not known or not known[0]:
-                raise ScanError(f"{preset}: no open port is known yet - run a service "
+                raise ScanError(f"{name}: no open port is known yet - run a service "
                                 "scan first, or type the ports yourself")
             args = args.replace(presets_mod.PORTS_PLACEHOLDER, known[0])
         command = " ".join([self.config.nmap_path, args, *targets])
         return command, f"writes {out_base}.{{xml,nmap,gnmap}}", out_base
+
+    def builder_facts(self, targets: list[str]) -> builder_mod.Facts:
+        """What the builder may know about these targets: the open ports and
+        round trips earlier scans recorded, which were up, and whether a raw
+        scan is possible here at all."""
+        nets = []
+        for target in targets:
+            with contextlib.suppress(ValueError):
+                nets.append(ipaddress.ip_network(target, strict=False))
+        exact = set(targets)
+
+        def covered(host) -> bool:
+            if host.address in exact or exact & set(host.hostnames):
+                return True
+            with contextlib.suppress(ValueError):
+                address = ipaddress.ip_address(host.address)
+                return any(address in net for net in nets if net.version == address.version)
+            return False
+
+        hosts = [h for h in self.scans.hosts if covered(h)]
+        tcp = sorted({s.port for h in hosts for s in h.services
+                      if s.is_open and s.protocol == "tcp"})
+        udp = sorted({s.port for h in hosts for s in h.services
+                      if s.is_open and s.protocol == "udp"})
+        privileged = (os.geteuid() == 0 or self.nmap.capable
+                      or shutil.which("sudo") is not None)
+        return builder_mod.Facts(
+            targets=tuple(targets), tcp_ports=",".join(map(str, tcp)),
+            udp_ports=",".join(map(str, udp)),
+            up=frozenset(h.address for h in hosts if h.up),
+            privileged=privileged, rtts=tuple(timing_mod.from_hosts(hosts)))
 
     def version_gaps(self, records) -> dict[str, list]:
         """The open services of `records` that no source has versioned, by host
@@ -743,7 +783,26 @@ class Session:
         problem = presets_mod.writable(self.scan_dir)
         if problem is not None:
             raise ScanError(f"cannot write the scan here: {problem}")
-        return self._start(self.runner, run, origin, self._scan_done)
+        task = self._start(self.runner, run, origin, self._scan_done)
+        self.command_history().record(run.argv)   # its arguments - never its targets
+        return task
+
+    _commands: recent_mod.CommandHistory | None = None
+
+    def command_history(self) -> recent_mod.CommandHistory:
+        """The arguments of scans started here, kept across sessions."""
+        if self._commands is None:
+            self._commands = recent_mod.CommandHistory.default()
+        return self._commands
+
+    def earlier_commands(self) -> tuple[list[recent_mod.Earlier], list[recent_mod.Earlier]]:
+        """(recent, frequent) for the chooser: this engagement's scans and the
+        history together, `{ports}` restored where it was the known ports."""
+        known = export_ports(records_for(self.scans.hosts))
+        ports = known[0] if known else ""
+        files, history = self.scans.files, self.command_history()
+        return (recent_mod.recent(files, history, ports),
+                recent_mod.frequent(files, history, ports))
 
     def start_capture(self, run: gw_capture.CaptureRun, origin: str = "") -> asyncio.Task:
         busy = self.captures.busy()

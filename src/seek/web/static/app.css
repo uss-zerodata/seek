@@ -342,3 +342,15 @@ body:not(.shell) .understood { margin: 0 0 4px; }
 .variants button:first-child { border-radius: 4px 0 0 4px; margin-left: 0; }
 .variants button:last-child { border-radius: 0 4px 4px 0; }
 .variants button[aria-current] { background: var(--key-tint); border-color: var(--key); color: var(--ink); position: relative; }
+
+/* The command builder: a step list, one decision at a time, the command below. */
+.stepper { display: flex; flex-wrap: wrap; gap: 4px 12px; list-style: none; padding: 0; margin: 0 0 12px; }
+.stepper button { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+.stepper button:disabled { cursor: default; opacity: .6; }
+.stepper [aria-current="step"] button { font-weight: 600; text-decoration: underline; }
+.choice { display: block; padding: 6px 0; }
+.choice span { display: block; margin-left: 24px; }
+dialog pre.command { white-space: pre-wrap; word-break: break-word; font: 12px var(--mono); }
+dialog details { margin: 0 0 8px; }
+dialog .row { margin: 2px 0 2px 16px; }
+dialog .row .error { display: block; margin-left: 16px; }

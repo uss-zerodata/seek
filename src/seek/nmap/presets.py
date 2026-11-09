@@ -129,12 +129,17 @@ def _bounding() -> int:
 # them. Derived from the flags rather than declared per preset: a command the
 # user pastes is then classified as correctly as a shipped one, and no table
 # has to be kept in step with nmap.
-_ROOT_LETTERS = set("SAWMNFXUYZO")
+_ROOT_LETTERS = set("SAWMNFXUYZOI")
 # Host-discovery probes that need raw sockets. `-PS`/`-PA` are deliberately
 # absent: unprivileged, nmap sends those with connect(), so requiring sudo for
 # them would ask for elevation that is not needed. `-Pn` is not a probe at all.
-_ROOT_PINGS = set("EPMOU")
-_ROOT_FLAGS = {"-O", "-A", "--traceroute", "--privileged"}
+_ROOT_PINGS = set("EPMOUYR")
+# The raw-packet evasion options: fragmenting, decoys, a spoofed source or MAC,
+# IP options, a set TTL and bad checksums all shape packets a connect() scan
+# never builds. `seek.nmap.options` marks the same set `root=True`, and a test
+# holds the two together.
+_ROOT_FLAGS = {"-O", "-A", "--traceroute", "--privileged", "-f", "--mtu", "-D", "-S",
+               "--spoof-mac", "--ip-options", "--ttl", "--badsum"}
 
 # The NSE scripts that build their own packets. `--script` on its own says
 # nothing about privilege: an http, smb or ssl script is an ordinary
@@ -165,7 +170,7 @@ def _root_script(spec: str) -> str | None:
 def _is_privileged(token: str) -> bool:
     # `--flag=value` and `--flag value` are the same flag to nmap, so the name
     # is taken before the `=` - as `parse_args` does for the output flags.
-    if token.partition("=")[0] in _ROOT_FLAGS:
+    if token.partition("=")[0] in _ROOT_FLAGS or re.fullmatch(r"-f+", token):
         return True
     # -sS, -sU, -sSU ... but not -sV (a version probe is unprivileged) and not
     # -sn (host discovery only - lower case, and the letters are checked as

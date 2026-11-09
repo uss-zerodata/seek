@@ -278,3 +278,15 @@ def test_static_files_are_revalidated(world):  # noqa: F811
     # An imported module has no version in its URL; a stale one breaks the page.
     response = world[3].get("/static/js/keys.js")
     assert response.status_code == 200 and response.headers["cache-control"] == "no-cache"
+
+
+def test_the_builder_dialog_is_accessible_and_stateless():
+    dialog = ACTIONS_JS.split("function openBuilder(")[1].split("\n}\n")[0]
+    assert 'aria-current="step"' in dialog, "the stepper says where the user is"
+    assert 'role="radiogroup"' in dialog and 'type="radio"' in dialog
+    assert "aria-describedby" in dialog, "each choice's + and − lines describe it"
+    assert 'aria-invalid' in dialog, "a refused value is marked on its field"
+    assert '"/api/v1/builder/measure"' in dialog and "confirmed: true" in dialog
+    assert "Measure now?" in dialog, "the measurement is confirmed before it is sent"
+    assert "Discard the answers?" in dialog
+    assert "state, measured" in dialog, "the state travels with every request"

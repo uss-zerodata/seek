@@ -16,7 +16,7 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from seek.nmap.models import Host, OsMatch, ScanFile, ScriptResult, Service, by_port
+from seek.nmap.models import Host, OsMatch, ScanFile, ScriptResult, Service, Times, by_port
 
 
 class NmapParseError(Exception):
@@ -106,7 +106,18 @@ def _host(el: ET.Element, source: str) -> Host:
         scripts=[_script(s) for s in el.findall("hostscript/script")],
         sources=[source],
         os_matches=[_os_match(m) for m in el.findall("os/osmatch")],
+        times=_times(el.find("times")),
     )
+
+
+def _times(el: ET.Element | None) -> Times | None:
+    if el is None:
+        return None
+    try:
+        return Times(int(el.get("srtt") or ""), int(el.get("rttvar") or ""),
+                     int(el.get("to") or ""))
+    except ValueError:          # absent or malformed: no measurement, not zero
+        return None
 
 
 def parse_file(path: Path, label: str | None = None) -> ScanFile:

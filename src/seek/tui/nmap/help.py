@@ -113,7 +113,11 @@ _GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("", "matching is by version: a backported distro fix is not visible"),
     ]),
     ("Scan", [
-        ("n", "new scan: scope, preset, command, then a review before it runs"),
+        ("n", "new scan: scope, then build a command, reuse a recent or frequent"),
+        ("", "one, or pick a preset - then the command, then a review before it runs"),
+        ("", "the builder: goal → protocol → ports → reach → names → network →"),
+        ("", "fine-tune → choose; ← back, 1-8 a done step, ? help, ^S finish;"),
+        ("", "it ends with a fast and a reliable command and says what each misses"),
         ("y", "in a review: copy it for another machine (bare nmap/gowitness,"),
         ("", "relative paths) - works without the tool here; copy the output back"),
         ("", "into the scan directory and it is read like any other scan"),

@@ -55,8 +55,13 @@ class _Fits:
             flex = self.query_one(".flex")           # type: ignore[attr-defined]
         except NoMatches:
             return
-        others = sum(c.outer_size.height for c in frame.children if c is not flex)
+        # Children lay out at their natural height even when the frame clips
+        # them, so their sum is what the frame wants; the flexible part may sit
+        # inside a row of the frame, which is why it is subtracted rather than
+        # skipped.
+        natural = sum(c.outer_size.height for c in frame.children)
         chrome = frame.outer_size.height - frame.content_size.height
+        others = natural - flex.outer_size.height
         margin = flex.styles.margin.top + flex.styles.margin.bottom
         room = self.size.height - chrome - others - margin  # type: ignore[attr-defined]
         room = max(3, room if self.FLEX_CAP is None else min(room, self.FLEX_CAP))

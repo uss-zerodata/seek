@@ -230,6 +230,10 @@ def _merge_host(into: Host, other: Host) -> None:
     # scans' guesses interleaved would make "best first" mean nothing.
     if not into.os_matches and other.os_matches:
         into.os_matches = list(other.os_matches)
+    # The slower measurement: a timeout derived from it must cover the host at
+    # its worst, and file order says nothing about which scan was later.
+    if other.times is not None and (into.times is None or other.times.srtt > into.times.srtt):
+        into.times = other.times
     # A recorded state beats an asserted one: `-Pn` says `up` for everything.
     # Between two recorded ones, `up` wins in either file order - a host that
     # answered discovery once is up, whatever an earlier or later ping missed.

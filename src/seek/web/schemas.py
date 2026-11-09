@@ -344,6 +344,9 @@ class ScanPlanIn(BaseModel):
     preset: str
     targets: list[str] = []
     command: str | None = None       # the edited command; the preset's when absent
+    # Arguments to draft from instead of a preset - an earlier command or the
+    # builder's; `preset` then only names the output files.
+    args: str | None = None
     # This run's notification; the configured default when absent, "" for none.
     notify_url: str | None = None
     notify_progress: bool | None = None
@@ -555,3 +558,81 @@ class FindingOut(BaseModel):
     version: str | None = None
     support: str | None = None
     places: list[FindingPlace] = []
+
+
+# --- the command builder -------------------------------------------------------------------
+
+
+class BuilderStepOut(BaseModel):
+    key: str
+    title: str
+    number: int
+    status: str                      # done, current, ahead, skipped
+
+
+class BuilderChoiceOut(BaseModel):
+    key: str
+    label: str
+    adds: str
+    gain: str
+    cost: str
+    recommended: bool = False
+    selected: bool = False
+
+
+class BuilderRowOut(BaseModel):
+    name: str
+    about: str
+    flag: bool
+    hint: str = ""                   # the value's form
+    value: str | None = None
+    on: bool = False
+    source: str = ""
+    owner: str = ""                  # why seek sets it - not settable
+
+
+class BuilderGroupOut(BaseModel):
+    group: str
+    rows: list[BuilderRowOut]
+
+
+class BuilderCommandOut(BaseModel):
+    profile: str
+    args: list[str]
+    text: str
+    misses: list[str] = []
+    notes: list[str] = []
+
+
+class BuilderOut(BaseModel):
+    state: str                       # the state to send back, as JSON
+    step: str
+    question: str
+    steps: list[BuilderStepOut]
+    choices: list[BuilderChoiceOut] = []
+    groups: list[BuilderGroupOut] = []
+    commands: list[BuilderCommandOut]
+    measured: list[list] = []        # [host, ms] pairs taken now
+
+
+class BuilderMeasureIn(BaseModel):
+    targets: list[str]
+    confirmed: bool = False
+
+
+class BuilderMeasureOut(BaseModel):
+    what: str                        # what was sent
+    measured: list[list]             # [host, ms]
+    note: str
+
+
+class EarlierOut(BaseModel):
+    args: str
+    where: str
+    last: float | None = None
+    count: int = 1
+
+
+class EarlierListsOut(BaseModel):
+    recent: list[EarlierOut]
+    frequent: list[EarlierOut]

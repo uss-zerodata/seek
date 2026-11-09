@@ -100,6 +100,8 @@ def _plan(sess, body: s.ScanPlanIn):
             raise ScanError("the unversioned-ports scan is drafted by /scans/gaps")
         command, note = body.command, ""
         out_base = presets_mod.output_base(sess.scan_dir, body.preset)
+    elif body.args is not None:
+        command, note, out_base = sess.draft_args(body.preset, body.args, body.targets)
     else:
         command, note, out_base = sess.draft_command(body.preset, body.targets)
     out = s.ScanPlanOut(preset=body.preset, command=body.command or command, note=note)

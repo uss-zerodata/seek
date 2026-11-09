@@ -112,6 +112,10 @@ src/seek/
     presets.py      is nmap here, preset -> argv, privilege from flags, targets
     runner.py       one scan: launch, stream, cancel, classify. No Textual.
     remote.py       a plan as text to copy: as run here, or a snippet for another machine
+    options.py      every documented nmap option: form, attach, default, root, page, rules
+    builder.py      the guided builder's model: steps, choices, precedence, two profiles
+    timing.py       RTT timeouts from round trips (nmap's 2x/3x/4x rule), bounded measuring
+    recent.py       earlier commands without targets; the arguments-only history file
     diff.py         what a scan added to what was already known
     cpe.py          CPE 2.2/2.3 bindings + the alias table (one product, every spelling, its CPE)
     inventory.py    software inventory: recognisers -> observations -> reconciled components
@@ -122,6 +126,7 @@ src/seek/
     app.py          NmapApp: table + detail pane, one filter, one breadcrumb
     scans.py        the Scans tab: run list + the three report modes
     scope.py        scope editor, editable command, the review before it runs
+    builder.py      the chooser (build / recent / frequent / presets) and the builder screen
   gowitness/
     detect.py       docker or native, or neither - never raises
     capture.py      one argv for both backends, output layout, the CaptureRun
@@ -527,6 +532,28 @@ together. Do not `query_one(RowList)`: it matches both.
   says yes and the scan is refused. If sudo would ask, the TUI suspends and
   runs `sudo -v` (`_sudo_validate`); the browser refuses up front. seek never
   reads a password.
+- **One catalogue of nmap options; the builder only reads it.**
+  `nmap/options.py` holds every option nmap documents (7.99, the summary and the
+  man-page sections). Each entry records its value form, how the value attaches
+  (`-T4`, `-PS22,80`, `--opt v`), its default, root, its page, and an `owner`
+  reason for the options seek sets itself. `RULES` say how options combine:
+  exclusive, ignored or advice, each with a source. Four things read the
+  catalogue: the builder, `recent.strip` (option arity tells a value from a
+  target), the fine-tune list, and `test_nmap_options`, which pins the catalogue
+  to nmap's summary and to `presets.needs_root`. `needs_root` gained the
+  raw-packet evasion options for that reason. When nmap adds an option, add it
+  here with its page.
+  `nmap/builder.py` is pure: `State` (answers, user overrides in order, step) is
+  immutable and JSON-serialisable. The web sends it back each time, so the
+  server keeps none. Precedence is **user > answers > profile > measured >
+  earlier scans > default**; every `Setting` keeps its source and what it
+  overrode. A profile never touches a value the user set. Explanations quote
+  nmap's guide, and the figures are pinned by a test.
+  The history of commands (`recent.CommandHistory`,
+  `nmap-commands.json` in the state dir) is the viewer's one exception to "writes
+  nothing": arguments only, stripped of targets, paths and owned options, so it
+  records habits, never an engagement. `Host.times` is what nmap measured; a
+  merge keeps the slower one, because file order is not time order.
 - **A notification says nothing about the engagement.** `seek/notify.py`
   builds a message from the preset or tool name, the outcome and the elapsed
   time, and is never handed anything else. That is why `CaptureRun.notify_name`

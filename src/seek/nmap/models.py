@@ -156,6 +156,7 @@ class Host:
     # Every OS match, best first as nmap orders them. `os`/`osclass` stay the
     # best one's name and family for the views that already read them.
     os_matches: list[OsMatch] = field(default_factory=list)
+    times: Times | None = None
 
     @property
     def hostname(self) -> str | None:
@@ -195,8 +196,19 @@ class Host:
             os=self.os, osclass=self.osclass,
             services=[s.copy() for s in self.services],
             scripts=list(self.scripts), sources=list(self.sources),
-            os_matches=list(self.os_matches),
+            os_matches=list(self.os_matches), times=self.times,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class Times:
+    """What nmap measured to a host - `<times srtt rttvar to>`, in microseconds:
+    the smoothed round-trip time, its variation, and the probe timeout nmap
+    settled on. The command builder derives RTT timeouts from them."""
+
+    srtt: int
+    rttvar: int
+    to: int
 
 
 @dataclass(slots=True, repr=False)

@@ -183,6 +183,113 @@ function scanReview(plan) {
     blockedLine(plan, `${base}.{xml,nmap,gnmap}`);
 }
 
+// --- the command builder ----------------------------------------------------------------
+
+// The terminal's builder over /api/v1/builder: the server keeps no state - the
+// dialog sends it back each time - so both front ends give the same commands.
+const BUILD = "__build__";
+const MARKS = { done: "✓", current: "●", ahead: "○", skipped: "–" };
+
+function openBuilder(targetList, done) {
+  let state = "", measured = "[]", query = "", last = null;
+  const d = dialog("Build a command", `
+      <ol class="stepper" aria-label="Steps"></ol>
+      <h3 class="question" id="builder-question"></h3>
+      <p class="filter" hidden><label>filter options <input type="search" name="q" autocomplete="off"></label></p>
+      <div class="choices" role="radiogroup" aria-labelledby="builder-question"></div>
+      <p class="notes dim small" aria-live="polite"></p>
+      <pre class="command"></pre>`,
+    `<button type="button" data-b="back">Back <kbd>←</kbd></button>
+     <button type="button" data-b="finish" class="primary">Finish <kbd>Ctrl+S</kbd></button>
+     <button value="cancel">Leave</button>`,
+    "↑↓ move · Enter choose · ← back · Esc leaves");
+  const form = d.querySelector("form");
+  const area = form.querySelector(".choices");
+  const notes = form.querySelector(".notes");
+
+  const go = async (action = "", value = "") => {
+    const q = new URLSearchParams({ targets: targetList.join(","), state, measured, action, value, query });
+    try { last = await send("GET", `/api/v1/builder?${q}`); }
+    catch (e) { notes.textContent = e.message; return false; }
+    state = last.state;
+    render(last);
+    return true;
+  };
+
+  const render = (out) => {
+    form.querySelector(".stepper").innerHTML = out.steps.filter((s) => s.status !== "skipped").map((s) =>
+      `<li ${s.status === "current" ? 'aria-current="step"' : ""}><button type="button" data-jump="${s.key}" ${s.status === "done" || s.status === "current" ? "" : "disabled"}>${MARKS[s.status]} ${s.number} ${esc(s.title)}</button></li>`).join("");
+    form.querySelector(".question").textContent = out.question;
+    form.querySelector(".filter").hidden = out.step !== "tune";
+    const reliable = out.commands.find((c) => c.profile === "reliable");
+    form.querySelector(".command").textContent = `nmap ${reliable.text}  ‹${targetList.length} target(s)›`;
+    if (out.step === "tune") area.innerHTML = out.groups.map((g) => `<details ${g.rows.some((r) => r.on) ? "open" : ""}><summary>${esc(g.group)}${g.rows.filter((r) => r.on).length ? ` · ${g.rows.filter((r) => r.on).length} set` : ""}</summary>
+        ${g.rows.map((r) => r.owner ? `<p class="row dim"><code>${esc(r.name)}</code> set by seek - ${esc(r.owner)}</p>`
+          : r.flag ? `<p class="row"><label><input type="checkbox" data-toggle="${esc(r.name)}" ${r.on ? "checked" : ""}> <code>${esc(r.name)}</code> ${esc(r.about)}</label>${r.on ? ` <span class="dim">‹${esc(r.source)}›</span>` : ""}</p>`
+          : `<p class="row"><label><code>${esc(r.name)}</code> <input type="text" data-set="${esc(r.name)}" value="${esc(r.value ?? "")}" placeholder="${esc(r.hint)}" aria-describedby="err-${esc(r.name)}"></label> ${esc(r.about)}${r.on ? ` <span class="dim">‹${esc(r.source)}›</span>` : ""}<span class="error" id="err-${esc(r.name)}"></span></p>`).join("")}</details>`).join("");
+    else if (out.step === "choose") area.innerHTML = out.commands.map((c) => `<p><button type="button" data-use="${c.profile}">${c.profile === "fast" ? "Fast" : "Reliable (recommended)"}</button></p>
+        <pre class="command">nmap ${esc(c.text)}</pre>${c.misses.map((m) => `<p class="dim small">− ${esc(m)}</p>`).join("")}${c.notes.map((n) => `<p class="dim small">${esc(n)}</p>`).join("")}`).join("");
+    else area.innerHTML = out.choices.map((c) => `<label class="choice"><input type="radio" name="choice" value="${esc(c.key)}" ${c.selected ? "checked" : ""} aria-describedby="g-${esc(c.key)} c-${esc(c.key)}">
+        <strong>${esc(c.label)}</strong> ${c.adds ? `<code>${esc(c.adds)}</code>` : ""} ${c.recommended ? "<em>recommended</em>" : ""}
+        <span class="dim small" id="g-${esc(c.key)}">+ ${esc(c.gain)}</span><span class="dim small" id="c-${esc(c.key)}">− ${esc(c.cost)}</span></label>`).join("");
+    (area.querySelector("input:checked") || area.querySelector("input, button"))?.focus();
+  };
+
+  const measure = () => {
+    const c = dialog("Measure now?", `<p>This sends a few probes to up to 8 of the ${targetList.length} target(s) - TCP connections to a port known open, or one nmap ping scan - for at most 8 seconds.</p>`,
+      '<button value="measure" class="primary">Measure now</button> <button value="cancel">Send nothing</button>');
+    c.addEventListener("close", async () => {
+      if (c.returnValue !== "measure") { notes.textContent = "nothing was sent"; return; }
+      notes.textContent = "measuring …";
+      try {
+        const out = await send("POST", "/api/v1/builder/measure", { targets: targetList, confirmed: true });
+        measured = JSON.stringify(out.measured);
+        notes.textContent = `${out.what}: ${out.note}`;
+      } catch (e) { notes.textContent = e.message; }
+      go("choose", "measure");
+    });
+  };
+
+  area.addEventListener("change", async (e) => {
+    const t = e.target;
+    if (t.name === "choice") { if (t.value === "measure") measure(); else go("choose", t.value); }
+    else if (t.dataset.toggle) go("toggle", t.dataset.toggle);
+    else if (t.dataset.set) {
+      const err = form.querySelector(`#err-${CSS.escape(t.dataset.set)}`);
+      const ok = await go("set", `${t.dataset.set}=${t.value}`);
+      if (!ok && err) { err.textContent = `✗ ${notes.textContent}`; t.setAttribute("aria-invalid", "true"); }
+    }
+  });
+  area.addEventListener("click", (e) => {
+    const use = e.target.closest("[data-use]");
+    if (!use) return;
+    const command = last.commands.find((c) => c.profile === use.dataset.use);
+    const goal = JSON.parse(state).answers.goal || "scan";
+    d.close();
+    done(command.text, `build ${goal} ${use.dataset.use}`);
+  });
+  form.querySelector(".stepper").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-jump]");
+    if (b) go("jump", b.dataset.jump);
+  });
+  form.querySelector("[data-b=back]").addEventListener("click", () => go("back"));
+  form.querySelector("[data-b=finish]").addEventListener("click", () => go("finish"));
+  form.q.addEventListener("input", () => { query = form.q.value; clearTimeout(go.t); go.t = setTimeout(go, 200); });
+  d.addEventListener("keydown", (e) => {
+    if (e.ctrlKey && e.key === "s") { e.preventDefault(); go("finish"); return; }
+    if (e.target.closest("input[type=text], input[type=search]")) return;
+    if (e.key === "ArrowLeft" || e.key === "Backspace") { e.preventDefault(); go("back"); }
+  });
+  // Esc with answers given asks first, as the terminal does.
+  d.addEventListener("cancel", (e) => {
+    if (!state || !Object.keys(JSON.parse(state).answers || {}).length) return;
+    e.preventDefault();
+    const c = dialog("Discard the answers?", "", '<button value="discard" class="primary">Discard</button> <button value="cancel">Continue building</button>');
+    c.addEventListener("close", () => { if (c.returnValue === "discard") d.close(); });
+  });
+  go();
+}
+
 // The screenshot capture sits among the scan presets: to the reader it is one
 // more thing to run against these hosts. It is not an nmap preset - it has no
 // command to edit and its targets are the HTTP(S) URLs of the marks or the
@@ -192,6 +299,12 @@ const CAPTURE = "__gowitness__";
 async function newScan(initial = "") {
   let presets;
   try { presets = await send("GET", "/api/v1/scans/presets"); } catch (e) { say(e.message); return; }
+  let earlier = { recent: [], frequent: [] };
+  try { earlier = await send("GET", "/api/v1/scans/recent"); } catch { /* none yet */ }
+  const earlierOf = (value) => {
+    const [list, index] = value.slice(1).split(":");
+    return (earlier[list] || [])[Number(index)];
+  };
   let scope = "";
   try { scope = (await send("GET", `/api/v1/export?${new URLSearchParams({ ...view(), which: "all-hosts" })}`)).trim(); }
   catch { /* nothing marked or listed: the scope is typed */ }
@@ -205,8 +318,11 @@ async function newScan(initial = "") {
     source = options.source;
   } catch { /* the capture's own request will say */ }
   const d = dialog("New scan", `
-      <p><label>preset <select name="preset">${presets.map((p) => `<option value="${esc(p.name)}">${esc(p.name)}${p.needs_root ? " · root" : ""}</option>`).join("")}
-        <option value="${CAPTURE}" ${initial === CAPTURE ? "selected" : ""}>gowitness · screenshots of the HTTP(S) services${captureOff ? ` - ${esc(captureOff)}` : ""}</option></select></label></p>
+      <p><label>scan with <select name="preset">
+        <option value="${BUILD}">Build a command… (guided, explains each option)</option>
+        ${["recent", "frequent"].filter((k) => earlier[k].length).map((k) => `<optgroup label="${k === "recent" ? "Recent" : "Frequent"}">${earlier[k].map((e, i) => `<option value="@${k}:${i}">${esc(e.args)} · ${esc(e.where)}${e.count > 1 ? ` · used ${e.count}×` : ""}</option>`).join("")}</optgroup>`).join("")}
+        <optgroup label="Presets">${presets.map((p) => `<option value="${esc(p.name)}" ${p.name === presets[0].name && initial !== CAPTURE ? "selected" : ""}>${esc(p.name)}${p.needs_root ? " · root" : ""}</option>`).join("")}
+        <option value="${CAPTURE}" ${initial === CAPTURE ? "selected" : ""}>gowitness · screenshots of the HTTP(S) services${captureOff ? ` - ${esc(captureOff)}` : ""}</option></optgroup></select></label></p>
       <p class="nmap-only"><label>scope<br><textarea name="targets" rows="4" placeholder="one address, range or name per line">${esc(scope)}</textarea></label></p>
       <p class="nmap-only"><label>command<br><textarea name="command" rows="3"></textarea></label></p>
       ${NOTIFY_FIELDS}
@@ -217,7 +333,15 @@ async function newScan(initial = "") {
   const start = form.querySelector("button[value=start]");
   let edited = false;
   let current = null;
+  let built = null;            // {args, name} from the builder
   copyControls(d, () => current);
+  // What the review drafts from: a preset by name, or arguments under a name.
+  const draft = () => {
+    const value = form.preset.value;
+    if (value === BUILD) return built ? { preset: built.name, args: built.args } : null;
+    if (value.startsWith("@")) return { preset: "earlier", args: earlierOf(value).args };
+    return { preset: value };
+  };
   const targets = () => form.targets.value.split(/[\s,]+/).filter(Boolean);
   const capturing = () => form.preset.value === CAPTURE;
   // What a capture would photograph and run - the plan the terminal reviews.
@@ -242,8 +366,10 @@ async function newScan(initial = "") {
     start.textContent = capturing() ? "Start the capture" : "Start the scan";
     if (capturing()) { reviewCapture(box); return; }
     try {
+      const from = draft();
+      if (!from) { box.textContent = "build a command first"; start.disabled = true; return; }
       const plan = await send("POST", "/api/v1/scans/review",
-        { preset: form.preset.value, targets: targets(), command: edited ? form.command.value : null });
+        { ...from, targets: targets(), command: edited ? form.command.value : null });
       if (!edited) form.command.value = plan.command;
       current = plan.error ? null : plan;
       fillNotify(form, plan);
@@ -251,7 +377,14 @@ async function newScan(initial = "") {
       start.disabled = Boolean(plan.error || plan.blocked);
     } catch (e) { current = null; box.innerHTML = `<span class="c-red">${esc(e.message)}</span>`; }
   };
-  form.preset.addEventListener("change", () => { edited = false; review(); });
+  form.preset.addEventListener("change", () => {
+    edited = false;
+    if (form.preset.value === BUILD) {
+      openBuilder(targets(), (args, name) => { built = { args, name }; review(); });
+      return;
+    }
+    review();
+  });
   form.targets.addEventListener("change", () => { edited = false; review(); });
   form.command.addEventListener("input", () => { edited = true; clearTimeout(review.t); review.t = setTimeout(review, 300); });
   review();
@@ -263,7 +396,7 @@ async function newScan(initial = "") {
     }
     try {
       const run = await send("POST", "/api/v1/scans",
-        { preset: form.preset.value, targets: targets(), command: form.command.value, ...notifyChoice(form) });
+        { ...draft(), targets: targets(), command: form.command.value, ...notifyChoice(form) });
       say(`started ${run.label}`);
       if (root?.dataset.tab !== "scans") window.location.href = "/v/scans";
     } catch (e) { say(e.message); }

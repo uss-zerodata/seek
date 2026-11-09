@@ -38,6 +38,7 @@ from seek.nmap.merge import Accumulator, Pending
 from seek.nmap.models import Host, ScanSet, Service
 from seek.nmap.parse import NmapParseError, parse_file
 from seek.nmap.progress import FILES, Report
+from seek.nmap.recent import text
 from seek.nmap.runner import ScanRun, State, elevation_help, sudo_ready
 from seek.nmap.session import Busy as SessionBusy
 from seek.nmap.session import Event as SessionEvent
@@ -51,12 +52,12 @@ from seek.tui.nmap import record as record_mod
 from seek.tui.nmap import scans as scan_views
 from seek.tui.nmap import tabs as tabs_mod
 from seek.tui.nmap import views as vdefs
+from seek.tui.nmap.builder import BuilderScreen, ChooserScreen
 from seek.tui.nmap.commands import ScanCommands
 from seek.tui.nmap.help import NmapHelpScreen
 from seek.tui.nmap.reader import DetailReader
 from seek.tui.nmap.scope import (
     CommandScreen,
-    PresetScreen,
     ReviewScreen,
     ScopeScreen,
 )
@@ -1731,17 +1732,30 @@ class NmapApp(App[int]):
                 return
 
         presets = self.config.nmap_presets
-        if not presets:
-            self.notify("no scan presets configured", severity="error")
-            return
         scope_line = ", ".join(targets[:4]) + (" …" if len(targets) > 4 else "")
-        name = await self.push_screen_wait(PresetScreen(
-            f"New scan · {len(targets)} target(s)", scope_line, presets))
+        recent, frequent = self.session.earlier_commands()
+        name = await self.push_screen_wait(ChooserScreen(
+            f"New scan · {len(targets)} target(s)", scope_line, presets, recent, frequent))
         if name is None:
             return
 
         try:
-            command, note, out_base = self.session.draft_command(name, targets)
+            if name == "@build":
+                facts = await asyncio.to_thread(self.session.builder_facts, targets)
+                built = await self.push_screen_wait(BuilderScreen(
+                    facts, self.config.nmap_path, self.nmap.available))
+                if built is None:
+                    return
+                profile, args, goal = built
+                name = f"build {goal} {profile}"
+                command, note, out_base = self.session.draft_args(name, text(args), targets)
+            elif name.startswith("@"):
+                section, _, index = name[1:].partition(":")
+                earlier = (recent if section == "recent" else frequent)[int(index)]
+                name = "earlier"
+                command, note, out_base = self.session.draft_args(name, earlier.args, targets)
+            else:
+                command, note, out_base = self.session.draft_command(name, targets)
         except ScanError as exc:
             self.notify(str(exc), severity="error", timeout=12)
             return

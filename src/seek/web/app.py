@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from seek.web import media
+from seek.web.api.v1 import builder as builder_api
 from seek.web.api.v1 import captures, hosts, inventory, services, vulndb
 from seek.web.api.v1 import marks as marks_api
 from seek.web.api.v1 import records as records_api
@@ -30,6 +31,7 @@ from seek.web.views import ViewCache
 STATIC = Path(__file__).parent / "static"
 
 ROUTERS = [
+    builder_api.router,
     hosts.router,
     services.router,
     captures.router,

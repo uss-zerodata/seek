@@ -153,3 +153,26 @@ def test_every_os_match_is_kept_with_its_cpes():
         ("Linux 4.15 - 5.8", 96), ("Linux 2.6.32", 90)]
     assert host.os_matches[0].cpes == ["cpe:/o:linux:linux_kernel:4",
                                        "cpe:/o:linux:linux_kernel:5"]
+
+
+def test_recorded_round_trip_times_are_read():
+    from seek.nmap.models import Times
+
+    hosts = {h.address: h for h in parse_file(FIX / "timing.xml").hosts}
+    assert hosts["192.0.2.10"].times == Times(srtt=1200, rttvar=400, to=100000)
+    assert hosts["192.0.2.11"].times.srtt == 38500
+    assert hosts["192.0.2.12"].times is None, "no <times>: no measurement, not zero"
+
+
+def test_merging_keeps_the_slower_measurement(tmp_path):
+    from seek.nmap.merge import merge
+
+    fast = (FIX / "timing.xml").read_text()
+    slow = fast.replace('srtt="1200"', 'srtt="9000"').replace("timing.xml", "slow.xml")
+    (tmp_path / "a.xml").write_text(slow)
+    (tmp_path / "b.xml").write_text(fast)
+    for order in ([tmp_path / "a.xml", tmp_path / "b.xml"],
+                  [tmp_path / "b.xml", tmp_path / "a.xml"]):
+        merged = merge([parse_file(p) for p in order])
+        host = next(h for h in merged.hosts if h.address == "192.0.2.10")
+        assert host.times.srtt == 9000, "file order must not decide"
