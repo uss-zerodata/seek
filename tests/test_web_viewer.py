@@ -211,7 +211,7 @@ async def test_quitting_asks_about_a_scan_started_in_the_browser(tmp_path):
         await pilot.pause(0.5)
         assert isinstance(app.screen, ChoiceScreen), "the quit guard asks"
         assert app.is_running
-        app.runner.cancel()
+        app.session.cancel_all()
         await pilot.pause(1.0)
 
 
@@ -293,7 +293,7 @@ async def test_stopping_leaves_a_running_scan_alone(tmp_path, opened):
         app.action_stop_web()
         await _settled(pilot, lambda: not app._web.running)
         assert run.running, "the scan carries on"
-        app.runner.cancel()
+        app.session.cancel_all()
         await pilot.pause(0.5)
 
 

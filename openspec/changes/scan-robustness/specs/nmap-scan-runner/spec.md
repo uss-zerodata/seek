@@ -15,11 +15,11 @@ The targets of a scan SHALL be the words of the reviewed command that are neithe
 - **WHEN** the edited command has no target and no target list
 - **THEN** it is refused, and the reason says that no target is left
 
-### Requirement: One scan at a time holds for simultaneous starts
-A tool SHALL be busy from the moment a run of it is accepted. A second start that arrives before the first run has produced anything SHALL be refused, whichever front end sends it.
+### Requirement: A tool that runs one at a time is busy at once
+A tool that runs one at a time, such as gowitness, SHALL be busy from the moment a run of it is accepted. A second start that arrives before the first run has produced anything SHALL be refused, whichever front end sends it.
 
 #### Scenario: Two starts at once
-- **WHEN** two scans are started in the same moment, for example a double click in the browser
+- **WHEN** two captures are started in the same moment, for example a double click in the browser
 - **THEN** one runs, the other is refused as busy, and the running one can be cancelled
 
 ### Requirement: An elevated scan runs the nmap that seek found

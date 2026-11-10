@@ -29,6 +29,7 @@ import os
 import queue
 import shutil
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -49,6 +50,7 @@ from seek.nmap import presets as presets_mod
 from seek.nmap import rawlog, remote, timeline
 from seek.nmap import recent as recent_mod
 from seek.nmap import timing as timing_mod
+from seek.nmap.diff import diff_from, snapshot
 from seek.nmap.export import Record, export_ports, export_urls, records_for, service_urls
 from seek.nmap.models import ScanSet
 from seek.nmap.runner import ScanRun
@@ -59,6 +61,13 @@ from seek.vulndb import store as vulndb_store
 # How many events a slow listener may fall behind before `line` events are
 # dropped for it. A run must never wait for a browser tab.
 QUEUE_LIMIT = 2000
+
+# A running scan's finished hosts are read in at most once a minute - or four
+# times as seldom as a re-read takes, at a scale where one takes longer - and
+# a few seconds after nmap reports a host, so a group's report is read whole.
+LIVE_MIN = 60.0
+LIVE_SETTLE = 5.0
+_REPORT = "Nmap scan report for "
 
 
 @dataclass(slots=True)
@@ -83,6 +92,9 @@ class Owner(Protocol):
     """Whoever re-reads the engagement when a run has added to it."""
 
     def scan_done(self, run: ScanRun) -> None: ...
+    # Optional: read in what a running scan has finished. False is "not now,
+    # ask again" - another read was running.
+    # def scan_grew(self, run: ScanRun) -> bool: ...
     def capture_done(self, run: gw_capture.CaptureRun) -> None: ...
 
 
@@ -110,6 +122,8 @@ class ScanPlan:
     # Why it cannot start *here* - nmap missing, the directory not writable.
     # The plan still exists, because it can be copied to another machine.
     blocked: str | None = None
+    # What starting it now costs - another scan running - said, not enforced.
+    warning: str | None = None
     copy_local: str | None = None    # None when there is no local nmap to run it
     copy_remote: str = ""
     # The configured defaults; the review may change them for this run.
@@ -227,8 +241,15 @@ class Session:
         self.vulndb_progress_short = ""    # the same for a status line
         self.vulndb_cancel: threading.Event | None = None
         self._row_texts: dict[int, tuple] = {}
-        # What each finished scan added to what was known, by run.
+        # What each scan added to what was known, by run - updated by every
+        # read while it runs - and the model before its first read.
         self.diffs: dict[int, object] = {}
+        self.baselines: dict[int, dict] = {}
+        self._baseline_jobs: dict[int, tuple[threading.Thread, dict]] = {}
+        self.live_pause = LIVE_MIN
+        self._live_timers: dict[int, asyncio.TimerHandle] = {}
+        self._live_last: dict[int, float] = {}
+        self._live_sizes: dict[int, int] = {}
         self._history: list[timeline.Scan] = []
         self._history_for: object = None
         self._scanned: rawlog.Scanned | None = None
@@ -747,6 +768,7 @@ class Session:
         blocked = self.scan_blocked()
         return ScanPlan(preset, argv, chosen, out_base, elevate,
                         presets_mod.privileged_labels(scan_args), via=via, blocked=blocked,
+                        warning=self.scan_warning(),
                         notify_url=self.config.notify_url,
                         notify_progress=self.config.notify_progress,
                         copy_local=remote.local_text(argv) if self.nmap.available else None,
@@ -757,13 +779,21 @@ class Session:
         copying do not depend on it - only starting does."""
         if not self.nmap.available:
             return f"cannot scan: {self.nmap.reason}"
-        busy = self.runner.busy()
-        if busy is not None:
-            return f"a scan is already running: {busy.label} - cancel it first (c)"
         problem = presets_mod.writable(self.scan_dir)
         if problem is not None:
             return f"cannot write the scan here: {problem}"
         return None
+
+    def scan_warning(self) -> str | None:
+        """What starting a scan now costs, or `None`: another scan is running.
+        A warning, not a refusal - the user may accept the cost."""
+        active = self.runner.active()
+        if not active:
+            return None
+        names = ", ".join(r.label for r in active)
+        return (f"already running: {names}. The scans will share the network path: "
+                "each one's timing adapts to the other's traffic, both take longer, "
+                "and rate-limited targets drop more probes.")
 
     def capture_blocked(self) -> str | None:
         """Why a capture cannot start on this machine, or `None`."""
@@ -805,16 +835,23 @@ class Session:
     # --- runs ---------------------------------------------------------------------
 
     def running(self) -> Run | None:
-        """The run that quitting would end, if any - either tool."""
+        """A run that quitting would end, if any - either tool."""
         return self.runner.busy() or self.captures.busy()
 
+    def active(self) -> list[Run]:
+        """Every run that quitting would end - both tools."""
+        return [*self.runner.active(), *self.captures.active()]
+
     def start_scan(self, run: ScanRun, origin: str = "") -> asyncio.Task:
-        busy = self.runner.busy()
-        if busy is not None:
-            raise Busy(f"a scan is already running: {busy.label}")
+        # Other scans may run (the review warned); two writing one file may not.
+        same = next((r for r in self.runner.active()
+                     if getattr(r, "out_base", None) == run.out_base), None)
+        if same is not None:
+            raise Busy(f"{same.label} is already writing {run.out_base.name}")
         problem = presets_mod.writable(self.scan_dir)
         if problem is not None:
             raise ScanError(f"cannot write the scan here: {problem}")
+        self._take_baseline(run)
         task = self._start(self.runner, run, origin, self._scan_done)
         self.command_history().record(run.argv)   # its arguments - never its targets
         return task
@@ -850,21 +887,27 @@ class Session:
             raise ScanError(f"could not write the URL list: {exc.strerror or exc}") from None
         return self._start(self.captures, run, origin, self._capture_done)
 
-    def cancel(self, tool: str) -> Run | None:
-        """Cancel the running scan (`nmap`) or capture (`gowitness`)."""
+    def cancel(self, tool: str, run: Run | None = None) -> Run | None:
+        """Cancel `run`, or the one running scan (`nmap`) or capture (`gowitness`).
+        `None` when there is nothing to cancel, or several and none was named."""
         runner = self.runner if tool == "nmap" else self.captures
-        running = runner.busy()
-        if running is not None and runner.cancel():
-            return running
+        if run is None:
+            active = runner.active()
+            run = active[0] if len(active) == 1 else None
+        if run is not None and runner.cancel(run):
+            return run
         return None
 
     def cancel_all(self) -> list[Run]:
-        return [r for r in (self.cancel("nmap"), self.cancel("gowitness")) if r is not None]
+        return [run for tool, runner in (("nmap", self.runner), ("gowitness", self.captures))
+                for run in runner.active() if self.cancel(tool, run) is not None]
 
     def _start(self, runner: Runner, run: Run, origin: str,
                done: Callable[[Run], None]) -> asyncio.Task:
         def on_line(line: str) -> None:
             self.emit(Event("line", origin, run, line))
+            if runner is self.runner:
+                self._scan_line(run, line)
             if run.notify_url and run.notify_progress:
                 while mark := notify.crossed(run.fraction(), run.milestone):
                     run.milestone = mark
@@ -921,7 +964,101 @@ class Session:
         run.append(line)
         self.emit(Event("line", origin, run, line))
 
+    # --- a running scan's finished hosts ------------------------------------------
+
+    def running_paths(self) -> set[Path]:
+        """The output files of the scans still running - partial by nature, so
+        never "cut off", and listed once, as their run."""
+        return {r.xml_path for r in self.runner.active() if isinstance(r, ScanRun)}
+
+    def _scan_line(self, run: Run, line: str) -> None:
+        """nmap prints a report per host once its group is done, and writes the
+        group to the XML: time to read it in, once the burst is over."""
+        if (not line.startswith(_REPORT) or self.owner is None
+                or id(run) in self._live_timers):
+            return
+        wait = self._live_last.get(id(run), float("-inf")) + self.live_pause - time.monotonic()
+        self._live_timers[id(run)] = asyncio.get_running_loop().call_later(
+            max(wait, LIVE_SETTLE), self._live_due, run)
+
+    def _live_due(self, run: Run) -> None:
+        self._live_timers.pop(id(run), None)
+        grew = getattr(self.owner, "scan_grew", None)
+        if not run.running or grew is None:
+            return
+        if grew(run):
+            self._live_last[id(run)] = time.monotonic()
+        else:                                   # another read was running: soon again
+            self._live_timers[id(run)] = asyncio.get_running_loop().call_later(
+                LIVE_SETTLE, self._live_due, run)
+
+    def file_grew(self, run: ScanRun) -> bool:
+        """Whether the scan's XML is larger than at the last read - the check that
+        keeps a report line with nothing new behind it from costing a re-read."""
+        try:
+            size = run.xml_path.stat().st_size
+        except OSError:
+            return False
+        if self._live_sizes.get(id(run)) == size:
+            return False
+        self._live_sizes[id(run)] = size
+        return True
+
+    def _take_baseline(self, run: Run) -> None:
+        """Snapshot the model as the run starts, in a thread of its own.
+
+        At the start, not at the run's first read: by then a read for another
+        run - which re-reads every source, this run's file included - may have
+        put this run's hosts in the model already, and the run would report
+        "nothing new" for hosts only it found. In a thread, because a snapshot
+        of a large engagement is not the event loop's to pay for."""
+        hosts, box = self.scans.hosts, {}
+
+        def take() -> None:
+            box["snapshot"] = snapshot(hosts)
+
+        thread = threading.Thread(target=take, name="seek-baseline", daemon=True)
+        thread.start()
+        self._baseline_jobs[id(run)] = (thread, box)
+
+    def baseline(self, run: Run, hosts) -> dict:
+        """The model before the run started, which every read of it is compared
+        with - so the summary counts the whole run, not the last read. Called by
+        a reader thread; `hosts` is the fallback for a run not started here."""
+        if id(run) not in self.baselines:
+            job = self._baseline_jobs.pop(id(run), None)
+            if job is not None:
+                job[0].join()
+                self.baselines[id(run)] = job[1]["snapshot"]
+            else:
+                self.baselines[id(run)] = snapshot(hosts)
+        return self.baselines[id(run)]
+
+    def forget_baseline(self, run: Run) -> None:
+        """A whole-model snapshot per run adds up over a session: drop it once
+        the run's final read is done, or when it ended with no file."""
+        self.baselines.pop(id(run), None)
+        self._baseline_jobs.pop(id(run), None)
+
+    def run_diff(self, run: ScanRun, before: dict, scans: ScanSet):
+        """What `run` added: the merged model against `before`, over the hosts
+        in the run's own file only. Every read re-reads every source, so the
+        model also holds what other scans - running ones too - found since."""
+        mine = run.xml_path.resolve()
+        own = {h.address for f in scans.files
+               if f.path.resolve() == mine for h in f.hosts}
+        return diff_from(before, [h for h in scans.hosts if h.address in own])
+
+    def read_took(self, seconds: float) -> None:
+        """Pace live reads by what one costs at this engagement's size."""
+        self.live_pause = max(LIVE_MIN, 4 * seconds)
+
     def _scan_done(self, run: Run) -> None:
+        timer = self._live_timers.pop(id(run), None)
+        if timer is not None:
+            timer.cancel()
+        if not getattr(run, "xml_path", Path("/nonexistent")).exists():
+            self.forget_baseline(run)           # no final read will want it
         if self.owner is not None:
             self.owner.scan_done(run)
 

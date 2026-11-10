@@ -177,7 +177,7 @@ async function capture(choice = {}) {
 function scanReview(plan) {
   if (plan.error) return `<span class="c-red">${esc(plan.error)}</span>`;
   const base = plan.out_base.split("/").pop();
-  return `runs <code>${esc(plan.argv.join(" "))}</code><br>${plan.targets.length} target(s) · writes ${esc(plan.out_base)}.{xml,nmap,gnmap}` +
+  return (plan.warning ? `<strong>${esc(plan.warning)}</strong><br>` : "") + `runs <code>${esc(plan.argv.join(" "))}</code><br>${plan.targets.length} target(s) · writes ${esc(plan.out_base)}.{xml,nmap,gnmap}` +
     (plan.via === "sudo" ? `<br><strong>needs root</strong> (${esc(plan.privilege)}) - through <code>sudo -n</code>: the browser cannot let sudo ask for a password, the terminal viewer can` : "") +
     (plan.via === "capabilities" ? `<br><strong>needs root</strong> (${esc(plan.privilege)}) - nmap's own capabilities, with <code>--privileged</code>, no sudo` : "") +
     blockedLine(plan, `${base}.{xml,nmap,gnmap}`);
@@ -496,12 +496,21 @@ export function setMode(mode) {
   document.dispatchEvent(new CustomEvent("record:reload"));
 }
 
+// One run is cancelled; with several, which one is asked - the others go on.
 async function cancel() {
-  const running = await send("GET", "/api/v1/runs");
-  const run = running.find((r) => r.running);
-  if (!run) { say("nothing is running"); return; }
-  try { await send("POST", `/api/v1/runs/${run.tool}/cancel`); say(`cancelling ${run.label}`); }
-  catch (e) { say(e.message); }
+  const running = (await send("GET", "/api/v1/runs")).filter((r) => r.running);
+  if (!running.length) { say("nothing is running"); return; }
+  const end = async (run) => {
+    try { await send("POST", `/api/v1/runs/${run.id}/cancel`); say(`cancelling ${run.label}`); }
+    catch (e) { say(e.message); }
+  };
+  if (running.length === 1) { end(running[0]); return; }
+  const d = dialog("Cancel which run?", "<p>The others keep running.</p>",
+    running.map((r, i) => `<button value="${i}"${i ? "" : ' class="primary"'}>${esc(r.label)} - ${esc(r.scope)}</button>`).join(" ") +
+    ' <button value="cancel">None</button>');
+  d.addEventListener("close", () => {
+    if (/^\d+$/.test(d.returnValue)) end(running[Number(d.returnValue)]);   // Esc: ""
+  });
 }
 
 function freeze() {

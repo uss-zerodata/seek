@@ -278,7 +278,19 @@ overview, that diff, and the raw output (the sibling `.nmap` when present, else
 reconstructed from the XML); `p` freezes a running scan's log so you can read it
 — **the scan keeps running**; `c` cancels for real. A scan run here writes to the
 launch directory with `-oA`, leaving the same three files an external one leaves,
-and rejoins the history as its file when it finishes.
+and rejoins the history as its file when it ends.
+
+**Results while a scan runs.** nmap scans in host groups and writes each group
+to its files when the group is done, so a two-day scan has most of its results
+on disk long before it ends. seek reads them in as it goes: when nmap reports
+finished hosts, the model is re-read a few seconds later - quietly, the list
+and the cursor stay where they are, and the status line says what the scan has
+added so far. At most once a minute (less often at a scale where a re-read takes
+long), and only when the file grew. A cancelled or failed scan keeps the hosts it
+finished. Several scans can run at once: the review names the running ones and
+says what that costs - they share the network path, each one's timing adapts to
+the other's traffic, both take longer, and rate-limited targets drop more probes.
+`c` cancels the run under the cursor in the Scans tab, or asks which.
 
 **Large engagements.** Measured on 120 scan files covering 24 200 hosts
 (106 MB of XML), which is where every figure below comes from; the numbers are

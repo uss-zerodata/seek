@@ -32,7 +32,6 @@ from seek.gowitness import capture as gw_capture
 from seek.nmap import bulk, filtering, rawlog, timeline
 from seek.nmap import export as exporter
 from seek.nmap import views as proj
-from seek.nmap.diff import diff_from, snapshot
 from seek.nmap.merge import Accumulator, Pending
 from seek.nmap.models import Host, ScanSet, Service
 from seek.nmap.parse import NmapParseError, parse_file
@@ -524,6 +523,10 @@ class NmapApp(ScanFlows, App[int]):
         # from the model and cached with it (`Session.scan_history`, `.scanned`).
         # A build running off the event loop, and what it has got through.
         self._busy: _Busy | None = None
+        # A running scan's quiet re-read: which run, its token, what it added.
+        self._live_read: ScanRun | None = None
+        self._live_token = 0
+        self._live_note: Text | None = None
         self._build_token = 0
         self._spin = 0
         self._after_build: tuple[bool, _Mark | None, bool] | None = None
@@ -1273,7 +1276,7 @@ class NmapApp(ScanFlows, App[int]):
     def _refresh_status(self) -> None:
         # A read and a projection can both be running; the read is the one that
         # belongs to the whole window, so it leads.
-        left = self._read_note() or self._busy_note() or Text(
+        left = self._read_note() or self._busy_note() or self._live_note or Text(
             f"{len(self.scans.hosts)} host(s) across "
             f"{len(self.scans.sources)} scan(s)", style="dim")
         shown = sum(1 for r in self._rows if not r.heading)
@@ -1717,11 +1720,32 @@ class NmapApp(ScanFlows, App[int]):
         self._refresh_status()
 
     def action_cancel_scan(self) -> None:
-        running = self.runner.busy()
-        if running is None:
+        """The run under the cursor in the Scans tab, the only one running, or
+        - with several and none chosen - ask which."""
+        active = self.runner.active()
+        if not active:
             return
-        if self.runner.cancel():
-            self.notify(f"cancelling {running.preset}")
+        row = self._current_row() if self.view.kind == "scans" else None
+        chosen = next((r for r in active if r is getattr(row, "target", None)), None)
+        if chosen is None and len(active) == 1:
+            chosen = active[0]
+        if chosen is not None:
+            self._cancel_run(chosen)
+        else:
+            self._ask_cancel(active)
+
+    @work(exclusive=True, group="modal")
+    async def _ask_cancel(self, active: list) -> None:
+        answer = await self.push_screen_wait(ChoiceScreen(
+            "Cancel which scan? The others keep running.",
+            [(str(i), f"{r.label} — running {scan_views.elapsed(r.elapsed)}, {r.scope}")
+             for i, r in enumerate(active)]))
+        if answer is not None and active[int(answer)].running:
+            self._cancel_run(active[int(answer)])
+
+    def _cancel_run(self, run) -> None:
+        if self.runner.cancel(run):
+            self.notify(f"cancelling {run.label}")
 
     def _on_run_started(self, run) -> None:
         """Put a just-started run on screen before it has produced anything."""
@@ -2021,12 +2045,13 @@ class NmapApp(ScanFlows, App[int]):
             self._reload_rows(preserve=True)
 
     def _on_scan_done(self, run: ScanRun) -> None:
-        if run.state is State.DONE and run.xml_path.exists():
+        # A cancelled or failed scan keeps the hosts it finished: read them in.
+        if run.xml_path.exists():
             self._absorb(run)
-        elif run.state is State.FAILED and "sudo -n refused" in run.result:
+        if run.state is State.FAILED and "sudo -n refused" in run.result:
             self.notify(elevation_help(self.config.nmap_path, terminal=True),
                         severity="error", timeout=20)
-        else:
+        elif run.state is not State.DONE:
             self.notify(f"{run.preset}: {run.result}",
                         severity="warning" if run.state is State.CANCELLED else "error")
         if self.view.kind == "scans":
@@ -2049,7 +2074,10 @@ class NmapApp(ScanFlows, App[int]):
         if not covered:
             self.sources.append(run.xml_path)
         # Anything still streaming in is about to be re-read from scratch, so
-        # stop it rather than letting two readers publish over each other.
+        # stop it rather than letting two readers publish over each other - a
+        # live read of a running scan included.
+        self._live_token += 1
+        self._live_read = None
         self._read_token += 1
         self._reading = None
         self._next_scans = None
@@ -2059,22 +2087,46 @@ class NmapApp(ScanFlows, App[int]):
         self._show_busy()
         self._reread(run, list(self.sources), covered, self._build_token)
 
+    # `Owner`: what a running scan has finished, read in while it runs.
+    def scan_grew(self, run: ScanRun) -> bool:
+        """A quiet re-read: no progress over the list, nothing taken away - the
+        rows stay and the status line says what the scan has added so far.
+        Declined (False: ask again) while anything else reads or projects."""
+        if self._reading is not None or self._busy is not None or self._live_read:
+            return False
+        if not self.session.file_grew(run):
+            return True
+        covered = any(p.is_dir() and run.xml_path.is_relative_to(p) for p in self.sources)
+        if not covered and run.xml_path not in self.sources:
+            self.sources.append(run.xml_path)
+        self._live_token += 1
+        self._live_read = run
+        self._reread(run, list(self.sources), True, self._live_token, live=True)
+        return True
+
     @work(thread=True, exclusive=True, group="absorb")
     def _reread(self, run: ScanRun, paths: list[Path], covered: bool,
-                token: int) -> None:
+                token: int, live: bool = False) -> None:
         from seek.nmap.merge import load
         from seek.nmap.views import prepare
 
         # Taken here rather than on the event loop: the model it reads is the
-        # one being replaced, and nothing writes to it while this runs.
-        before = snapshot(self.scans.hosts)
+        # one being replaced, and nothing writes to it while this runs. Taken
+        # once per run, so a read while it runs and the last read compare with
+        # the model before it began.
+        before = self.session.baseline(run, self.scans.hosts)
 
         def report(done: int, total: int, unit: str) -> None:
+            if live:
+                if self._live_token != token:
+                    raise _Abandoned
+                return
             busy = self._busy
             if busy is None or busy.token != token:
                 raise _Abandoned
             self.call_from_thread(self._on_build_progress, token, done, total, unit)
 
+        began = time.monotonic()
         try:
             # The other owner of a long phase; see `_build_rows`.
             with bulk.bulk(), bulk.responsive():
@@ -2082,25 +2134,45 @@ class NmapApp(ScanFlows, App[int]):
         except _Abandoned:
             return
         except Exception as exc:                      # noqa: BLE001 - report, never crash
-            self.call_from_thread(self._on_reread_failed, token, run, covered, exc)
+            self.call_from_thread(self._on_reread_failed, token, run, covered, exc, live)
             return
-        self.call_from_thread(self._on_reread, token, run, scans, before)
+        self.session.read_took(time.monotonic() - began)
+        self.call_from_thread(self._on_reread, token, run, scans, before, live)
 
     def _on_reread(self, token: int, run: ScanRun, scans: ScanSet,
-                   before: dict) -> None:
-        if self._busy is None or self._busy.token != token:
+                   before: dict, live: bool = False) -> None:
+        if live:
+            if self._live_token != token:
+                return
+            self._live_read = None
+        elif self._busy is None or self._busy.token != token:
             return
-        self._busy = None
+        else:
+            self._busy = None
         self._publish(scans)
-        self.session.diffs[id(run)] = diff_from(before, self.scans.hosts)
+        diff = self.session.diffs[id(run)] = self.session.run_diff(run, before, scans)
         self._resolve_marks()
-        self.notify(f"{run.preset}: {self.session.diffs[id(run)].summary()}")
-        self._refresh_view(preserve=True)
+        if live:
+            self._live_note = Text(f"{run.preset}: {diff.summary()} so far", style="dim")
+        else:
+            self._live_note = None
+            self.session.forget_baseline(run)
+            cut = "" if run.state is State.DONE else " - its file stops part-way"
+            if any(label == self._naming(run.xml_path) for label, _ in scans.failures):
+                cut = " - it ended before nmap finished a host"
+            self.notify(f"{run.preset}: {diff.summary()}{cut}")
+        # The model grew: the cursor follows its row by what it is, not by its
+        # number - new hosts sort in above it on every live read.
+        self._refresh_view(preserve=True, growing=True)
         self._refresh_detail()
         self._refresh_status()
 
     def _on_reread_failed(self, token: int, run: ScanRun, covered: bool,
-                          exc: Exception) -> None:
+                          exc: Exception, live: bool = False) -> None:
+        if live:
+            if self._live_token == token:
+                self._live_read = None
+            return              # the next report, or the end, reads it again
         if self._busy is not None and self._busy.token == token:
             self._busy = None
         self.notify(f"{self._naming(run.xml_path)} could not be read: {exc}",
@@ -2195,7 +2267,8 @@ class NmapApp(ScanFlows, App[int]):
         if scans.failures:
             names = ", ".join(n for n, _ in scans.failures)
             self.notify(f"skipped unreadable: {names}", severity="warning")
-        cut = [f for f in scans.files if not f.complete]
+        running = self.session.running_paths()
+        cut = [f for f in scans.files if not f.complete and f.path not in running]
         if cut:
             said = ", ".join(f"{f.label or f.path.name} ({len(f.hosts)} host(s) kept)"
                              for f in cut)
@@ -2360,19 +2433,22 @@ class NmapApp(ScanFlows, App[int]):
     async def _request_quit(self) -> None:
         """Leaving while a scan runs ends it, so ask first.
 
-        A scan writes its output only when it finishes, so quitting mid-run
-        throws the work away - which is worth one keypress of confirmation, and
-        `Esc` is the answer that keeps scanning.
+        Quitting mid-run keeps the host groups nmap has finished and loses the
+        rest - which is worth one keypress of confirmation, and `Esc` is the
+        answer that keeps scanning.
         """
-        running = self.runner.busy() or self.captures.busy()
-        if running is None:
+        active = self.session.active()
+        if not active:
             self.exit(self._exit_code)
             return
+        names = ", ".join(f"{r.label} ({scan_views.elapsed(r.elapsed)})" for r in active)
+        one = len(active) == 1
         answer = await self.push_screen_wait(ChoiceScreen(
-            f"{running.label} has been running for "
-            f"{scan_views.elapsed(running.elapsed)}. Quitting ends it, and a "
-            f"run that does not finish writes no file.",
-            [("stay", "Keep it running"), ("quit", "End it and quit")]))
+            f"Running: {names}. Quitting ends {'it' if one else 'them'}; what "
+            f"{'it has' if one else 'they have'} finished so far is kept, the rest "
+            "is not done.",
+            [("stay", f"Keep {'it' if one else 'them'} running"),
+             ("quit", f"End {'it' if one else 'them'} and quit")]))
         if answer == "quit":
             self.exit(self._exit_code)
 
@@ -2383,10 +2459,7 @@ class NmapApp(ScanFlows, App[int]):
         everything nmap spawns - which also means quitting without this would
         leave it scanning the target with nobody watching.
         """
-        if self.runner.busy() is not None:
-            self.runner.cancel()
-        if self.captures.busy() is not None:
-            self.captures.cancel()
+        self.session.cancel_all()
         self._stop_report_server()
         if self._web is not None:
             self._web.stop()

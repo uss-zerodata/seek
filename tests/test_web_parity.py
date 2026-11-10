@@ -287,7 +287,7 @@ def test_a_root_preset_is_reviewed_as_needing_sudo(tmp_path, monkeypatch):
     assert review["privilege"]
 
 
-# --- live runs: events, cancel, one per tool --------------------------------------------------
+# --- live runs: events, cancel, several at once --------------------------------------------------
 
 
 def _fetch(url: str, method: str = "GET", body: dict | None = None):
@@ -330,17 +330,32 @@ async def test_a_browser_started_scan_streams_and_can_be_cancelled(tmp_path):
         assert [e["type"] for e in seen][:1] == ["run"], "started, then its lines"
         assert any(e["type"] == "line" and e["text"].startswith("line") for e in seen)
 
-        with pytest.raises(urllib.error.HTTPError) as second:
-            await asyncio.to_thread(_fetch, server.url + "/api/v1/scans", "POST",
-                                    {"preset": _preset(sess), "targets": ["192.0.2.2"]})
-        assert second.value.code == 409, "one scan at a time, whoever asks"
+        await asyncio.sleep(1.1)                # a new second: its own output files
+        _status, review = await asyncio.to_thread(
+            _fetch, server.url + "/api/v1/scans/review", "POST",
+            {"preset": _preset(sess), "targets": ["192.0.2.2"]})
+        assert "already running" in review["warning"], "a warning, not a refusal"
+        status, other = await asyncio.to_thread(
+            _fetch, server.url + "/api/v1/scans", "POST",
+            {"preset": _preset(sess), "targets": ["192.0.2.2"]})
+        assert status == 200 and len(sess.runner.active()) == 2
 
+        with pytest.raises(urllib.error.HTTPError) as which:
+            await asyncio.to_thread(_fetch, server.url + "/api/v1/runs/nmap/cancel", "POST", {})
+        assert which.value.code == 409, "two are running: name one"
+        await asyncio.to_thread(
+            _fetch, server.url + f"/api/v1/runs/{other['id']}/cancel", "POST", {})
+        for _ in range(50):
+            if len(sess.runner.active()) == 1:
+                break
+            await asyncio.sleep(0.1)
+        assert [r.state for r in sess.runner.runs] == [State.RUNNING, State.CANCELLED]
         await asyncio.to_thread(_fetch, server.url + "/api/v1/runs/nmap/cancel", "POST", {})
         for _ in range(50):
             if not sess.runner.busy():
                 break
             await asyncio.sleep(0.1)
-        assert sess.runner.runs[-1].state is State.CANCELLED
+        assert sess.runner.runs[0].state is State.CANCELLED
     finally:
         await server.aclose()
 

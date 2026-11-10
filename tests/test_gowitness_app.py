@@ -69,8 +69,8 @@ async def test_a_capture_and_a_scan_can_run_at_once(tmp_path):
         scan = ScanRun(argv=["sleep", "5"], preset="p", targets=["t"],
                        out_base=tmp_path / "s")
         shot = _capture(tmp_path, ["http://a:80"])
-        app.runner._current, app.runner.runs = scan, [scan]
-        app.captures._current, app.captures.runs = shot, [shot]
+        app.runner.runs = [scan]
+        app.captures.runs = [shot]
         assert app.runner.busy() is scan
         assert app.captures.busy() is shot, "the capture was not blocked by the scan"
 
@@ -80,7 +80,7 @@ async def test_a_second_capture_is_refused(tmp_path):
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause(0.2)
         running = _capture(tmp_path, ["http://a:80"])
-        app.captures._current, app.captures.runs = running, [running]
+        app.captures.runs = [running]
         app._start_capture(list(app.scans.hosts and []) or [])
         await pilot.pause(0.3)
         assert len(app.captures.runs) == 1, "a second capture was started"
@@ -95,7 +95,7 @@ async def test_the_quit_guard_covers_a_running_capture(tmp_path):
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause(0.2)
         shot = _capture(tmp_path, ["http://a:80"])
-        app.captures._current, app.captures.runs = shot, [shot]
+        app.captures.runs = [shot]
         await pilot.press("q")
         await pilot.pause(0.4)
         assert isinstance(app.screen, ChoiceScreen), "quit was not guarded"

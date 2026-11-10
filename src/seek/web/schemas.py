@@ -364,6 +364,7 @@ class ScanPlanOut(BaseModel):
     via: str = ""                    # "", "sudo" or "capabilities" - how it gets root
     error: str = ""                  # why this command would not be run
     blocked: str = ""                # why it cannot start here; it can still be copied
+    warning: str = ""                # what starting now costs - another scan running
     copy_local: str | None = None    # the argv as one shell line; None without nmap here
     copy_remote: str = ""            # the snippet for a machine with only nmap
     notify_url: str = ""             # the configured default, for the review to show

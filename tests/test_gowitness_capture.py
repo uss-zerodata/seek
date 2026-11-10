@@ -399,7 +399,7 @@ def test_a_busy_capture_blocks_the_start_and_keeps_its_list(tmp_path, monkeypatc
     session = _planning_session(tmp_path, monkeypatch, NATIVE)
     running = CaptureRun(argv=["sleep"], paths=_paths(tmp_path), urls=["http://a:80"])
     write_urls(running.paths, running.urls)
-    session.captures._current = running
+    session.captures.claim(running)
     run = session.plan_capture(["https://192.0.2.1:443"])
     assert run.blocked and "already running" in run.blocked
     assert running.paths.urls.read_text() == "http://a:80\n"

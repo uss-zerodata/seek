@@ -354,8 +354,8 @@ async def test_freezing_the_log_never_touches_the_scan(tmp_path):
         assert run.state is State.CANCELLED
 
 
-async def test_a_second_scan_is_refused_while_one_runs(tmp_path):
-    slow = _stub(tmp_path, "#!/bin/sh\necho going\nsleep 5\n", name="slow-nmap")
+async def test_a_second_scan_is_a_warning_while_one_runs(tmp_path):
+    slow = _stub(tmp_path, "#!/bin/sh\necho going\nsleep 30\n", name="slow-nmap")
     config = Config(nmap_path=slow, nmap_presets={"Quick": "-sV"},
                     scan_output_dir=str(tmp_path))
     app = _app(tmp_path, "basic", config=config)
@@ -366,14 +366,23 @@ async def test_a_second_scan_is_refused_while_one_runs(tmp_path):
             await pilot.pause(0.1)
             if app.runner.runs:
                 break
+        await pilot.pause(1.1)                  # a new second: its own output files
         await _to_review(pilot, app)
         start = app.screen.query_one(OptionList).get_option("start")
-        assert start.disabled and "already running" in str(start.prompt)
-        await pilot.press("escape")
-        await pilot.pause(0.2)
-        assert len(app.runner.runs) == 1
-        app.runner.cancel()
-        await pilot.pause(1.0)
+        assert not start.disabled, "a warning, not a refusal"
+        assert "already running: Quick" in _render(app.screen.query_one("#review-body Static"))
+        await _choose(pilot, app, "start")
+        for _ in range(60):
+            await pilot.pause(0.1)
+            if len(app.runner.active()) == 2:
+                break
+        assert len(app.runner.active()) == 2
+        for run in app.runner.active():
+            app.runner.cancel(run)
+        for _ in range(60):
+            await pilot.pause(0.1)
+            if not app.runner.active():
+                break
 
 
 # --- the report -------------------------------------------------------------

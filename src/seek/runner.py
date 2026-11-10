@@ -74,6 +74,7 @@ class Run:
     notify_url: str = ""
     notify_progress: bool = False
     milestone: int = 0
+    cancelling: bool = False             # set by `Runner.cancel`: the exit is ours
     # The log as the interface last drew it, per depth - kept on the run so it
     # dies with it (a cache keyed by `id(run)` can hand a new run a dead one's).
     rendered: dict = field(default_factory=dict, repr=False, compare=False)
@@ -136,40 +137,36 @@ class Run:
 
 
 class Runner:
-    """Supervises at most one run at a time.
+    """Supervises the runs of one tool, several at a time if the caller allows.
 
-    One at a time is a deliberate limit, not an implementation shortcut: two
-    concurrent scans would compete for the same network path and make each
-    other's timing data meaningless, quite apart from the output-file
-    collisions. Tools that do not contend get their own `Runner` rather than
-    sharing this one, which is what lets a capture run during a scan while
-    neither tool can run twice.
+    Whether a second run may start is the caller's decision, not this class's:
+    two nmap scans compete for the same network path and skew each other's
+    timing, which the review states and the user may accept, while a second
+    gowitness capture is refused (`busy()`). A run is listed - and so active -
+    from `claim`, before its task first runs.
     """
 
     def __init__(self) -> None:
         self.runs: list[Run] = []
-        self._process: asyncio.subprocess.Process | None = None
-        self._current: Run | None = None
-        self._cancelling = False
+        self._processes: dict[int, asyncio.subprocess.Process] = {}
 
-    @property
-    def current(self) -> Run | None:
-        return self._current if self._current and self._current.running else None
+    def active(self) -> list[Run]:
+        """The runs still running, oldest first."""
+        return [r for r in self.runs if r.running]
 
     def busy(self) -> Run | None:
-        return self.current
+        """The oldest running run, or `None`."""
+        return next((r for r in self.runs if r.running), None)
 
     def claim(self, run: Run) -> None:
-        """Make `run` the current one *now*, before its task first runs.
+        """List `run` *now*, before its task first runs.
 
         `run()` used to do this on its first step, one loop turn after the
         caller had checked `busy()` - two starts in one turn (a double click,
-        the browser and the terminal together) both passed, both scans ran,
-        and only the second could be cancelled.
+        the browser and the terminal together) both passed the check.
         """
-        self.runs.append(run)
-        self._current = run
-        self._cancelling = False
+        if not any(r is run for r in self.runs):
+            self.runs.append(run)
 
     async def run(self, run: Run, on_line: Callable[[str], None],
                   on_done: Callable[[Run], None],
@@ -185,8 +182,7 @@ class Runner:
         it the caller can only refresh its view when the first line arrives, and
         until then the run it just started is nowhere to be seen.
         """
-        if self._current is not run:
-            self.claim(run)
+        self.claim(run)
         if on_start is not None:
             on_start(run)
         try:
@@ -211,7 +207,7 @@ class Runner:
             return self._settle(run, State.FAILED, None,
                                 f"could not start: {exc.strerror or exc}", on_done)
 
-        self._process = process
+        self._processes[id(run)] = process
         assert process.stdout is not None
         while True:
             try:
@@ -231,11 +227,11 @@ class Runner:
             run.append(line)
             on_line(line)
         code = await process.wait()
-        self._process = None
+        self._processes.pop(id(run), None)
         return self._settle(run, *self._classify(run, code), on_done)
 
     def _classify(self, run: Run, code: int) -> tuple[State, int, str]:
-        if self._cancelling:
+        if run.cancelling:
             return State.CANCELLED, code, "cancelled — what it wrote so far is kept"
         if code == 0:
             return State.DONE, code, run.summarise()
@@ -248,17 +244,21 @@ class Runner:
         run.ended = time.monotonic()
         run.exit_code = code
         run.result = result
-        self._current = None
         on_done(run)
         return run
 
-    def cancel(self) -> bool:
-        """End the running process. `SIGKILL` follows if `SIGTERM` is ignored."""
-        process = self._process
-        run = self._current
-        if process is None or run is None or not run.running:
+    def cancel(self, run: Run | None = None) -> bool:
+        """End `run`'s process - or the only running run's, when none is named
+        and only one runs. `SIGKILL` follows if `SIGTERM` is ignored."""
+        if run is None:
+            active = self.active()
+            if len(active) != 1:
+                return False
+            run = active[0]
+        process = self._processes.get(id(run))
+        if process is None or not run.running:
             return False
-        self._cancelling = True
+        run.cancelling = True
         run.append("")
         run.append("[seek] cancelling — sending SIGTERM")
         self._signal(process, signal.SIGTERM)

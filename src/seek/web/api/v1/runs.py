@@ -70,13 +70,21 @@ def run_log(rid: str, since: int = 0, sess=Depends(session)):
     return s.LogOut(run=run_out(run), since=start, lines=lines[start - first:])
 
 
-@router.post("/runs/{tool}/cancel", response_model=s.RunOut | None)
-async def cancel(tool: str, request: Request):
-    if tool not in ("nmap", "gowitness"):
-        raise HTTPException(404, f"no tool {tool}")
-    cancelled = session(request).cancel(tool)
+@router.post("/runs/{which}/cancel", response_model=s.RunOut | None)
+async def cancel(which: str, request: Request):
+    """`which` is a tool - its one running run - or a run's id."""
+    sess = session(request)
+    if which in ("nmap", "gowitness"):
+        tool, run = which, None
+        if len((sess.runner if tool == "nmap" else sess.captures).active()) > 1:
+            raise HTTPException(409, f"several {tool} runs are running - name one by its id")
+    else:
+        run = _find(sess, which)
+        tool = "nmap" if any(r is run for r in sess.runner.runs) else "gowitness"
+    cancelled = sess.cancel(tool, run)
     if cancelled is None:
-        raise HTTPException(409, f"no {tool} run to cancel")
+        raise HTTPException(409, f"no {tool} run to cancel" if run is None
+                            else f"{run.label} is not running")
     return run_out(cancelled)
 
 
@@ -115,6 +123,7 @@ def _plan(sess, body: s.ScanPlanIn):
     out.via = plan.via
     out.notify_url, out.notify_progress = plan.notify_url, plan.notify_progress
     out.blocked = plan.blocked or ""
+    out.warning = plan.warning or ""
     out.copy_local, out.copy_remote = plan.copy_local, plan.copy_remote
     return out, plan
 

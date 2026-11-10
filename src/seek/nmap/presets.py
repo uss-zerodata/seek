@@ -298,7 +298,14 @@ def output_base(directory: Path, preset_name: str, when: datetime | None = None)
     """
     moment = when.astimezone() if when is not None else datetime.now()
     stamp = moment.strftime("%Y-%m-%d_%H-%M-%S")
-    return Path(directory) / f"nmap_{slug(preset_name)}_{stamp}"
+    base = Path(directory) / f"nmap_{slug(preset_name)}_{stamp}"
+    # Scans may run together: a second one of a preset in the same second
+    # must not write over the first (nmap creates the XML as it starts).
+    n = 1
+    while base.with_name(base.name + ".xml").exists():
+        n += 1
+        base = Path(directory) / f"nmap_{slug(preset_name)}_{stamp}-{n}"
+    return base
 
 
 def writable(directory: Path) -> str | None:

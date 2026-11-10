@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from seek.nmap.progress import Report
-from seek.nmap.runner import State
 from seek.nmap.session import Session
 from seek.tui.nmap import scans as scan_views
 from seek.tui.nmap import views as vdefs
@@ -26,12 +25,15 @@ GROUP_TABS = ("group-service", "group-product", "group-port")
 def scans_view(session: Session) -> vdefs.View:
     """Every scan file in time order, and every run the session has started."""
     def build(_scans, report: Report | None = None) -> list[vdefs.Row]:
-        history = session.scan_history(report)
+        # A running scan's file is partial: the run stands for it until it ends.
+        running = {str(p) for p in session.running_paths()}
+        history = [s for s in session.scan_history(report)
+                   if not s.path or str(s.path) not in running]
         done = {str(s.path) for s in history if s.path}
-        # A finished run is already in the history as its file; only runs with
-        # no file yet (running, failed, cancelled) get their own row.
+        # An ended run is in the history as its file - whatever it finished;
+        # a run with no file (running, or nothing written) gets its own row.
         live = [r for r in session.runner.runs
-                if r.state is not State.DONE or str(r.xml_path) not in done]
+                if r.running or str(r.xml_path) not in done]
         # A capture leaves no scan file, so every one of them keeps its row.
         live += list(session.captures.runs)
         return scan_views.history_rows(history, live)

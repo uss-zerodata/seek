@@ -122,6 +122,28 @@ async def test_cancelling_when_nothing_runs_is_a_no_op(tmp_path):
     assert Runner().cancel() is False
 
 
+async def test_two_runs_together_and_one_cancelled(tmp_path):
+    """Several runs are supervised at once; cancelling names which one, and
+    with more than one running an unnamed cancel does nothing."""
+    script = _script(tmp_path, "echo started\nsleep 30\n")
+    runner = Runner()
+    one, two = _run(tmp_path, [str(script)]), _run(tmp_path, [str(script)])
+    tasks = [asyncio.create_task(runner.run(r, lambda _l: None, lambda _r: None))
+             for r in (one, two)]
+    for _ in range(200):
+        await asyncio.sleep(0.02)
+        if one.log and two.log:
+            break
+    assert runner.active() == [one, two] and runner.busy() is one
+    assert runner.cancel() is False, "two are running: which one?"
+    assert runner.cancel(two) is True
+    await asyncio.wait_for(tasks[1], timeout=10)
+    assert two.state is State.CANCELLED and one.running
+    assert runner.cancel() is True, "one left: an unnamed cancel takes it"
+    await asyncio.wait_for(tasks[0], timeout=10)
+    assert one.state is State.CANCELLED and runner.active() == []
+
+
 async def test_a_process_that_ignores_sigterm_is_killed(tmp_path, monkeypatch):
     monkeypatch.setattr(run_mod, "GRACE_SECONDS", 0.2)
     script = _script(tmp_path, "trap '' TERM\necho started\nsleep 30\n")

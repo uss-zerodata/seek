@@ -183,6 +183,8 @@ class ScanFlows:
             break
 
         body = Text()
+        if plan.warning:
+            body.append(f"⚠ {plan.warning}\n\n", style="yellow")
         body.append(" ".join(plan.argv[:2]) + " ", style="bold")
         body.append(" ".join(plan.argv[2:]) + "\n\n")
         body.append(f"  {'scope':<11}", style="dim")

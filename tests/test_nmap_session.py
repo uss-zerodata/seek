@@ -59,15 +59,29 @@ async def test_a_run_streams_lines_and_tells_its_owner(tmp_path):
     assert owner.scans and owner.scans[0].state is State.DONE
 
 
-async def test_one_run_per_tool_whoever_asks(tmp_path):
+async def test_scans_run_together_but_never_into_one_file(tmp_path):
+    """A second scan is a warning, not a refusal - unless it would write the
+    files a running scan writes."""
     session = _session(tmp_path)
-    first = session.start_scan(_run(tmp_path, "import time; time.sleep(5)"), origin="tui")
+    assert session.scan_warning() is None
+    one = _run(tmp_path, "import time; time.sleep(5)")
+    first = session.start_scan(one, origin="tui")
     await asyncio.sleep(0.2)
-    with pytest.raises(Busy, match="a scan is already running: "):
+    assert "already running: stub" in session.scan_warning()
+    with pytest.raises(Busy, match="already writing out"):
         session.start_scan(_run(tmp_path, "print(1)"), origin="web")
-    assert session.cancel("nmap") is not None
+    two = ScanRun(preset="other", argv=[sys.executable, "-c", "import time; time.sleep(5)"],
+                  targets=["192.0.2.2"], out_base=tmp_path / "out2")
+    second = session.start_scan(two, origin="web")
+    await asyncio.sleep(0.2)
+    assert session.runner.active() == [one, two]
+    assert session.cancel("nmap") is None, "two are running: which one?"
+    assert session.cancel("nmap", two) is two
+    await second
+    assert two.state is State.CANCELLED and one.running
+    assert session.cancel_all() == [one]
     await first
-    assert session.runner.runs[0].state is State.CANCELLED
+    assert one.state is State.CANCELLED
 
 
 async def test_marks_are_shared_and_toggle_as_a_row_does(tmp_path):
@@ -129,11 +143,32 @@ async def test_a_started_scan_is_remembered_without_its_targets(tmp_path):
     assert recent and recent[0].where == "history"
 
 
-async def test_two_starts_in_the_same_moment_run_one_scan(tmp_path):
+async def test_two_captures_in_the_same_moment_run_one(tmp_path):
     """`busy()` used to turn true a loop turn after the check: both passed."""
+    from seek.gowitness.capture import CaptureRun, capture_dir
+    from seek.gowitness.detect import Probe
+
     session = _session(tmp_path)
-    first = session.start_scan(_run(tmp_path, "import time; time.sleep(0.5)"))
+    session.gowitness = Probe(backend="native", path="/usr/bin/gowitness")
+
+    def capture():
+        return CaptureRun(argv=[sys.executable, "-c", "import time; time.sleep(0.5)"],
+                          paths=capture_dir(tmp_path), urls=["http://192.0.2.1:80"])
+
+    first = session.start_capture(capture())
     with pytest.raises(Busy):
-        session.start_scan(_run(tmp_path, "print(1)"))
-    assert [r for r in session.runner.runs] == [session.runner.busy()]
+        session.start_capture(capture())
+    assert session.captures.runs == [session.captures.busy()]
     await first
+
+
+async def test_a_second_scan_in_the_same_second_gets_its_own_files(tmp_path):
+    from datetime import datetime
+
+    from seek.nmap.presets import output_base
+
+    when = datetime(2026, 11, 10, 12, 0, 0)
+    first = output_base(tmp_path, "Quick", when)
+    first.with_name(first.name + ".xml").write_text("")
+    second = output_base(tmp_path, "Quick", when)
+    assert second.name == first.name + "-2"

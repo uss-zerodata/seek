@@ -12,12 +12,12 @@ from __future__ import annotations
 import asyncio
 import signal
 import sys
+import time
 from pathlib import Path
 
 from seek.config import Config
 from seek.gowitness.capture import CaptureRun
 from seek.nmap import bulk
-from seek.nmap.diff import diff_from, snapshot
 from seek.nmap.merge import Naming, load
 from seek.nmap.runner import ScanRun, State, elevation_help
 from seek.nmap.session import Session
@@ -33,33 +33,57 @@ class HeadlessOwner:
 
     def __init__(self, session: Session) -> None:
         self.session = session
+        self._reading: asyncio.Task | None = None
+        self._reads = 0                 # only the newest read publishes
 
     def scan_done(self, run: ScanRun) -> None:
-        if run.state is State.DONE and run.xml_path.exists():
-            asyncio.get_running_loop().create_task(self._reread(run))
-        elif run.state is State.FAILED and "sudo -n refused" in run.result:
+        # A cancelled or failed scan keeps the hosts it finished: read them in.
+        if run.xml_path.exists():
+            self._reading = asyncio.get_running_loop().create_task(self._reread(run))
+        if run.state is State.FAILED and "sudo -n refused" in run.result:
             _say(elevation_help(self.session.config.nmap_path))
-        else:
+        elif run.state is not State.DONE:
             _say(f"{run.preset}: {run.result}")
 
-    async def _reread(self, run: ScanRun) -> None:
+    def scan_grew(self, run: ScanRun) -> bool:
+        """Read in what a running scan has finished - not while another read runs."""
+        if self._reading is not None and not self._reading.done():
+            return False
+        if self.session.file_grew(run):
+            self._reading = asyncio.get_running_loop().create_task(
+                self._reread(run, live=True))
+        return True
+
+    async def _reread(self, run: ScanRun, live: bool = False) -> None:
         session = self.session
-        if not any(p.is_dir() and run.xml_path.is_relative_to(p) for p in session.sources):
+        if not any(p.is_dir() and run.xml_path.is_relative_to(p) for p in session.sources) \
+                and run.xml_path not in session.sources:
             session.sources.append(run.xml_path)
-        before = snapshot(session.scans.hosts)
+        hosts = session.scans.hosts
+        self._reads += 1
+        mine = self._reads
 
         def read():
+            began = time.monotonic()
             with bulk.bulk(), bulk.responsive():
-                return prepare(load(list(session.sources), None, session.name))
+                before = session.baseline(run, hosts)
+                scans = prepare(load(list(session.sources), None, session.name))
+            return before, scans, time.monotonic() - began
 
         try:
-            scans = await asyncio.to_thread(read)
+            before, scans, took = await asyncio.to_thread(read)
         except Exception as exc:                           # noqa: BLE001 - report, never crash
             _say(f"{session.name(run.xml_path)} could not be read: {exc}")
             return
-        session.publish(scans, origin="serve")
-        session.diffs[id(run)] = diff_from(before, session.scans.hosts)
-        _say(f"{run.preset}: {session.diffs[id(run)].summary()}")
+        session.read_took(took)
+        session.diffs[id(run)] = session.run_diff(run, before, scans)
+        if mine == self._reads:     # a later read has newer files; it publishes
+            session.publish(scans, origin="serve")
+        if not live:
+            session.forget_baseline(run)
+            none = any(label == session.name(run.xml_path) for label, _ in scans.failures)
+            _say(f"{run.preset}: {session.diffs[id(run)].summary()}"
+                 + (" - it ended before nmap finished a host" if none else ""))
 
     def capture_done(self, run: CaptureRun) -> None:
         self.session.load_captures()

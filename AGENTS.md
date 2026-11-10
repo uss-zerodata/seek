@@ -472,14 +472,18 @@ together. Do not `query_one(RowList)`: it matches both.
   than the quiet window before a single late response is captured early. That
   is the platform's limit; the quiet window is the knob. `--timeout` is raised
   to cover the cap, never lowered.
-- **One `Runner` slot per tool is the whole concurrency design.** A `Runner`
-  supervises one run, so `self.runner` (nmap) and `self.captures` (gowitness)
-  give "serial within a tool, concurrent across tools" with no scheduler and no
-  locks. nmap's one-at-a-time rule exists because concurrent scans corrupt each
-  other's timing data; that reasoning does not reach HTTP screenshotting, and a
-  capture that had to wait out a `-p-` would be useless in the workflow it
-  exists for. Anything that asks "is something running" must ask both -
-  the quit guard, `on_unmount`, and the run count in the status bar.
+- **One `Runner` per tool; whether a second run may start is the caller's call.**
+  A `Runner` supervises any number of runs (`active()`, a process per run,
+  `cancel(run)`), so `self.runner` (nmap) and `self.captures` (gowitness) need
+  no scheduler and no locks. Scans may run together: they share the network
+  path and skew each other's timing, which the review says (`ScanPlan.warning`,
+  `Session.scan_warning`) and the user may accept - a two-day scan must not
+  block the quick version scan of what it already found. Two scans writing one
+  `-oA` base are refused, and `output_base` adds `-2` when the XML exists.
+  Captures stay one at a time (`capture_blocked`). Anything that asks "is
+  something running" must ask both tools and every run - the quit guard,
+  `on_unmount` (`Session.cancel_all`) and the run count; `cancel()` with no run
+  named does nothing while several run.
 - **A tool's absence is a state to render, not an entry to hide.** The capture
   entry stays in the export dialog when gowitness is missing, disabled, with
   the reason as its label; the status bar carries `◉ gowitness not found`. A
@@ -745,10 +749,26 @@ together. Do not `query_one(RowList)`: it matches both.
 - **Freezing the log is not pausing the scan.** nmap's timers run against the
   wall clock, so `SIGSTOP` can time hosts out on resume; `p` is a view state and
   the pane header says the scan is still running. `runner` only runs or cancels.
-- **A finished scan is folded in by re-reading every source**, not by an
-  incremental merge - one loading path means a scan started here and one run
-  outside get identical treatment. The rebuild invalidates marks, so
-  `_resolve_marks` re-finds them by identity afterwards.
+- **A scan is folded in by re-reading every source**, not by an incremental
+  merge - one loading path means a scan started here and one run outside get
+  identical treatment. The rebuild invalidates marks, so `_resolve_marks`
+  re-finds them by identity afterwards. That happens at the end, whatever the
+  outcome (a cancelled scan keeps what it finished), and **while it runs**:
+  nmap writes each finished host group to the XML and prints `Nmap scan report
+  for` per host, and the first such line starts a per-run timer
+  (`Session._scan_line`) that fires after the burst - not on the next line,
+  which may be hours away - calls `Owner.scan_grew`, and re-reads only if the
+  file grew. The TUI's live read is quiet (`_live_token`, no `_Busy`, the
+  "so far" note on the status line) and is declined while any read or
+  projection runs; the timer asks again. Pacing is `max(60 s, 4 × a re-read)`.
+  A run's diff baseline is taken as it starts, in a thread
+  (`Session._take_baseline`), and `run_diff` counts only the hosts in the
+  run's own file - every read re-reads every source, so a baseline taken at the
+  run's first read already held what another scan's read put in, and two scans
+  ending together counted each other's hosts (both found with a real nmap).
+  The TUI refreshes with `growing=True` so the cursor follows its row by key:
+  new hosts sort in above it on every read. A running run's
+  file is not "cut off" and is listed once, as the run (`running_paths`).
 - **The Scans tab is a history over `ScanSet.files`, not just this session's
   runs.** `nmap/timeline.py` orders every scan file by its `<nmaprun start>`
   epoch and diffs each against the merged state of all earlier ones.
