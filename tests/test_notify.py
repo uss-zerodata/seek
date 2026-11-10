@@ -115,9 +115,11 @@ def _session(tmp_path) -> Session:
 
 # A stand-in for nmap that prints targets, progress and a path, as nmap does.
 _NMAP = (
+    "print('Initiating Connect Scan at 12:00'); "
+    "print('Scanning 4 hosts [1000 ports/host]'); "
+    "print('Connect Scan Timing: About 30.00% done; ETC: 12:00'); "
+    "print('Connect Scan Timing: About 80.00% done; ETC: 12:00'); "
     "print('Nmap scan report for db.acme.test (10.0.0.5)'); "
-    "print('Stats: 0:01:00 elapsed; About 30.00% done; ETC: 12:00'); "
-    "print('Stats: 0:02:00 elapsed; About 80.00% done; ETC: 12:00'); "
     "print('/home/alice/acme/out.xml')"
 )
 
@@ -134,9 +136,10 @@ async def _drain(session: Session) -> None:
 
 async def _scan(tmp_path, url: str, progress: bool) -> tuple[Session, ScanRun]:
     session = _session(tmp_path)
-    run = ScanRun(preset="Top 1000 TCP", argv=[sys.executable, "-c", _NMAP],
+    # -v and a total: what an overall figure - and so a milestone - needs.
+    run = ScanRun(preset="Top 1000 TCP", argv=[sys.executable, "-c", _NMAP, "-v"],
                   targets=["10.0.0.0/24"], out_base=tmp_path / "acme" / "out",
-                  notify_url=url, notify_progress=progress)
+                  notify_url=url, notify_progress=progress, total=4)
     await session.start_scan(run)
     await _drain(session)
     return session, run

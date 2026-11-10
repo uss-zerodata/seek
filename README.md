@@ -292,6 +292,17 @@ says what that costs - they share the network path, each one's timing adapts to
 the other's traffic, both take longer, and rate-limited targets drop more probes.
 `c` cancels the run under the cursor in the Scans tab, or asks which.
 
+**Progress of the whole scan.** nmap's own percentage covers one phase of the
+current host group, so it starts over with every group. A running scan shows
+the whole scan instead, for example `≈ 31% · port scan 50% · 128/512 hosts ·
+≈ 1h 20m left`. The total is nmap's own count of the targets: `nmap -sL -n`,
+which lists them without sending anything, and so honours ranges, `-iL` and
+`--exclude`. Hosts finished are the ones nmap has reported, down ones included,
+and the current group adds its share. That needs `-v`: without it nmap
+does not report down hosts, so seek shows the hosts reported and says so. The
+progress notifications use the same figure. `--stats-every` prints nothing under
+seek: nmap prints those statistics only to an interactive terminal.
+
 **Large engagements.** Measured on 120 scan files covering 24 200 hosts
 (106 MB of XML), which is where every figure below comes from; the numbers are
 reproducible with `benchmarks/gen_nmap_corpus.py` and `benchmarks/bench_nmap.py`.

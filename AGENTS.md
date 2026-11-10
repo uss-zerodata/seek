@@ -746,6 +746,20 @@ together. Do not `query_one(RowList)`: it matches both.
   `Session.lookup()` is keyed on the inventory *and* `store.generation`, and the
   lookup views put the generation in `View.stamp`. Tests get a private
   `XDG_STATE_HOME` (conftest) so a real database never leaks into them.
+- **A scan's progress is of the whole scan, read from -v lines.** nmap's
+  `About X% done` is one phase of the current host group. `ScanRun` reads
+  `Initiating <phase>`, `Scanning N hosts [`, the timing line and every
+  `Nmap scan report for` - down hosts included, which nmap prints only at -v -
+  and `fraction()` is (finished + group × phase %) / total: monotonic, below 1
+  until the end, `None` without -v or a total. The total is nmap's own
+  (`count_argv` → `nmap -sL -n` over the targets, `-iL`, `--exclude`, `-6`;
+  none for `-iR`), counted in the background as the scan starts, with the last
+  line kept only (a /8 lists 16 M lines). Two facts measured on 7.94 shape it:
+  `--stats-every` prints **nothing** with stdin closed (it comes from the
+  keypress handler, which wants a terminal nmap owns; a pty on stdin is not
+  enough, and a session of its own breaks sudo), and stdout is block-buffered
+  into the pipe, flushed at phase starts, timing lines and group ends - so
+  counts can lag one flush. Milestones read the same `fraction()`.
 - **Freezing the log is not pausing the scan.** nmap's timers run against the
   wall clock, so `SIGSTOP` can time hosts out on resume; `p` is a view state and
   the pane header says the scan is still running. `runner` only runs or cancels.

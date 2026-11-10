@@ -53,8 +53,8 @@ from seek.nmap import timing as timing_mod
 from seek.nmap.diff import diff_from, snapshot
 from seek.nmap.export import Record, export_ports, export_urls, records_for, service_urls
 from seek.nmap.models import ScanSet
-from seek.nmap.runner import ScanRun
-from seek.runner import Run, Runner
+from seek.nmap.runner import ScanRun, count_argv, counted
+from seek.runner import LINE_LIMIT, Run, Runner
 from seek.vulndb import match as vulndb_match
 from seek.vulndb import store as vulndb_store
 
@@ -67,6 +67,8 @@ QUEUE_LIMIT = 2000
 # a few seconds after nmap reports a host, so a group's report is read whole.
 LIVE_MIN = 60.0
 LIVE_SETTLE = 5.0
+# How long nmap may take to list a scan's targets (`-sL`) before it has none.
+COUNT_TIMEOUT = 60.0
 _REPORT = "Nmap scan report for "
 
 
@@ -853,8 +855,40 @@ class Session:
             raise ScanError(f"cannot write the scan here: {problem}")
         self._take_baseline(run)
         task = self._start(self.runner, run, origin, self._scan_done)
+        self._count_targets(run)
         self.command_history().record(run.argv)   # its arguments - never its targets
         return task
+
+    def _count_targets(self, run: ScanRun) -> None:
+        """Ask nmap how many targets the scan covers (`-sL -n`: listed, never
+        probed), in the background - the scan does not wait for it."""
+        argv = count_argv(run.argv, {self.config.nmap_path, self.nmap.path or ""} - {""})
+        if argv is None:
+            return
+        task = asyncio.get_running_loop().create_task(self._count(run, argv))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _count(self, run: ScanRun, argv: list[str]) -> None:
+        process = None
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *argv, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL, limit=LINE_LIMIT)
+            last = b""
+            async with asyncio.timeout(COUNT_TIMEOUT):
+                # A /8 lists sixteen million lines: kept is the last one only.
+                while line := await process.stdout.readline():
+                    if line.startswith(b"Nmap done"):
+                        last = line
+                await process.wait()
+            run.total = counted(last.decode("utf-8", "replace"))
+        except (OSError, TimeoutError, ValueError):
+            pass                                    # no total: counts only
+        finally:
+            if process is not None and process.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    process.kill()
 
     _commands: recent_mod.CommandHistory | None = None
 

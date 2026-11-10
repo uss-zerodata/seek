@@ -163,15 +163,22 @@ async def test_a_process_that_ignores_sigterm_is_killed(tmp_path, monkeypatch):
 
 
 async def test_progress_is_read_from_what_nmap_prints(tmp_path):
+    """The -v lines nmap prints under seek. Its --stats-every line never comes
+    (it needs an interactive terminal) and is not read."""
     script = _script(
         tmp_path,
         "echo 'Stats: 0:01:42 elapsed; 110 hosts completed (146 up), 146 undergoing'\n"
+        "echo 'Initiating SYN Stealth Scan at 14:20'\n"
+        "echo 'Scanning 4 hosts [1000 ports/host]'\n"
         "echo 'SYN Stealth Scan Timing: About 43.21% done; ETC: 14:26 (0:02:11 remaining)'\n",
     )
-    run, _ = await _drive(Runner(), _run(tmp_path, [str(script)]))
-    assert run.percent == pytest.approx(43.21)
-    assert run.hosts_up == 146
-    assert "43%" in run.progress() and "146 up" in run.progress()
+    run = _run(tmp_path, [str(script), "-v"])
+    run.total = 8
+    run, _ = await _drive(Runner(), run)
+    assert run.percent == pytest.approx(43.21) and run.group == 4 and run.finished == 0
+    run.state = State.RUNNING                   # as it read while running
+    assert run.fraction() == pytest.approx(4 * 0.4321 / 8)
+    assert "syn stealth scan 43%" in run.progress()
 
 
 async def test_a_run_without_progress_lines_still_reads_sensibly(tmp_path):

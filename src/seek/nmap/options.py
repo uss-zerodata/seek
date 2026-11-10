@@ -289,7 +289,10 @@ OPTIONS: tuple[Option, ...] = (
        Value("text", "a path or URL")),
     _o("--webxml", OUTPUT, "Use the stylesheet from nmap.org", "O"),
     _o("--no-stylesheet", OUTPUT, "No stylesheet in the XML output", "O"),
-    _o("--stats-every", OUTPUT, "Print timing statistics this often", "O", _TIME),
+    # nmap prints them from its keypress handler, which needs a terminal of its
+    # own on stdin; seek closes stdin (sudo needs nmap in the viewer's session).
+    _o("--stats-every", OUTPUT, "Print timing statistics this often - not when seek runs "
+       "nmap: it prints them only for an interactive terminal; -v gives progress", "O", _TIME),
     # --- miscellaneous [M] ---
     _o("-6", MISC, "IPv6 scanning", "M"),
     _o("-A", MISC, "OS detection, versions, default scripts and traceroute", "M", root=True),

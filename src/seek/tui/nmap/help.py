@@ -129,6 +129,7 @@ _GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("c", "cancel the scan under the cursor, the only one, or choose one"),
         ("", "scans may run together - the review says what that costs; a running"),
         ("", "scan's finished hosts are read in as nmap reports them, quietly"),
+        ("", "progress is of the whole scan (-v; total from nmap -sL), not one group"),
         ("", "the Scans tab is a history: every scan file present, oldest first,"),
         ("", "each diffed against the state before it — imported scans included"),
     ]),
