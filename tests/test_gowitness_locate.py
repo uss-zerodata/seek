@@ -101,6 +101,16 @@ def test_an_image_found_nowhere_points_where_it_should_have_been(tmp_path):
     assert ShotFinder(db, ShotIndex([tmp_path]))(SHOT) == tmp_path / "screenshots" / SHOT
 
 
+def test_a_path_in_the_database_is_cut_to_its_name(tmp_path):
+    """A database is read defensively: `../x` or `/etc/x` in the filename
+    column never leaves the capture's directories."""
+    db = _db(tmp_path / "scans" / "gowitness.sqlite3")
+    secret = _image(tmp_path / "secret.jpeg")
+    finder = ShotFinder(db)
+    assert finder("../secret.jpeg") == tmp_path / "scans" / "screenshots" / "secret.jpeg"
+    assert finder(str(secret)) == tmp_path / "scans" / "screenshots" / "secret.jpeg"
+
+
 def test_reading_a_moved_capture_resolves_its_screenshot(tmp_path):
     db = _db(tmp_path / "db" / "results.sqlite3")
     away = _image(tmp_path / "images" / SHOT)

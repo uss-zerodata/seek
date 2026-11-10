@@ -154,6 +154,13 @@ def ordered_fields(fields: Iterable[str]) -> list[str]:
 # --- writers ----------------------------------------------------------------
 
 
+_FORMULA_STARTS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _inert(cell: str) -> str:
+    return f"'{cell}" if cell.startswith(_FORMULA_STARTS) else cell
+
+
 def _write(table: list[tuple[str, ...]], header: list[str], fmt: str) -> str:
     """One table, three shapes. Rows are already deduplicated and ordered."""
     if fmt == "text":
@@ -162,7 +169,9 @@ def _write(table: list[tuple[str, ...]], header: list[str], fmt: str) -> str:
         buffer = io.StringIO()
         writer = csv.writer(buffer, lineterminator="\n")
         writer.writerow(header)
-        writer.writerows(table)
+        # A banner or title comes from the scanned host; one that starts like a
+        # formula would run when the file is opened in a spreadsheet (CWE-1236).
+        writer.writerows([tuple(_inert(cell) for cell in row) for row in table])
         return buffer.getvalue().rstrip("\n")
     if fmt == "json":
         return json.dumps([dict(zip(header, row, strict=True)) for row in table],

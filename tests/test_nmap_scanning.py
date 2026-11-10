@@ -21,7 +21,7 @@ from seek.nmap.views import prepare
 from seek.tui.nmap.app import NmapApp
 from seek.tui.nmap.scope import CommandScreen, ReviewScreen, ScopeScreen
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.slow]
 FIX = Path(__file__).parent / "fixtures" / "nmap"
 
 _DONE = """#!/bin/sh
@@ -425,7 +425,10 @@ async def test_a_finished_scan_is_merged_and_diffed(tmp_path):
         '  if [ "$1" = "-oA" ]; then base="$2"; fi\n'
         '  shift\n'
         'done\n'
-        f'cat > "$base.xml" <<\'XML\'\n{xml}\nXML\n'
+        # Only the scan itself carries -oA; the count (`-sL -n`) must not
+        # write a `.xml` into the working directory.
+        f'[ -n "$base" ] && cat > "$base.xml" <<\'XML\'\n{xml}\nXML\n'
+        'exit 0\n'
     )
     writer.chmod(0o755)
     config = Config(nmap_path=str(writer), nmap_presets={"Quick": "-sV"},

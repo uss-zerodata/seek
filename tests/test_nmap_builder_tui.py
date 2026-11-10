@@ -12,7 +12,7 @@ from seek.tui.menu import ChoiceScreen
 from seek.tui.nmap.builder import BuilderScreen, ChooserScreen
 from seek.tui.nmap.scope import CommandScreen
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.slow]
 
 
 def _ids(screen) -> list[str | None]:

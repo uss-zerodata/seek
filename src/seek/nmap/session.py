@@ -50,9 +50,9 @@ from seek.nmap import presets as presets_mod
 from seek.nmap import rawlog, remote, timeline
 from seek.nmap import recent as recent_mod
 from seek.nmap import timing as timing_mod
-from seek.nmap.diff import diff_from, snapshot
+from seek.nmap.diff import ScanDiff, diff_from, snapshot
 from seek.nmap.export import Record, export_ports, export_urls, records_for, service_urls
-from seek.nmap.models import ScanSet
+from seek.nmap.models import Host, ScanSet, Service
 from seek.nmap.runner import ScanRun, count_argv, counted
 from seek.runner import LINE_LIMIT, Run, Runner
 from seek.vulndb import match as vulndb_match
@@ -172,7 +172,7 @@ def hosts_by_name(hosts) -> dict[str, object]:
     return out
 
 
-def service_at(url: str, by_name: dict):
+def service_at(url: str, by_name: dict) -> tuple[Host, Service] | None:
     """`(host, service)` for the service a URL's host and port name, whatever
     nmap called the port - the fallback when a capture's URL is not one a
     record builds. Only an *open* TCP port counts: a capture of a port the
@@ -1074,7 +1074,7 @@ class Session:
         self.baselines.pop(id(run), None)
         self._baseline_jobs.pop(id(run), None)
 
-    def run_diff(self, run: ScanRun, before: dict, scans: ScanSet):
+    def run_diff(self, run: ScanRun, before: dict, scans: ScanSet) -> ScanDiff:
         """What `run` added: the merged model against `before`, over the hosts
         in the run's own file only. Every read re-reads every source, so the
         model also holds what other scans - running ones too - found since."""

@@ -20,6 +20,8 @@ from seek.nmap.session import Session
 from seek.nmap.views import prepare
 from seek.web.serve import HeadlessOwner
 
+pytestmark = pytest.mark.slow
+
 FIX = Path(__file__).parent / "fixtures" / "nmap"
 NEW = "192.0.2.50"
 

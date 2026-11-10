@@ -78,7 +78,7 @@ The system SHALL copy the formatted path(s) of the action target(s) to the syste
 - **THEN** the system shows an error message and stays in the session without crashing
 
 ### Requirement: Export the selection
-The system SHALL provide a single "export" action that writes the formatted path(s) of the target(s) to a destination chosen at export time: standard output (ending the session), the clipboard (staying in the session), or a file at a path the user supplies (staying in the session).
+The system SHALL provide a single "export" action that writes the formatted path(s) of the target(s) to a destination chosen at export time: standard output (ending the session), the clipboard (staying in the session), or a file at a path the user supplies (staying in the session). A file export SHALL refuse a path that already exists rather than replace the file; the same rule applies to every file export in the application.
 
 #### Scenario: Export to stdout
 - **WHEN** the user runs "export" and chooses standard output
@@ -87,6 +87,10 @@ The system SHALL provide a single "export" action that writes the formatted path
 #### Scenario: Export to a file
 - **WHEN** the user runs "export", chooses "file", and supplies a destination path
 - **THEN** each target's formatted path is written to that file, one per line, and the session continues
+
+#### Scenario: Export to a file that exists
+- **WHEN** the user runs "export", chooses "file", and supplies the path of an existing file
+- **THEN** the file is left as it was and a message says it exists and asks for another name
 
 #### Scenario: Export with nothing selected
 - **WHEN** the user runs "export" with no selection and no highlighted row

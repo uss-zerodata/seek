@@ -5,7 +5,9 @@ Reads one or more nmap XML output files into a single merged model of hosts and
 services, and presents them as sortable, filterable overviews with drill-down in
 both directions, so an assessment's scans can be read as records rather than as
 lines of XML.
+
 ## Requirements
+
 ### Requirement: Parse and consolidate multiple scan files
 Consolidating several scans is the normal case, not an edge case: a single
 engagement typically produces separate discovery, port and service scans that are
@@ -396,30 +398,45 @@ vulnerabilities rather than failing or showing an empty section as an error.
 - **THEN** every vulnerability count is zero and the viewer operates normally
 
 ### Requirement: Entry point
-The system SHALL provide a `nmap` subcommand taking one or more file paths, or a
-directory, and opening the viewer on them. The viewer is a purpose-built
-interface for scan output and SHALL be reached this way; the file-search session
-SHALL NOT carry nmap-specific actions or hints.
+The system SHALL provide a `nmap` subcommand taking any number of file paths and
+directories, in any mix, and opening the viewer on all of them as one merged
+model. With nothing given it SHALL read the working directory. A file reached
+through more than one of the given directories SHALL be read once. The viewer is
+a purpose-built interface for scan output and SHALL be reached this way; the
+file-search session SHALL NOT carry nmap-specific actions or hints.
 
 When the given paths hold no readable scan and scanning is available, the
 subcommand SHALL open the viewer on an empty model with the scope editor rather
 than exiting: a directory with nothing in it yet is the case for starting a
 scan, not an error. When scanning is unavailable it SHALL explain what it
-expects and exit as before. The output directory for any scan started in that
-session SHALL be the directory given, or the working directory when individual
-files were given.
+expects and exit as before.
+
+The output directory for any scan or capture started in that session SHALL be
+the first directory given, or the working directory when only files were given,
+unless an output directory is configured. The system SHALL name that directory
+before anything is written — in the review of a scan and in the confirmation of
+a capture — so that with several directories the choice is visible rather than
+inferred.
 
 #### Scenario: Opening files directly
 - **WHEN** the user runs the `nmap` subcommand with two scan files
 - **THEN** the viewer opens on the merged model of both
+
+#### Scenario: Opening several directories
+- **WHEN** the user runs the `nmap` subcommand with three directories
+- **THEN** the viewer opens on one merged model of the scans found in all three
+
+#### Scenario: Overlapping directories
+- **WHEN** the user names a directory and also a subdirectory of it
+- **THEN** each scan below the subdirectory is read once
 
 #### Scenario: The search session stays a file search
 - **WHEN** the highlighted result in a search session is an nmap XML file
 - **THEN** the search session offers no nmap-specific action for it
 
 #### Scenario: No paths given
-- **WHEN** the subcommand is run with no file paths
-- **THEN** the system explains what it expects and exits without opening the viewer
+- **WHEN** the subcommand is run with no paths
+- **THEN** the working directory is read, as if it had been named
 
 #### Scenario: A directory with no scans, and nmap available
 - **WHEN** the subcommand is run on a directory holding no readable scan and nmap is available
@@ -428,6 +445,10 @@ files were given.
 #### Scenario: A directory with no scans, and no nmap
 - **WHEN** the subcommand is run on a directory holding no readable scan and nmap is not available
 - **THEN** the system reports that there is nothing to read and exits
+
+#### Scenario: Output goes to the first directory, and says so
+- **WHEN** the viewer was opened on `dir1 dir2` and the user starts a scan
+- **THEN** the review names a location under `dir1` as where the scan will write
 
 ### Requirement: Host reachability is reported by evidence, not by asserted state
 When a scan was run with host discovery disabled (`-Pn`), nmap marks every target
@@ -605,17 +626,24 @@ selected.
 ### Requirement: Stateless operation
 The system SHALL hold everything it needs for a run in memory for the duration of
 that run. It SHALL NOT require an import or indexing step before files can be
-read, SHALL NOT create or depend on a database or any other persistent store, and
-SHALL NOT write to the filesystem except when the user explicitly exports. Two
+read, SHALL NOT create or depend on a database or any other persistent store *of
+scan data*, and SHALL NOT write to the filesystem except when the user
+explicitly exports, or explicitly updates the vulnerability database. Two
 invocations over the same files SHALL produce the same result regardless of what
-was run before them.
+was run before them, given the same vulnerability database.
+
+The vulnerability database is reference data about public software, not about
+the scanned network. It SHALL be created and changed only by an update the user
+asked for or confirmed, SHALL never contain anything read from a scan or a
+capture, and the viewer SHALL be fully usable without it. Only the vulnerability
+and support columns then say that no database is present.
 
 #### Scenario: Files are read directly, with no import step
 - **WHEN** the user opens scan files that have never been seen before
 - **THEN** they are read and presented immediately, with no prior import required
 
 #### Scenario: Nothing is left behind
-- **WHEN** a session ends
+- **WHEN** a session ends in which no update was run
 - **THEN** no database, cache or index file has been created
 
 #### Scenario: Repeat runs are identical
@@ -625,6 +653,14 @@ was run before them.
 #### Scenario: Removing a file removes its data
 - **WHEN** a file is omitted from a subsequent invocation
 - **THEN** nothing it contributed persists into that run
+
+#### Scenario: The database holds nothing from the engagement
+- **WHEN** the vulnerability database is updated during a session over a client's scans
+- **THEN** it contains only data downloaded from the public sources, and no address, name, product list or finding from the session
+
+#### Scenario: No database is not an error
+- **WHEN** the viewer opens and no vulnerability database exists
+- **THEN** every view works as before, and the support and vulnerability columns say the database is missing
 
 ### Requirement: The selected row's full record is shown
 The table can only show what fits in its columns, so the system SHALL display the
@@ -737,7 +773,7 @@ column currently sorted SHALL show the direction.
 
 #### Scenario: The overviews are visible as tabs
 - **WHEN** the viewer is open
-- **THEN** the host, service, statistics and grouping overviews are all shown as tabs, with the active one marked
+- **THEN** the host, service, statistics, grouping and inventory overviews are all shown as tabs, with the active one marked
 
 #### Scenario: Selecting a tab changes the overview
 - **WHEN** the user selects the services tab
@@ -762,6 +798,10 @@ column currently sorted SHALL show the direction.
 #### Scenario: Columns are headed and the sort is marked
 - **WHEN** a list is sorted by one of its columns
 - **THEN** every column shows its name and the sorted one shows the direction
+
+#### Scenario: The inventory is a tab
+- **WHEN** the user selects the Inventory tab and then drills into a product
+- **THEN** the services running it are listed, and going back returns to the Inventory tab as it was left
 
 ### Requirement: Every action is reachable by name
 Keys are quick but easy to forget, so every action the viewer offers — changing
@@ -1029,7 +1069,10 @@ The system SHALL write JSON, CSV and plain text. CSV SHALL carry a header row
 naming the fields and SHALL quote values that need it; JSON SHALL be a list with
 one object per record, keyed by field name; text SHALL write one record per
 line. A record whose output row is identical to one already written SHALL be
-written once.
+written once. Values come from the scanned hosts, so a CSV cell that begins
+like a spreadsheet formula (`=`, `+`, `-`, `@`, a tab or a carriage return)
+SHALL be written inert, prefixed with `'`; the text and JSON forms SHALL keep
+the value as written.
 
 #### Scenario: Choosing fields
 - **WHEN** the user exports with the fields address, port and service
@@ -1042,6 +1085,10 @@ written once.
 #### Scenario: CSV carries a header
 - **WHEN** the user exports as CSV
 - **THEN** the first line names the fields, and a value containing a comma is quoted
+
+#### Scenario: A banner cannot become a formula
+- **WHEN** a product string from a scanned host begins with `=` and the user exports as CSV
+- **THEN** the cell is written with a leading `'`, and the same export as text or JSON keeps the string as written
 
 #### Scenario: JSON is one object per record
 - **WHEN** the user exports as JSON
@@ -1448,3 +1495,145 @@ interface - narrowed to that row - before offering each one alone.
 - **WHEN** the user has opened the web interface and then starts gowitness's report server
 - **THEN** both are running, each on its own port
 
+### Requirement: A scan file that stops part-way keeps what it finished
+A scan file whose XML stops part-way, as a cancelled or crashed scan leaves it, SHALL be read for every host it finished. The viewer SHALL name it as incomplete, with the number of hosts kept, and SHALL NOT report it as unreadable. A file that stops before any host is finished SHALL be reported as unreadable, as before.
+
+#### Scenario: A cancelled scan
+- **WHEN** a scan is cancelled after nmap finished two hosts
+- **THEN** reading its file shows those two hosts and says the file is incomplete
+
+#### Scenario: Nothing finished
+- **WHEN** a scan file stops before its first host is complete
+- **THEN** it is reported as unreadable
+
+### Requirement: Scans are named unambiguously across directories
+When two or more directories are given, a scan's file name alone no longer
+identifies it: tools and presets write the same names into every directory. The
+system SHALL then name every scan by its path relative to the common parent of
+the given directories, and SHALL use that name everywhere a scan is named — the
+provenance of hosts and services, a record's scan entries, the Scans tab, the
+report of files that failed to parse, and the exported list of source scans.
+
+Provenance SHALL be kept per file, so that a host seen in two files with the same
+file name is recorded as seen in both.
+
+With a single directory, or with only files given, scans SHALL keep being named
+by their file name alone.
+
+#### Scenario: Same file name in two directories
+- **WHEN** the viewer is opened on `x` and `y`, each holding a `scan.xml` that records host `192.0.2.40`
+- **THEN** the host is listed as seen in `x/scan.xml` and in `y/scan.xml`, not once as `scan.xml`
+
+#### Scenario: Every scan is qualified once there are several directories
+- **WHEN** the viewer is opened on two directories and one of them holds `sub/other.xml`
+- **THEN** that scan is named `<directory>/sub/other.xml` in the Scans tab and in the records, even though no other scan shares its file name
+
+#### Scenario: A single directory keeps bare names
+- **WHEN** the viewer is opened on one directory
+- **THEN** scans are named by their file name alone, as before
+
+#### Scenario: A failure names the file unambiguously
+- **WHEN** two directories each hold a truncated `scan.xml`
+- **THEN** the failure report names both, each qualified by its directory
+
+### Requirement: The filter accepts field terms and logical operators
+Alongside fuzzy terms and address ranges, the filter SHALL accept field terms
+that are tested against the scan model rather than the row's text:
+
+- `open:PORT` and `open:PORT/PROTO` SHALL match a port the scan found open;
+- `closed:PORT` and `closed:PORT/PROTO` SHALL match a port the scan recorded in
+  any state other than open — closed, filtered or `open|filtered`;
+- a port the scan never recorded SHALL match neither;
+- `service:VALUE` SHALL match a port whose service name contains the value, and
+  `product:VALUE` one whose detected product contains it, case-insensitively,
+  with `^` and `$` anchoring as in the fuzzy grammar.
+
+The port-state keys SHALL be `open:` and `closed:`, so that "up" keeps its one
+meaning: the host rule.
+
+Terms SHALL combine with `AND`, `OR` and `NOT` written in uppercase, with `|` for
+OR, with `!` for NOT as today, and with parentheses; a space between terms SHALL
+mean AND; NOT SHALL bind tighter than AND, and AND tighter than OR. Lowercase
+`and`, `or` and `not` SHALL remain ordinary search words, and a `key:` that is
+not one of the fields SHALL remain an ordinary search term.
+
+Field terms joined by AND SHALL describe the same port: a row matches only if one
+of its ports satisfies all of them. `NOT` applied to field terms SHALL mean that
+none of the row's ports satisfies them. For a row that stands for several ports —
+a host, a service across hosts, a grouping bucket — the row SHALL match when any
+of its ports, or pairs, does.
+
+A filter that uses none of this syntax SHALL behave exactly as before, including
+the union of several address ranges, which SHALL also hold for ranges joined by
+AND inside a structured filter.
+
+Since the filter is applied on every keystroke, an incomplete expression SHALL
+NOT empty the list: a missing closing parenthesis SHALL be implied, a trailing
+operator and a field with no value SHALL be ignored, and a field value that
+cannot be understood SHALL be ignored. The status line SHALL show how the filter
+was understood, with its operators and grouping made explicit, and SHALL name
+any term it ignored.
+
+#### Scenario: A port that is open
+- **WHEN** the user filters the host list with `open:22`
+- **THEN** exactly the hosts with port 22 open are listed, and a host whose address contains `22` but has no open port 22 is not
+
+#### Scenario: A port seen not open
+- **WHEN** the user filters with `closed:443/tcp`
+- **THEN** hosts on which 443/tcp was recorded closed or filtered are listed, and hosts on which it was never scanned are not
+
+#### Scenario: Service and product
+- **WHEN** the user filters with `service:http product:nginx`
+- **THEN** hosts with a port whose service is http-like and whose product is nginx are listed
+
+#### Scenario: AND ties field terms to one port
+- **WHEN** a host runs http served by Apache on port 80 and ssh served by OpenSSH on port 22, and the user filters with `service:http AND product:openssh`
+- **THEN** the host is not listed, because no single port is both; with `service:http AND product:apache` it is
+
+#### Scenario: OR
+- **WHEN** the user filters with `service:ssh OR service:telnet`
+- **THEN** hosts offering either are listed
+
+#### Scenario: NOT means none of the ports
+- **WHEN** the user filters with `NOT service:ssh`
+- **THEN** only hosts with no ssh port are listed, even if they have other ports
+
+#### Scenario: Grouping
+- **WHEN** the user filters with `service:http AND NOT (product:apache | product:iis)`
+- **THEN** hosts with an http port and no port served by Apache or IIS are listed
+
+#### Scenario: Structured and plain terms together
+- **WHEN** the user filters with `10.0.0.0/24 open:445 !printer`
+- **THEN** hosts in that range, with 445 open, and not fuzzy-matching `printer` are listed
+
+#### Scenario: A plain filter is unchanged
+- **WHEN** the user filters with `apache !ssl 10.0.0.0/8 192.168.0.0/16`
+- **THEN** the result is exactly what it was before this change
+
+#### Scenario: Port rows are filtered by their own port
+- **WHEN** a host's port list is filtered with `service:ssh OR open:80`
+- **THEN** only its ssh port, and port 80 if it is open, are listed
+
+#### Scenario: Lowercase words are search words
+- **WHEN** the user filters with `rock and roll`
+- **THEN** it is three fuzzy terms, not an operator
+
+#### Scenario: An unknown key is text
+- **WHEN** the user filters with `http://intranet`
+- **THEN** it is matched as text, not as a field
+
+#### Scenario: Typing an incomplete query
+- **WHEN** the user has typed `service:ssh OR (open:22` and not yet closed the parenthesis
+- **THEN** the list shows what the completed expression would, and the status line shows the expression with the parenthesis closed
+
+#### Scenario: A field without a value while typing
+- **WHEN** the user has typed `service:`
+- **THEN** the list is not emptied, and the status line says the term is being ignored
+
+#### Scenario: An invalid port
+- **WHEN** the user filters with `open:web`
+- **THEN** the term is ignored and named in the status line as not understood
+
+#### Scenario: Matches are still highlighted
+- **WHEN** the user filters with `apache OR nginx`
+- **THEN** the characters matching whichever term a row matched on are highlighted

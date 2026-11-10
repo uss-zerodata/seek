@@ -4,7 +4,9 @@
 A browser interface over what the nmap viewer knows - hosts, ports, services and
 the screenshots of every gowitness capture found - so screenshots from several
 capture databases can be looked at together with the hosts and ports they show.
+
 ## Requirements
+
 ### Requirement: The interface serves the viewer's own model
 The web interface SHALL show the same hosts, services and captures the viewer
 that started it holds: the scans it was opened on and every capture database it
@@ -89,6 +91,16 @@ capture that failed SHALL be shown as failed, with its reason, and no image. The
 gallery SHALL be filterable across URL, title, host, port and database with the
 viewer's own filter grammar, without reloading the page.
 
+By default the gallery SHALL show one entry per host:port: when a port was
+captured more than once (by its address, by each name it answers to, by
+repeated runs), its captures SHALL be stacked behind the first in the
+gallery's order, marked with how many there are, and the user SHALL be able to
+expand the stack in place to see them all. A capture whose host is not in the
+scans SHALL be stacked by the host and port of its URL. Showing every capture as
+its own entry SHALL remain one choice away. A capture SHALL be placed on the
+service its URL names, or - when nmap did not identify the port as a web
+service - on the open port its host and port name.
+
 The gallery SHALL be sortable, ascending or descending, by host address, host
 name, port number, HTTP status, URL, page title, the time the capture was taken
 and the database it came from; addresses and ports SHALL sort as numbers. A
@@ -120,8 +132,16 @@ order and the narrowing.
 - **WHEN** the user sorts by address
 - **THEN** `10.0.0.9` comes before `10.0.0.10`
 
+#### Scenario: One port captured several times
+- **WHEN** port 80 of `192.0.2.1` was captured by address and by host name
+- **THEN** the gallery shows one card for it, marked 2, and expanding it shows both captures
+
+#### Scenario: Each capture on its own
+- **WHEN** the user chooses to see every screenshot
+- **THEN** every capture is its own entry, as before stacking
+
 #### Scenario: Every capture of one service
-- **WHEN** port 80 of `192.0.2.1` was captured by address and by host name, and the user follows the entry's offer to see them all
+- **WHEN** port 80 of `192.0.2.1` was captured by address and by host name, and the user follows the stack's offer to see them all
 - **THEN** the gallery shows exactly those two captures, and says what it is narrowed to and how to see everything
 
 #### Scenario: From a screenshot to its host
@@ -194,3 +214,39 @@ captures. It is a way of looking at what the viewer holds.
 - **WHEN** the user browses every page of the interface
 - **THEN** no file is created or modified and the viewer's model is unchanged
 
+### Requirement: The terminal viewer can stop the web interface
+While the web interface is running, `w` SHALL offer three choices: open the browser at the selected row, copy the interface's address, or stop the web interface. The command palette SHALL offer "Stop the web interface" whenever it is running. Stopping SHALL end the server and close its port, SHALL say that it stopped, and SHALL leave the viewer and any running scan untouched. `w` afterwards SHALL start it again.
+
+#### Scenario: Stopping from the viewer
+- **WHEN** the web interface is running and the user presses `w` and chooses to stop it
+- **THEN** the port is closed, the viewer says the web interface stopped, and the status line no longer shows it
+
+#### Scenario: Reopening
+- **WHEN** the web interface is running and the user presses `w` and chooses to open the browser
+- **THEN** the browser opens at the selected row, as before
+
+#### Scenario: A scan keeps running
+- **WHEN** a scan is running and the user stops the web interface
+- **THEN** the scan carries on in the viewer
+
+### Requirement: The browser can stop the interface it is on
+The browser SHALL offer a Stop control that asks for confirmation first. In the terminal viewer, it SHALL stop only the web interface. For `seek nmap serve`, it SHALL end the server as an interrupt does, including cancelling runs in progress, and the confirmation SHALL say so. The request SHALL be subject to the same-origin rule that applies to every change.
+
+#### Scenario: Stop from the browser, in the viewer
+- **WHEN** the user confirms Stop in a browser opened from the viewer
+- **THEN** the web interface stops and the terminal viewer keeps running
+
+#### Scenario: Stop from the browser, headless
+- **WHEN** the user confirms Stop in a browser opened on `seek nmap serve`
+- **THEN** the process cancels any run in progress and exits, as it does on Ctrl+C
+
+#### Scenario: Another site
+- **WHEN** a page on another site sends the stop request
+- **THEN** it is refused and nothing stops
+
+### Requirement: Open pages learn that the interface stopped
+When the interface stops, the pages still open on it SHALL be told before the connection ends, and SHALL show that the web interface was stopped, rather than that the connection was lost. Stopping SHALL NOT wait for open pages to close.
+
+#### Scenario: A page left open
+- **WHEN** the interface is stopped while a page is open on it
+- **THEN** the page says the web interface was stopped, and the server is gone within two seconds

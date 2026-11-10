@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 from collections import OrderedDict
 from pathlib import Path
 
@@ -20,7 +21,7 @@ _files: OrderedDict[Path, str | None] = OrderedDict()
 
 
 def _plain(lines: list[detail_pane.Line]) -> str:
-    console = Console(width=160, record=True, file=open("/dev/null", "w"))  # noqa: SIM115
+    console = Console(width=160, record=True, file=io.StringIO())
     console.print(detail_pane.as_group(lines))
     return console.export_text()
 

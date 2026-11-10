@@ -25,7 +25,7 @@ from seek.tui.nmap import detail as detail_pane
 from seek.tui.nmap.app import NmapApp
 from seek.tui.nmap.reader import DetailReader
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.slow]
 FIX = Path(__file__).parent / "fixtures" / "nmap"
 
 

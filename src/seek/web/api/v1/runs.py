@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -55,12 +56,12 @@ def _find(sess, rid: str) -> Run:
 
 
 @router.get("/runs", response_model=list[s.RunOut])
-def list_runs(sess=Depends(session)):
+def list_runs(sess=Depends(session)) -> list[s.RunOut]:
     return [run_out(r) for r in _runs(sess)]
 
 
 @router.get("/runs/{rid}/log", response_model=s.LogOut)
-def run_log(rid: str, since: int = 0, sess=Depends(session)):
+def run_log(rid: str, since: int = 0, sess=Depends(session)) -> s.LogOut:
     """The log from line `since` on - counted over the whole run, so a client
     that fell behind the bounded log is told where it resumes."""
     run = _find(sess, rid)
@@ -71,7 +72,7 @@ def run_log(rid: str, since: int = 0, sess=Depends(session)):
 
 
 @router.post("/runs/{which}/cancel", response_model=s.RunOut | None)
-async def cancel(which: str, request: Request):
+async def cancel(which: str, request: Request) -> s.RunOut | None:
     """`which` is a tool - its one running run - or a run's id."""
     sess = session(request)
     if which in ("nmap", "gowitness"):
@@ -92,7 +93,7 @@ async def cancel(which: str, request: Request):
 
 
 @router.get("/scans/presets", response_model=list[s.PresetOut])
-def scan_presets(sess=Depends(session)):
+def scan_presets(sess=Depends(session)) -> list[s.PresetOut]:
     # Listed without nmap too: a plan can be copied to a machine that has it.
     return [s.PresetOut(name=name, args=args,
                         needs_root=presets_mod.needs_root(args.split()))
@@ -129,7 +130,7 @@ def _plan(sess, body: s.ScanPlanIn):
 
 
 @router.post("/scans/review", response_model=s.ScanPlanOut)
-async def review(body: s.ScanPlanIn, request: Request):
+async def review(body: s.ScanPlanIn, request: Request) -> s.ScanPlanOut:
     """What this preset and command would run, exactly, or why it would not."""
     try:
         out, _plan_ = await run_in_threadpool(_plan, session(request), body)
@@ -139,7 +140,7 @@ async def review(body: s.ScanPlanIn, request: Request):
 
 
 @router.post("/scans/gaps", response_model=s.ScanPlanOut)
-async def gaps(body: s.CaptureIn, request: Request):
+async def gaps(body: s.CaptureIn, request: Request) -> s.ScanPlanOut:
     """The terminal's `U`: version the open ports the inventory has no version
     for, among the marks or the listed rows. A draft to review, never a run."""
     sess, cache = session(request), places(request)
@@ -159,7 +160,7 @@ async def gaps(body: s.CaptureIn, request: Request):
 
 
 @router.post("/scans", response_model=s.RunOut)
-async def start_scan(body: s.ScanPlanIn, request: Request):
+async def start_scan(body: s.ScanPlanIn, request: Request) -> s.RunOut:
     """Run what the review showed: the same checks, the same argv."""
     sess = session(request)
     try:
@@ -220,7 +221,7 @@ async def capture_review(body: s.CaptureIn, request: Request) -> s.CapturePlanOu
 
 
 @router.post("/captures/runs", response_model=s.RunOut)
-async def start_capture(body: s.CaptureIn, request: Request):
+async def start_capture(body: s.CaptureIn, request: Request) -> s.RunOut:
     """Capture the marks' URLs - or the listed rows' when nothing is marked."""
     sess, cache = session(request), places(request)
     records, _label = await run_in_threadpool(_source, sess, cache, body.tab, body.path, body.q)
@@ -248,14 +249,14 @@ def _event_json(event: Event) -> str:
 
 
 @router.get("/events")
-async def events(request: Request):
+async def events(request: Request) -> StreamingResponse:
     """Server-Sent Events: runs, their lines, a new model, changed marks."""
     sess = session(request)
     sub, stop = sess.subscribe()
 
     closing: asyncio.Event = request.app.state.closing
 
-    async def stream():
+    async def stream() -> AsyncIterator[str]:
         try:
             yield "retry: 2000\n\n"
             while True:

@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
@@ -86,7 +86,7 @@ def gallery(request: Request, q: str = "", offset: int = 0,
             port: int | None = None, title: str | None = None,
             similar: str | None = None, url_host: str | None = None,
             url_port: int | None = None, group: str = "",
-            m: WebModel = Depends(model)):
+            m: WebModel = Depends(model)) -> HTMLResponse:
     sort = sort if sort in query.SORTS else query.DEFAULT_SORT
     group = group if group in query.GROUPINGS or group == query.EVERY else ""
     # What the list is narrowed to, and the parameters that keep it narrowed
@@ -119,24 +119,24 @@ def gallery(request: Request, q: str = "", offset: int = 0,
 
 
 @router.get("/hosts")
-def hosts(q: str = ""):
+def hosts(q: str = "") -> RedirectResponse:
     return RedirectResponse("/v/hosts" + (f"?{urlencode({'q': q})}" if q else ""), 302)
 
 
 @router.get("/hosts/{address}")
-def host(address: str):
+def host(address: str) -> RedirectResponse:
     return RedirectResponse(links.host(address), 302)
 
 
 @router.get("/services")
-def services(q: str = ""):
+def services(q: str = "") -> RedirectResponse:
     return RedirectResponse("/v/services" + (f"?{urlencode({'q': q})}" if q else ""), 302)
 
 
 @router.get("/services/{protocol}/{port}")
 def service(request: Request, protocol: str, port: int, name: str | None = None,
             product: str | None = None, version: str | None = None,
-            m: WebModel = Depends(model)):
+            m: WebModel = Depends(model)) -> Response:
     try:
         group = query.service_group(m, protocol, port, name, product, version)
     except query.NotFound as exc:
@@ -156,7 +156,7 @@ def _groups_on(m: WebModel, protocol: str, port: int):
 
 
 @router.get("/captures/{capture_id}", response_class=HTMLResponse)
-def capture(request: Request, capture_id: str, m: WebModel = Depends(model)):
+def capture(request: Request, capture_id: str, m: WebModel = Depends(model)) -> HTMLResponse:
     try:
         found = query.capture(m, capture_id)
     except query.NotFound as exc:
@@ -176,7 +176,7 @@ def overview(request: Request, tab: str, path: str = "", q: str = "",
              sort: int | None = None, desc: str = "", up: bool = False,
              ports: bool = False, open: bool = False, sel: str = "", offset: int = 0,
              limit: int = 500, fragment: bool = False,
-             sess=Depends(session), cache=Depends(places), m=Depends(model)):
+             sess=Depends(session), cache=Depends(places), m=Depends(model)) -> HTMLResponse:
     """One level of one tab. Its URL is its state: the browser's back button
     returns to the level before with its own filter, sort and selected row."""
     # A flag, read leniently: `desc=` (empty) is ascending rather than a 422 the
@@ -210,7 +210,7 @@ def overview(request: Request, tab: str, path: str = "", q: str = "",
 
 @router.get("/search", response_class=HTMLResponse)
 def search_page(request: Request, q: str = "", fragment: bool = False,
-                sess=Depends(session), cache=Depends(places), m=Depends(model)):
+                sess=Depends(session), cache=Depends(places), m=Depends(model)) -> HTMLResponse:
     """Everything matching `q`, grouped - the header box's results, in full."""
     found = search_mod.search(sess, m, cache, q, per_group=8 if fragment else 50)
     return _render(request, "_search.html" if fragment else "search.html",

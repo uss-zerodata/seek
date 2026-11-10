@@ -16,6 +16,7 @@ Incremental where the source allows:
 from __future__ import annotations
 
 import gzip
+import http.client
 import io
 import json
 import sqlite3
@@ -70,7 +71,7 @@ class Fetcher:
     requested: list[str] = field(default_factory=list)
     cancel: threading.Event | None = None
 
-    def open(self, url: str, headers: dict[str, str] | None = None):
+    def open(self, url: str, headers: dict[str, str] | None = None) -> http.client.HTTPResponse:
         if self.cancel is not None and self.cancel.is_set():
             raise Cancelled
         self.requested.append(url)

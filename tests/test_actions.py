@@ -51,6 +51,23 @@ def test_editor_argv_multiple_targets_single_invocation():
     assert argv == ["nvim", "/root/a.py", "/root/b.py"]
 
 
+def test_editor_argv_multiple_targets_keeps_the_flags():
+    cfg = Config()
+    cfg.editors["ec"] = "emacsclient -n +{line} {file}"
+    argv = editor_argv(cfg, [_r(MatchKind.FILENAME, "a.py"), _r(MatchKind.FILENAME, "b.py")],
+                       editor="ec")
+    assert argv == ["emacsclient", "-n", "/root/a.py", "/root/b.py"]
+
+
+def test_write_new_refuses_an_existing_file(tmp_path):
+    target = tmp_path / "export.csv"
+    assert actions.write_new(str(target), "a") == target
+    assert target.read_text() == "a\n"
+    with pytest.raises(ActionError, match="exists"):
+        actions.write_new(str(target), "b")
+    assert target.read_text() == "a\n"
+
+
 def test_code_argv():
     assert actions.code_argv([_r(MatchKind.CONTENT, "a.py", 10)]) == [
         "code", "--goto", "/root/a.py:10",

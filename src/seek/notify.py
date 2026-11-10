@@ -13,7 +13,6 @@ library: one request per message does not justify a dependency.
 
 from __future__ import annotations
 
-import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from urllib.parse import urlsplit
@@ -104,7 +103,6 @@ def send(url: str, message: Message) -> None:
         headers={"Title": _header(message.title), "Tags": message.tags,
                  "Priority": message.priority,
                  "Content-Type": "text/plain; charset=utf-8"})
-    with urllib.request.urlopen(request, timeout=TIMEOUT) as response:  # noqa: S310
-        if response.status >= 300:
-            raise urllib.error.HTTPError(url, response.status, response.reason,
-                                         response.headers, None)
+    # urlopen raises `HTTPError` itself for anything but 2xx, and follows 3xx.
+    with urllib.request.urlopen(request, timeout=TIMEOUT):  # noqa: S310
+        pass

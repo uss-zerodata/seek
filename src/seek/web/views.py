@@ -28,6 +28,7 @@ from seek.runner import Run
 from seek.tui.nmap import tabs
 from seek.tui.nmap import views as vdefs
 from seek.vulndb import match as vmatch
+from seek.web import schemas as s
 
 SEP = "|"                         # between steps in `path=`
 
@@ -187,11 +188,9 @@ def _opens(row: vdefs.Row) -> bool:
 _SHOTS_PER_ROW = 3
 
 
-def row_shots(model, row: vdefs.Row):
+def row_shots(model, row: vdefs.Row) -> tuple[list, int]:
     """A row's captures, by what it stands for: a port its own, a host all of
     its ports', a bucket every member's - the first few, and how many."""
-    from seek.web import schemas as s
-
     if model is None or not model.captures or not row.records:
         return [], 0
     seen: dict[str, object] = {}
@@ -211,10 +210,8 @@ def row_shots(model, row: vdefs.Row):
 def overview(session: Session, cache: ViewCache, tab: str, path: list[str], q: str = "",
              sort: int | None = None, desc: bool | None = None, up: bool = False,
              ports: bool = False, only_open: bool = False, offset: int = 0,
-             limit: int = 500, model=None):
+             limit: int = 500, model=None) -> s.ViewOut:
     """Everything a list page or `GET /api/v1/views/{tab}` shows."""
-    from seek.web import schemas as s
-
     place = cache.resolve(session, tab, path, up, ports, only_open)
     shown = listing(session, place.view, q, sort, desc)
     limit = max(1, min(limit, 5000))
@@ -233,8 +230,6 @@ def overview(session: Session, cache: ViewCache, tab: str, path: list[str], q: s
 
 
 def _row_out(session: Session, model, r: vdefs.Row):
-    from seek.web import schemas as s
-
     shots, total = ([], 0) if r.heading else row_shots(model, r)
     return s.RowOut(step=step_of(r) if not r.heading else "", cells=list(r.cells),
                     tones=list(r.tones),

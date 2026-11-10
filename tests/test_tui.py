@@ -18,7 +18,7 @@ from seek.tui.detail import DetailScreen
 from seek.tui.results import ResultsList
 from seek.tui.tree import TreeList
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.slow]
 
 
 def _session(tree, **kw) -> SessionConfig:

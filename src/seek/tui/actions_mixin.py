@@ -13,7 +13,6 @@ Textual has restored the terminal. Those set ``self.exit_request`` and quit;
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 from textual import work
 from textual.app import SuspendNotSupported
@@ -147,9 +146,9 @@ class ActionsMixin:
             if not path:
                 return
             try:
-                Path(path).expanduser().write_text(text + "\n", encoding="utf-8")
+                actions.write_new(path, text)
                 self.notify(f"Wrote {len(targets)} path(s) to {path}")
-            except OSError as exc:
+            except (OSError, ActionError) as exc:
                 self.notify(f"write failed: {exc}", severity="error")
         else:  # stdout
             self.exit_request = ExitRequest(kind="print", text=text)

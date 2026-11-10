@@ -35,6 +35,20 @@ def format_lines(targets: list[Result], config: Config) -> str:
     return "\n".join(t.format_output(config.absolute_output) for t in targets)
 
 
+def write_new(path: str, text: str) -> Path:
+    """Write an export to a file that does not exist yet.
+
+    An existing file is refused, never replaced: the prompt offers the same
+    name every time, so the second export of a session would otherwise
+    silently overwrite the first.
+    """
+    target = Path(path).expanduser()
+    if target.exists():
+        raise ActionError(f"{target} exists - choose another name")
+    target.write_text(text + "\n", encoding="utf-8")
+    return target
+
+
 # --- external program argv construction ------------------------------------------
 
 
@@ -71,9 +85,10 @@ def editor_argv(
         t = targets[0]
         line = t.line_no if t.kind is MatchKind.CONTENT else None
         return _fill_template(template, str(t.path), line)
-    # Multiple targets: one invocation, program name + every file, no line jump.
+    # Multiple targets: one invocation, the template minus its file slot (the
+    # program and its flags - `emacsclient -n` needs the `-n`), every file after.
     argv = _fill_template(template, "\x00", None)
-    prog = [a for a in argv if a != "\x00"][:1]
+    prog = [a for a in argv if "\x00" not in a]
     return prog + [str(t.path) for t in targets]
 
 

@@ -13,7 +13,7 @@ from rich.text import Text
 
 from seek.tui.nmap.reader import DetailReader, render_to_lines
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.slow]
 
 
 class _Host:

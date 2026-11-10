@@ -14,7 +14,7 @@ from seek.tui.app import SeekApp
 from seek.tui.results import ResultsList
 from seek.walk import walk
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.slow]
 
 
 # --- the TUI path ----------------------------------------------------------

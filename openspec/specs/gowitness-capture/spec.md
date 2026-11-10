@@ -6,7 +6,9 @@ gowitness over a supplied list of URLs, supervising and cancelling that run,
 writing its output where an externally run capture would write it, and reading
 the results back so they can be shown against the hosts and services they
 belong to.
+
 ## Requirements
+
 ### Requirement: gowitness is detected and its absence is visible
 The system SHALL determine at start up whether a capture can be run, by looking
 for a usable container runtime carrying the gowitness image and for a gowitness
@@ -15,15 +17,16 @@ the native binary, and the configuration SHALL be able to change that order or
 pin a single backend.
 
 Detection SHALL NOT block the viewer from starting, and SHALL NOT run a
-capture. When neither backend is available the capture feature SHALL be
-disabled rather than failing at the moment it is invoked, and the interface
-SHALL show that it is unavailable. When a backend is available the interface
-SHALL show which one is in use, so that a capture running in a container is
-never mistaken for one running natively.
+capture. When neither backend is available, starting a capture SHALL be
+unavailable rather than failing at the moment it is invoked, and the interface
+SHALL show that it is unavailable. The capture review SHALL still open and SHALL
+offer to copy the capture for another machine. When a backend is available the
+interface SHALL show which one is in use, so that a capture running in a
+container is never mistaken for one running natively.
 
 #### Scenario: Neither backend available
 - **WHEN** the viewer starts with no container runtime and no gowitness binary
-- **THEN** the capture feature is shown as unavailable and invoking it explains what is missing instead of reporting a failed run
+- **THEN** starting a capture is shown as unavailable, and the capture review explains what is missing and offers only the copy for another machine
 
 #### Scenario: Both backends available
 - **WHEN** both a usable container runtime and a gowitness binary are present
@@ -35,7 +38,8 @@ never mistaken for one running natively.
 
 #### Scenario: The configured backend is unavailable
 - **WHEN** the configuration pins a backend that is not present
-- **THEN** the feature is disabled and says which backend was pinned, rather than silently using the other one
+- **THEN** starting a capture is unavailable and says which backend was pinned, rather than silently using the other one
+
 ### Requirement: A capture runs over a supplied list of URLs
 The system SHALL run a capture over a list of URLs derived from what the viewer
 is currently showing, honouring the same selection rules the export recipes
@@ -48,13 +52,22 @@ host answers to; expanding a bare name across guessed scheme and port
 combinations would both waste probes and produce results that cannot be
 attributed to a known service.
 
+Before a capture runs, the system SHALL show a review with the exact command,
+the number of URLs and the first of them, where the capture is written, and the
+backend. The capture SHALL start only on an explicit confirmation at that step.
+Cancelling SHALL run nothing and write nothing.
+
 The system SHALL refuse to start a capture when the selection contains no HTTP
 or HTTPS URL, and SHALL say so rather than starting a run that captures
 nothing.
 
 #### Scenario: Capturing the current selection
-- **WHEN** the user starts a capture with rows marked
+- **WHEN** the user starts a capture with rows marked and confirms the review
 - **THEN** the URLs of the marked rows' HTTP services are captured, and unmarked rows are not
+
+#### Scenario: Backing out of the capture review
+- **WHEN** the user opens the capture review and cancels it
+- **THEN** no capture starts and the URL file is not written
 
 #### Scenario: One result per supplied URL
 - **WHEN** a capture is run over a list of fully qualified URLs
@@ -63,6 +76,7 @@ nothing.
 #### Scenario: Nothing to capture
 - **WHEN** the user starts a capture and the selection contains no HTTP or HTTPS service
 - **THEN** the system says there is nothing to capture and no run is started
+
 ### Requirement: A capture is supervised like a scan
 The system SHALL supervise a capture the way it supervises a scan: its output
 SHALL stream while it runs, its progress SHALL be reported as results arrive,
@@ -96,6 +110,7 @@ system SHALL warn before quitting while either is running.
 #### Scenario: Quitting with work in flight
 - **WHEN** the user tries to quit while a capture or a scan is running
 - **THEN** the system warns and asks for confirmation before quitting
+
 ### Requirement: A finished capture is written where an external one would be
 A capture SHALL write the same artefacts an externally run capture writes - a
 results database, machine-readable results, and the screenshot images - into a
@@ -104,15 +119,21 @@ files remain usable by gowitness's own tooling and are not a private format
 only this application can read.
 
 The output location SHALL follow the same rule the scan output already follows:
-the directory the viewer was opened on, or the configured output directory.
+the first directory the viewer was opened on, or the configured output
+directory. The confirmation that starts a capture SHALL name that location.
 
 #### Scenario: Artefacts are written for external use
 - **WHEN** a capture finishes
 - **THEN** its database, its machine-readable results and its screenshots are written under the capture subdirectory, in gowitness's own formats
 
+#### Scenario: The destination is named before the capture starts
+- **WHEN** the viewer was opened on `dir1 dir2` and the user starts a capture
+- **THEN** the confirmation names the capture directory under `dir1`
+
 #### Scenario: A cancelled capture
 - **WHEN** a capture is cancelled part way through
 - **THEN** the results captured before cancellation remain readable, and the run says it was cancelled
+
 ### Requirement: Capture results are read back
 
 The system SHALL read the results of a capture from the capture's own results
@@ -135,6 +156,22 @@ capture look incomplete rather than informative.
 The system SHALL read capture results produced outside the application from the
 capture directory on start up, on the same principle the scan history already
 follows - what is on disk is used, whoever produced it.
+
+A capture SHALL be found wherever it is, not only in the capture subdirectory
+beside the scans: the system SHALL search every directory the viewer was opened
+on, at any depth and by the same rules as the scan search, for results
+databases under any file name, and SHALL read a results database named directly
+on the command line as a capture rather than as a scan. A file SHALL count as a
+results database only if it is a database holding gowitness's results; any other
+database SHALL be passed over silently. All captures found SHALL be presented as
+one set, each listed as a run of its own; a capture reached twice SHALL be read
+once, and a directory with no capture SHALL be passed over silently.
+
+A results database names each screenshot by file name only, so the system SHALL
+resolve it from where the database is: the screenshot directory beside the
+database first, then the database's own directory, then anywhere below the
+database, then anywhere below the directories given. Where the same file name
+exists in several places, the copy nearest the database SHALL be used.
 
 The results database is written by a third-party tool and its layout is not a
 published interface, so the system SHALL read it defensively: it SHALL tolerate
@@ -162,9 +199,30 @@ it could not read instead of failing silently.
 - **WHEN** the results database is corrupt, or was written by a version whose layout differs
 - **THEN** what can be read is read, what cannot is reported, and the viewer still starts
 
+#### Scenario: Captures in several directories
+- **WHEN** the viewer is opened on `dir1 dir2` and only `dir2` holds a capture
+- **THEN** that capture's results are shown against their URLs, as if it had been the only directory
+
+#### Scenario: A capture anywhere below
+- **WHEN** the viewer is opened on a directory whose results database is `targets/web/shots.sqlite3`
+- **THEN** that capture's results are read and shown against their URLs
+
+#### Scenario: Another database is not a capture
+- **WHEN** a directory holds a database that is not gowitness's
+- **THEN** it is passed over and nothing is reported about it
+
+#### Scenario: A database named on the command line
+- **WHEN** the user names a results database alongside the scan directories
+- **THEN** it is read as a capture and not reported as a scan that failed to parse
+
+#### Scenario: Screenshots moved away from the database
+- **WHEN** a results database sits in one directory and its screenshots in another below the directories given
+- **THEN** each result's screenshot is found and can be opened
+
 #### Scenario: No capture at all
 - **WHEN** the capture directory holds no results database
 - **THEN** the viewer starts with no captures and reports no error, because a project that was never captured is the ordinary case
+
 ### Requirement: A screenshot can be looked at
 
 Because a terminal cannot display an image, the system SHALL provide a way to
@@ -204,6 +262,7 @@ stopped when the application exits so that no server is left running.
 #### Scenario: The server is not left behind
 - **WHEN** the application exits while the report server is running
 - **THEN** the server is stopped
+
 ### Requirement: Capture results are shown where the service is
 
 Capture results SHALL be shown in the record of the host or service they belong
@@ -263,6 +322,7 @@ presenting it as a detection.
 #### Scenario: A record with no captures
 - **WHEN** the cursor is on a host or service that has not been captured
 - **THEN** the record shows what it always shows, without an empty capture section
+
 ### Requirement: How much a capture collects is configurable
 
 The system SHALL let the configuration decide whether a capture records the

@@ -19,6 +19,7 @@ from seek.config import Config
 from seek.gowitness.capture import CaptureRun
 from seek.nmap import bulk
 from seek.nmap.merge import Naming, load
+from seek.nmap.models import ScanSet
 from seek.nmap.runner import ScanRun, State, elevation_help
 from seek.nmap.session import Session
 from seek.nmap.views import prepare
@@ -63,7 +64,7 @@ class HeadlessOwner:
         self._reads += 1
         mine = self._reads
 
-        def read():
+        def read() -> tuple[dict, ScanSet, float]:
             began = time.monotonic()
             with bulk.bulk(), bulk.responsive():
                 before = session.baseline(run, hosts)

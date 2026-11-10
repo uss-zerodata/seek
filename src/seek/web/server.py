@@ -24,6 +24,7 @@ import ipaddress
 import logging
 import socket
 import time
+from collections.abc import Iterator
 from urllib.parse import urlencode
 
 from seek.web.source import ModelSource, WebModel
@@ -89,7 +90,7 @@ def _load_stack():
 
     class _Server(uvicorn.Server):
         @contextlib.contextmanager
-        def capture_signals(self):              # the host program owns SIGINT
+        def capture_signals(self) -> Iterator[None]:              # the host program owns SIGINT
             yield
 
     return uvicorn, create_app, _Server

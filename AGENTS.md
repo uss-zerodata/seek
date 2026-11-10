@@ -4,12 +4,32 @@ Guidance for coding agents working in this repository.
 
 ## Standard
 
-This project follows the tool standard: the agent skill `py-cli-standard`,
-which is the folder `../standards/`. Load the skill before you work here.
+Follows the tool standard 1.2: the agent skill `python-standard` (the folder
+`../standards/`). Load the skill before you work here. Do not copy a listed
+deviation into new code; migrate one only when you change that code anyway.
 
-The list of the rules that this project does not meet is not written yet.
-Until it is, treat a difference between the code and the standard as a
-deviation: do not copy it into new code, and do not migrate it unasked.
+| Rule | State | Reason |
+| --- | --- | --- |
+| ARC-2 | not met | `config.py` imports `textual.keys` to validate `[keys]`; `__main__.py` imports `cli` because that is its job. |
+| CAP-20 | not met | Predates `stdkit`: no capability entry point. |
+| CLI-31 | not met | No shared console: `print` only after Textual returns the terminal and in `seek nmap serve`; `Console` renders records to text/HTML. |
+| CLI-40 | decided otherwise | `actions.perform_exec` replaces the process: that is the exec hand-off. |
+| CLI-12 | not met | `seek init` with no shell shows Typer's missing-argument error, not the help. |
+| CLI-44 | checker false positive | The `except Exception` handlers it finds are in TUI workers and web routes, not at a command boundary. |
+| CLI-45 | decided otherwise | The two `assert`s narrow a type (`process.stdout`, `_outbox`); they never validate input. |
+| DOC-2 | not met | The headings below are the project's own; the Standard section carries the version and this table. |
+| REL-20 | not met | No `release.yml` yet; `ci.yml` is ready to be called. |
+| TC-3 | decided otherwise | `hatchling`; switching the backend buys nothing for an installed tool. |
+| TC-4 | decided otherwise | `>=3.11`: the features used (`tomllib`, `StrEnum`) are there, and users run 3.11. |
+| TC-30 | decided otherwise | `SIM` is not selected. |
+| UI-30 | checker false positive | The `!` it finds is fzf's negation syntax inside the query parsers, not text for the user. |
+
+## Commands
+
+`seek [search] [patterns…]` (the default command), `seek init <bash|zsh>`,
+`seek nmap [paths…] [--serve] [--open]` (`seek nmap serve …` is the headless
+form), `seek vulndb update|status`. A change to this tree is a decision, not a
+side effect.
 
 ## What this is
 
@@ -63,8 +83,11 @@ for `.gitignore` support. Tests use `httpx2` for FastAPI's `TestClient`.
 ## Before you finish a change
 
 1. `uv run ruff check` — must be clean.
-2. `uv run pytest -q` — must be green (~100 tests, ~1 min; many drive the TUI
-   via Textual's `Pilot` and need real time to settle).
+2. `uv run pytest -q -m "not slow"` — must be green (~1600 tests, ~1 min). The
+   full suite (`uv run pytest -q`, ~2100 tests, ~13 min) adds the twenty files
+   marked `slow`, which drive the TUI through Textual's `Pilot` and need real
+   time to settle; run it before a version bump, and whenever you touched
+   `tui/` or `web/`.
 3. If you changed `Config` fields: regenerate the example file —
    `uv run python -c "from seek.config import example_toml; open('config.example.toml','w').write(example_toml())"`.
 4. If you changed observable behaviour: update the matching spec - in
@@ -76,6 +99,7 @@ for `.gitignore` support. Tests use `httpx2` for FastAPI's `TestClient`.
 
 ```
 src/seek/
+  __main__.py       `python -m seek` -> `cli.main`
   cli.py            Typer entry point: flags, mode/scope resolution, `seek init`
   config.py         Config dataclass, TOML load + strict validation, DEFAULT_THEME
   paths.py          per-platform config/state dir resolution (hand-rolled, no platformdirs)
@@ -102,6 +126,8 @@ src/seek/
     help.py         help overlay
     query_input.py  QueryInput(Input): `?`-on-empty opens help
     actions_mixin.py  ActionsMixin: result actions + perform_exit_request()
+    keyhints.py     the hint bar: which key hints fit the width, and in what order
+    cells.py        width_of(): the ASCII shortcut for cell width (rich.cells.cell_len walks the string)
   nmap/
     models.py       Host / Service / ScriptResult / Vulnerability / ScanSet
     parse.py        iterparse reader (`<nmaprun>` root check, else NmapParseError)
@@ -119,6 +145,12 @@ src/seek/
     diff.py         what a scan added to what was already known
     cpe.py          CPE 2.2/2.3 bindings + the alias table (one product, every spelling, its CPE)
     inventory.py    software inventory: recognisers -> observations -> reconciled components
+    filtering.py    the filter grammar: FilterSpec (fuzzy / ranges / field terms), prefer_firm, explain
+    names.py        the names a host is known by, read from what the server gives away
+    rawlog.py       which lines of a `.nmap` text are one host or one port - boundary search, no meaning
+    timeline.py     the Scans tab history: every file by `<nmaprun start>`, diffed against what came before
+    progress.py     the one report shape (done, total, unit) and counted() for every long step
+    bulk.py         the collector policy: bulk() suspends gc for a phase and freezes, responsive() yields
   tui/nmap/
     views.py        column specs + row builders per view
     detail.py       full record for the selected row (scripts, vulnerabilities)
@@ -132,6 +164,7 @@ src/seek/
     detect.py       docker or native, or neither - never raises
     capture.py      one argv for both backends, output layout, the CaptureRun
     results.py      the capture database -> Capture records, indexed by URL
+    locate.py       find results databases below the sources; ShotFinder / ShotIndex for their images
   runner.py         supervision shared by every tool: stream, cancel, settle
   notify.py         ntfy-format notifications: URL check, minimal messages, send
   vulndb/           the local vulnerability database - public data only, no Textual
@@ -139,6 +172,7 @@ src/seek/
     store.py        SQLite schema, read-only `Store` for sessions, `open_write` for updates
     sources.py      the fixed URL set; NVD 2.0 / OSV / endoflife.date parsers (streamed)
     update.py       download + ingest, one transaction per source, incremental
+    progress.py     Tracker: one bar over a source's download and indexing together
     eol.py          product key -> endoflife.date slug / npm package; support status
     match.py        inventory + store -> findings and support per component
     commands.py     `seek vulndb update` / `status`
@@ -150,12 +184,14 @@ src/seek/
     views.py        every overview and drill-down by URL; step names; ViewCache
     record.py       Rich record -> HTML by style attribute; raw-text links
     serve.py        `seek nmap serve`: headless build, owner and signal handling
-    api/v1/         + views, records/raw, marks/export, runs/scans/captures/events (SSE),
-                    inventory (the versioned JSON document the export writes)
+    api/v1/         JSON routers: hosts, services, captures, views, records (+ raw), marks (+ export),
+                    runs (scans, captures, events as SSE), builder, search, vulndb, inventory (the
+                    versioned JSON document the export writes), control (`/web`, `/web/stop`)
+    deps.py         what a route takes from the request: model(), session() (503 without one), places()
+    pages_data.py   record() and raw(): one builder for the JSON record and the page fragment
     static/js/      viewer.js (list/record, key bar), keys.js (the key table + hints), actions.js, events.js
     schemas.py      pydantic shapes - the API returns them, the templates render them
     query.py        list/filter/sort/page over the TUI's own view projections
-    api/v1/         JSON routers: hosts, services, captures
     pages/routes.py HTML routers (same query functions), `fragment=1` for filtering
     media.py        screenshots by capture id - no route takes a path
     app.py          create_app(source); ROUTERS is the one registration list

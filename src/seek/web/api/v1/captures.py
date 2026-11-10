@@ -18,7 +18,8 @@ def list_captures(q: str = "", offset: int = 0, limit: int = query.DEFAULT_LIMIT
                   address: str | None = None, protocol: str | None = None,
                   port: int | None = None, title: str | None = None,
                   similar: str | None = None, url_host: str | None = None,
-                  url_port: int | None = None, m: WebModel = Depends(model)):
+                  url_port: int | None = None,
+                  m: WebModel = Depends(model)) -> s.Page[s.CaptureSummary]:
     """Every capture; `sort` is one of the keys of `query.SORTS`. `title` and
     `similar` narrow to one page title or one look-alike group."""
     if sort not in query.SORTS:
@@ -30,7 +31,7 @@ def list_captures(q: str = "", offset: int = 0, limit: int = query.DEFAULT_LIMIT
 @router.get("/groups", response_model=s.GroupPage)
 def capture_groups(by: str, q: str = "", sort: str = query.DEFAULT_SORT, desc: bool = False,
                    offset: int = 0, limit: int = 100, per_group: int = query.PER_GROUP,
-                   m: WebModel = Depends(model)):
+                   m: WebModel = Depends(model)) -> s.GroupPage:
     """The captures gathered by `by`: host, service, title or similar (look-alike)."""
     if by not in query.GROUPINGS:
         raise HTTPException(422, f"by must be one of {', '.join(query.GROUPINGS)}")
@@ -43,7 +44,7 @@ def capture_groups(by: str, q: str = "", sort: str = query.DEFAULT_SORT, desc: b
 @router.get("/stacks", response_model=s.StackPage)
 def capture_stacks(q: str = "", sort: str = query.DEFAULT_SORT, desc: bool = False,
                    offset: int = 0, limit: int = query.DEFAULT_LIMIT,
-                   per_stack: int = query.PER_STACK, m: WebModel = Depends(model)):
+                   per_stack: int = query.PER_STACK, m: WebModel = Depends(model)) -> s.StackPage:
     """The gallery's default: one stack per host:port, its first capture in front."""
     if sort not in query.SORTS:
         raise HTTPException(422, f"sort must be one of {', '.join(query.SORTS)}")
@@ -52,7 +53,7 @@ def capture_stacks(q: str = "", sort: str = query.DEFAULT_SORT, desc: bool = Fal
 
 @router.get("/{capture_id}", response_model=s.CaptureOut,
             responses={404: {"model": s.ErrorOut}})
-def get_capture(capture_id: str, m: WebModel = Depends(model)):
+def get_capture(capture_id: str, m: WebModel = Depends(model)) -> s.CaptureOut:
     try:
         return query.capture(m, capture_id)
     except query.NotFound as exc:

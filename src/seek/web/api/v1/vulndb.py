@@ -32,12 +32,12 @@ def _state(sess) -> s.VulndbOut:
 
 
 @router.get("/vulndb", response_model=s.VulndbOut)
-def vulndb_state(sess=Depends(session)):
+def vulndb_state(sess=Depends(session)) -> s.VulndbOut:
     return _state(sess)
 
 
 @router.post("/vulndb/update", response_model=s.VulndbOut, status_code=202)
-async def vulndb_update(request: Request):
+async def vulndb_update(request: Request) -> s.VulndbOut:
     """Start the update the user confirmed in the browser. Returns at once;
     `GET /vulndb` follows it, and the session's `vulndb` event ends it."""
     sess = session(request)
@@ -63,7 +63,7 @@ async def vulndb_update(request: Request):
 
 
 @router.post("/vulndb/cancel", response_model=s.VulndbOut)
-async def vulndb_cancel(request: Request):
+async def vulndb_cancel(request: Request) -> s.VulndbOut:
     sess = session(request)
     if not sess.cancel_vulndb():
         raise HTTPException(409, "no update is running")
@@ -71,7 +71,7 @@ async def vulndb_cancel(request: Request):
 
 
 @router.get("/findings", response_model=list[s.FindingOut])
-def findings(sess=Depends(session)):
+def findings(sess=Depends(session)) -> list[s.FindingOut]:
     """Every finding on every product version, as the Findings tab lists them."""
     lookup = sess.lookup()
     entries = inv_mod.entries(sess.inventory(), sess.scans.hosts)

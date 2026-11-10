@@ -17,6 +17,6 @@ router = APIRouter(prefix="/api/v1/inventory", tags=["inventory"])
 
 
 @router.get("", response_model=s.InventoryDocument, response_model_by_alias=True)
-def get_inventory(sess=Depends(session)):
+def get_inventory(sess=Depends(session)) -> s.InventoryDocument:
     return s.InventoryDocument.model_validate(exporter.inventory_document(
         exporter.records_for(sess.scans.hosts), sess.inventory(), sess.lookup()))

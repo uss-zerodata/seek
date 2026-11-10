@@ -24,6 +24,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.geometry import Size
 from textual.widgets import DataTable, Input, Static, Tab, Tabs
+from textual.widgets.data_table import RowKey
 
 from seek import actions
 from seek.config import Config
@@ -53,6 +54,7 @@ from seek.tui.nmap.commands import ScanCommands
 from seek.tui.nmap.flows import ScanFlows
 from seek.tui.nmap.help import NmapHelpScreen
 from seek.tui.nmap.reader import DetailReader
+from seek.web.source import WebModel
 
 # The filter box keeps focus, exactly as the query box does in a search session,
 # so every action is on a modifier - a bare digit has to reach the filter, since
@@ -267,7 +269,7 @@ class ScanTable(DataTable):
     _order: list = []
     _offsets: list = []
 
-    def add_row(self, *cells, **kwargs):
+    def add_row(self, *cells, **kwargs) -> RowKey:
         key = super().add_row(*cells, **kwargs)
         if not self._order:
             self._order, self._offsets = [], []     # first row: own the lists
@@ -275,7 +277,7 @@ class ScanTable(DataTable):
         self._offsets.append((key, 0))
         return key
 
-    def clear(self, columns: bool = False):
+    def clear(self, columns: bool = False) -> ScanTable:
         self._order, self._offsets = [], []
         return super().clear(columns)
 
@@ -1973,7 +1975,7 @@ class NmapApp(ScanFlows, App[int]):
                                where: str = "") -> None:
         self.session.register_disk_capture(paths, urls, where)
 
-    def snapshot(self):
+    def snapshot(self) -> WebModel:
         """`ModelSource`: what the web interface reads, as it stands now."""
         return self._web_source().snapshot()
 
@@ -3151,7 +3153,6 @@ class NmapApp(ScanFlows, App[int]):
             [(key, label) for key, (label, _) in exporter.FORMATS.items()]))
 
     async def _do_export(self) -> None:
-        from pathlib import Path
 
         records, source = self._export_source()
         if not records:
@@ -3235,9 +3236,9 @@ class NmapApp(ScanFlows, App[int]):
         if not path:
             return
         try:
-            Path(path).expanduser().write_text(text + "\n", encoding="utf-8")
+            actions.write_new(path, text)
             self.notify(f"wrote {path}")
-        except OSError as exc:
+        except (OSError, actions.ActionError) as exc:
             self.notify(f"write failed: {exc}", severity="error")
 
 

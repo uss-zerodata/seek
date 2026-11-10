@@ -64,7 +64,7 @@ def _move(state: model.State, facts: model.Facts, action: str, value: str) -> mo
 
 @router.get("/builder", response_model=s.BuilderOut)
 def builder_view(targets: str, state: str = "", measured: str = "", action: str = "",
-                 value: str = "", query: str = "", sess=Depends(session)):
+                 value: str = "", query: str = "", sess=Depends(session)) -> s.BuilderOut:
     """Where the builder is, what to show, and both commands - after `action`
     (choose, back, jump, finish, set, toggle, reset) when one is given."""
     facts = replace(sess.builder_facts(_targets(targets)), measured=_measured(measured))
@@ -106,14 +106,14 @@ def builder_view(targets: str, state: str = "", measured: str = "", action: str 
 
 
 @router.get("/builder/help")
-def builder_help(name: str):
+def builder_help(name: str) -> dict[str, object]:
     if name not in BY_NAME:
         raise HTTPException(404, f"no option {name}")
     return {"name": name, "lines": model.help_text(name)}
 
 
 @router.post("/builder/measure", response_model=s.BuilderMeasureOut)
-def builder_measure(body: s.BuilderMeasureIn, sess=Depends(session)):
+def builder_measure(body: s.BuilderMeasureIn, sess=Depends(session)) -> s.BuilderMeasureOut:
     """Sends packets - so only with `confirmed: true`, which the dialog sets
     after saying what will be sent."""
     if not body.confirmed:
@@ -136,7 +136,7 @@ def builder_measure(body: s.BuilderMeasureIn, sess=Depends(session)):
 
 
 @router.get("/scans/recent", response_model=s.EarlierListsOut)
-def earlier_commands(sess=Depends(session)):
+def earlier_commands(sess=Depends(session)) -> s.EarlierListsOut:
     recent, frequent = sess.earlier_commands()
     convert = lambda items: [s.EarlierOut(args=e.args, where=e.where, last=e.last,  # noqa: E731
                                           count=e.count) for e in items]

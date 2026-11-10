@@ -25,7 +25,7 @@ def split_path(path: str) -> list[str]:
 def get_view(tab: str, path: str = "", q: str = "", sort: int | None = None,
              desc: bool = False, up: bool = False, ports: bool = False,
              open: bool = False, offset: int = 0, limit: int = 500,
-             sess=Depends(session), cache=Depends(places), m=Depends(model)):
+             sess=Depends(session), cache=Depends(places), m=Depends(model)) -> s.ViewOut:
     try:
         return views.overview(sess, cache, tab, split_path(path), q, sort, desc, up,
                               ports, open, offset, limit, m)

@@ -20,7 +20,7 @@ _TYPES = {".jpeg": "image/jpeg", ".jpg": "image/jpeg", ".png": "image/png",
 
 
 @router.get("/shot/{capture_id}")
-def shot(capture_id: str, m: WebModel = Depends(model)):
+def shot(capture_id: str, m: WebModel = Depends(model)) -> FileResponse:
     placed = m.by_id.get(capture_id)
     path = placed.capture.shot if placed is not None else None
     if path is None or not path.is_file():

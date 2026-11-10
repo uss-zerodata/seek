@@ -27,7 +27,7 @@ from seek.tui.menu import ChoiceScreen
 from seek.tui.nmap import detail as detail_pane
 from seek.tui.nmap.app import NmapApp
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.slow]
 
 FIX = Path(__file__).parent / "fixtures" / "nmap"
 SHOTS = Path(__file__).parent / "fixtures" / "gowitness" / "capture.sqlite3"

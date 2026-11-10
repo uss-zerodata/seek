@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/v1", tags=["records"])
 @router.get("/records/{tab}", response_model=s.RecordOut,
             responses={404: {"model": s.ErrorOut}})
 def get_record(tab: str, step: str, path: str = "", mode: str = "condensed",
-               sess=Depends(session), cache=Depends(places)):
+               sess=Depends(session), cache=Depends(places)) -> s.RecordOut:
     """The record of the row named `step` in the view at `tab` + `path`."""
     try:
         return pages_data.record(sess, cache, tab, split_path(path), step, mode)
@@ -26,7 +26,7 @@ def get_record(tab: str, step: str, path: str = "", mode: str = "condensed",
 
 @router.get("/raw", response_model=s.RawOut, responses={404: {"model": s.ErrorOut}})
 def get_raw(scan: str, address: str, protocol: str | None = None, port: int | None = None,
-            sess=Depends(session)):
+            sess=Depends(session)) -> s.RawOut:
     """What one scan wrote about a host, or one of its ports."""
     try:
         return pages_data.raw(sess, scan, address, protocol, port)

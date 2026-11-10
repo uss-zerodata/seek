@@ -29,6 +29,8 @@ from seek.web.app import create_app
 from seek.web.server import WebServer
 from seek.web.source import CachedSource
 
+pytestmark = pytest.mark.slow
+
 FIX = Path(__file__).parent / "fixtures" / "nmap"
 PATHS = [FIX / "basic.xml", FIX / "vuln.xml", FIX / "merge-a.xml", FIX / "merge-b.xml"]
 

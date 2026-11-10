@@ -12,7 +12,7 @@ import asyncio
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -61,7 +61,7 @@ class _Static(StaticFiles):
     it. `no-cache` is a revalidation, not a download: on loopback it is free.
     """
 
-    def file_response(self, *args, **kwargs):
+    def file_response(self, *args, **kwargs) -> Response:
         response = super().file_response(*args, **kwargs)
         response.headers["Cache-Control"] = "no-cache"
         return response
@@ -82,7 +82,7 @@ def create_app(source: ModelSource, session=None) -> FastAPI:
     app.mount("/static", _Static(directory=STATIC), name="static")
 
     @app.middleware("http")
-    async def same_origin(request: Request, call_next):
+    async def same_origin(request: Request, call_next) -> Response:
         """A change is accepted only from the interface's own pages.
 
         The whole of the protection, by agreement: it stops a page on another

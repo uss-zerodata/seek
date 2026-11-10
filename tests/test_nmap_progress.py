@@ -20,7 +20,7 @@ from seek.tui.nmap import app as app_mod
 from seek.tui.nmap import views as vdefs
 from seek.tui.nmap.app import NmapApp
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.slow]
 FIX = Path(__file__).parent / "fixtures" / "nmap"
 
 

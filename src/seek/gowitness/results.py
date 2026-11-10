@@ -378,7 +378,7 @@ def read_database(path: Path, shots: Path | Callable[[str], Path | None] | None 
                           "filename", "failed", "failed_reason"), tables):
             keys = row.keys()
 
-            def get(name, _keys=keys, _row=row):
+            def get(name, _keys=keys, _row=row) -> object:
                 return _row[name] if name in _keys else None
 
             url = str(get("url") or "")

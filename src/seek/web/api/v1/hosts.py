@@ -14,13 +14,13 @@ router = APIRouter(prefix="/api/v1/hosts", tags=["hosts"])
 
 @router.get("", response_model=s.Page[s.HostSummary])
 def list_hosts(q: str = "", offset: int = 0, limit: int = query.DEFAULT_LIMIT,
-               m: WebModel = Depends(model)):
+               m: WebModel = Depends(model)) -> s.Page[s.HostSummary]:
     return query.hosts(m, q, offset, limit)
 
 
 @router.get("/{address}", response_model=s.HostOut,
             responses={404: {"model": s.ErrorOut}})
-def get_host(address: str, m: WebModel = Depends(model)):
+def get_host(address: str, m: WebModel = Depends(model)) -> s.HostOut:
     try:
         return query.host(m, address)
     except query.NotFound as exc:

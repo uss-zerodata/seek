@@ -18,7 +18,7 @@ from seek.tui.nmap import record as record_mod
 from seek.tui.nmap.app import NmapApp
 from seek.tui.nmap.detail import as_group
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.slow]
 FIX = Path(__file__).parent / "fixtures" / "nmap"
 
 

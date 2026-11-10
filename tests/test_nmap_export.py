@@ -61,6 +61,17 @@ def test_the_named_recipes_produce_what_they_always_did():
         "192.0.2.1:22", "192.0.2.1:80", "192.0.2.2:80"]
 
 
+def test_csv_cells_cannot_be_formulas():
+    """A banner from a scanned host that starts like a formula is neutralised
+    (CWE-1236); the text and JSON forms keep it as written."""
+    table = [("10.0.0.1", "=cmd|' /C calc'!A0"), ("10.0.0.2", "-1 days"), ("10.0.0.3", "ok")]
+    csv_text = export._write(table, ["address", "product"], "csv")
+    assert csv_text.splitlines()[1:] == ["10.0.0.1,'=cmd|' /C calc'!A0",
+                                         "10.0.0.2,'-1 days", "10.0.0.3,ok"]
+    assert "'=" not in export._write(table, ["address", "product"], "text")
+    assert "'=" not in export._write(table, ["address", "product"], "json")
+
+
 # --- the names a host is known by -------------------------------------------
 
 

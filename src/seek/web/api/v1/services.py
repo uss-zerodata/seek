@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/v1/services", tags=["services"])
 
 @router.get("", response_model=s.Page[s.ServiceSummary])
 def list_services(q: str = "", offset: int = 0, limit: int = query.DEFAULT_LIMIT,
-                  m: WebModel = Depends(model)):
+                  m: WebModel = Depends(model)) -> s.Page[s.ServiceSummary]:
     return query.services(m, q, offset, limit)
 
 
@@ -22,7 +22,7 @@ def list_services(q: str = "", offset: int = 0, limit: int = query.DEFAULT_LIMIT
             responses={404: {"model": s.ErrorOut}})
 def get_service(protocol: str, port: int, name: str | None = None,
                 product: str | None = None, version: str | None = None,
-                m: WebModel = Depends(model)):
+                m: WebModel = Depends(model)) -> s.ServiceOut:
     try:
         return query.service(m, protocol, port, name, product, version)
     except query.NotFound as exc:

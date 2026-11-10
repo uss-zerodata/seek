@@ -137,10 +137,10 @@ class ShotFinder:
     def __call__(self, name: str) -> Path | None:
         if not name:
             return None
-        given = Path(name)
-        if given.is_absolute() and given.exists():
-            return given
-        for candidate in (self.base / SHOTS_DIRNAME / name, self.base / name):
+        # gowitness stores a bare file name; a database is read defensively, so
+        # a path in that column (`../x`, `/etc/x`) is cut to its name here.
+        given = Path(Path(name).name)
+        for candidate in (self.base / SHOTS_DIRNAME / given, self.base / given):
             if candidate.exists():
                 return candidate
         found = self.local.get(given.name)

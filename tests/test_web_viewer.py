@@ -18,7 +18,7 @@ from seek.nmap.views import prepare
 from seek.tui.nmap import app as app_mod
 from seek.tui.nmap.app import NmapApp
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.slow]
 
 
 def _free_port() -> int:

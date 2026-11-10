@@ -625,7 +625,7 @@ def _same(a: rawlog.Request, b: rawlog.Request) -> bool:
     The pane's record and the reader's fuller one are built separately, so
     their requests are equal without being the same object.
     """
-    def port(r: rawlog.Request):
+    def port(r: rawlog.Request) -> tuple[int, str] | None:
         return None if r.service is None else (r.service.port, r.service.protocol)
     return (a.entry.scan is b.entry.scan and a.host.address == b.host.address
             and port(a) == port(b))

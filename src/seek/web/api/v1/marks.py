@@ -46,12 +46,12 @@ def _row_records(sess, cache, ref: s.RowRef):
 
 
 @router.get("/marks", response_model=s.MarksOut)
-def list_marks(sess=Depends(session)):
+def list_marks(sess=Depends(session)) -> s.MarksOut:
     return _marks(sess)
 
 
 @router.post("/marks", response_model=s.MarksOut, responses={404: {"model": s.ErrorOut}})
-async def toggle_mark(ref: s.RowRef, request: Request):
+async def toggle_mark(ref: s.RowRef, request: Request) -> s.MarksOut:
     """Mark the row's records - or unmark them when every one is marked."""
     sess, cache = session(request), places(request)
     try:
@@ -64,7 +64,7 @@ async def toggle_mark(ref: s.RowRef, request: Request):
 
 
 @router.delete("/marks", response_model=s.MarksOut)
-async def clear_marks(request: Request):
+async def clear_marks(request: Request) -> s.MarksOut:
     sess = session(request)
     sess.clear_marks(origin="web")
     return _marks(sess)
@@ -88,7 +88,7 @@ def _source(sess, cache, tab: str, path: str, q: str):
 
 @router.get("/export/options", response_model=s.ExportOptions)
 def export_options(tab: str = "", path: str = "", q: str = "",
-                   sess=Depends(session), cache=Depends(places)):
+                   sess=Depends(session), cache=Depends(places)) -> s.ExportOptions:
     records, source = _source(sess, cache, tab, path, q)
     return s.ExportOptions(
         source=source, count=len(records),
@@ -106,7 +106,7 @@ def export_options(tab: str = "", path: str = "", q: str = "",
 @router.get("/export", response_class=PlainTextResponse)
 def export(which: str, fmt: str = "text", fields: list[str] = Query(default=[]),
            tab: str = "", path: str = "", q: str = "", download: bool = False,
-           sess=Depends(session), cache=Depends(places)):
+           sess=Depends(session), cache=Depends(places)) -> PlainTextResponse:
     if which != "custom" and which not in exporter.EXPORTS:
         raise HTTPException(422, f"no export {which}")
     if fmt not in exporter.FORMATS:

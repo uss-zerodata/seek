@@ -14,7 +14,7 @@ from seek.session import SessionConfig
 from seek.tui.app import SeekApp
 from seek.tui.results import ResultsList
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.slow]
 
 BLOB = json.dumps({"users": [{"id": i, "name": f"user{i}", "role": "admin"}
                              for i in range(80)]})

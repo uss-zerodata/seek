@@ -1,6 +1,6 @@
 [project]
 name = "seek-tui"
-version = "0.8.8"
+version = "0.8.9"
 description = "Interactive terminal search for files, directories, and file contents"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -38,6 +38,7 @@ packages = ["src/seek"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = ["slow: drives the TUI through Textual's Pilot and needs real time to settle"]
 
 [tool.ruff]
 line-length = 100
