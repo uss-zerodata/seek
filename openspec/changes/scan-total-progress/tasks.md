@@ -19,4 +19,4 @@
 ## 4. Finish
 
 - [x] 4.1 Real nmap on loopback and a namespace with down hosts: the figure rises across groups and reaches the end (counts lag nmap's stdout flushes - recorded in the design)
-- [ ] 4.2 ruff, full pytest, `openspec validate --strict`, version bump (minor)
+- [x] 4.2 ruff, full pytest, `openspec validate --strict`, version bump (minor)

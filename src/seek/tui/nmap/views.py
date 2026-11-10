@@ -8,6 +8,7 @@ whatever is being looked at.
 from __future__ import annotations
 
 import re
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -95,7 +96,7 @@ class Grouping:
         return self._ports
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, weakref_slot=True)
 class View:
     title: str
     columns: tuple[str, ...]
@@ -267,6 +268,13 @@ def name_cell(host: Host) -> str:
     return known[0] if len(known) == 1 else f"{known[0]} +{len(known) - 1}"
 
 
+def _name_key(host: Host) -> str:
+    """Sort on the name the column shows; `hostname` alone put every host named
+    only by a certificate first, as if it had no name."""
+    known = name_mod.names_of(host)
+    return known[0] if known else ""
+
+
 def _host_row(h: Host) -> Row:
     return Row(
         cells=(h.address, name_cell(h), _fmt(h.os), _reach(h),
@@ -275,7 +283,7 @@ def _host_row(h: Host) -> Row:
         target=h,
         records=(Record(h),),
         addresses=(h.address,),
-        sort_key=(_addr(h.address), h.hostname or "", h.os or "",
+        sort_key=(_addr(h.address), _name_key(h), h.os or "",
                   _reach(h), len(h.open_services), len(h.sources)),
     )
 
@@ -387,7 +395,7 @@ def service_detail(group: proj.ServiceGroup) -> View:
                 target=host,
                 records=(Record(host, svc),),
                 addresses=(host.address,),
-                sort_key=(_addr(host.address), host.hostname or "",
+                sort_key=(_addr(host.address), _name_key(host),
                           svc.version or "", svc.extrainfo or "",
                           len(svc.vulnerabilities), ""),
             ))
@@ -453,7 +461,7 @@ def grouping_detail(group: Grouping) -> View:
                 drill=host,
                 records=(Record(host, svc),),
                 addresses=(host.address,),
-                sort_key=(_addr(host.address), host.hostname or "",
+                sort_key=(_addr(host.address), _name_key(host),
                           proj.port_key(svc.port, svc.protocol),
                           svc.name or "", svc.version or "",
                           len(svc.vulnerabilities), ""),
@@ -756,7 +764,7 @@ def inventory_view(session) -> View:
     def build(scans: ScanSet, report: Report | None = None) -> list[Row]:
         inv = session.inventory(report)
         lookup = session.lookup()
-        view.subtitle = unplaced_note(session)
+        this().subtitle = unplaced_note(session)
         return [_entry_row(e, lookup.of_entry(e), lookup.db_missing)
                 for e in inv_mod.entries(inv, scans.hosts)]
 
@@ -765,6 +773,9 @@ def inventory_view(session) -> View:
         tab="inventory", reports=True, default_sort=(4, True),
         stamp=lambda: (session.shots.generation, session.vulndb().generation),
     )
+    # Weak: `view` holds `build`, so a strong reference here is a cycle, and a
+    # cycle frozen by `bulk` kept every inventory projection for the session.
+    this = weakref.ref(view)
     return view
 
 
@@ -853,7 +864,7 @@ def findings_detail(a: vmatch.Affected) -> View:
                 drill=host,
                 records=(Record(host, svc),),
                 addresses=(host.address,),
-                sort_key=(_addr(host.address), host.hostname or "",
+                sort_key=(_addr(host.address), _name_key(host),
                           proj.port_key(svc.port, svc.protocol) if svc else (-1, 0),
                           svc.name or "" if svc else ""),
             ))
@@ -887,7 +898,7 @@ def inventory_detail(entry: inv_mod.Entry) -> View:
                 drill=host,
                 records=(Record(host, svc),),
                 addresses=(host.address,),
-                sort_key=(_addr(host.address), host.hostname or "",
+                sort_key=(_addr(host.address), _name_key(host),
                           proj.port_key(svc.port, svc.protocol) if svc else (-1, 0),
                           svc.name or "" if svc else "", c.sources, c.conflicting),
             ))

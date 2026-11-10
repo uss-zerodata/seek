@@ -134,6 +134,8 @@ class _Inventoried:
     class _Shots:
         generation = 0
 
+    unplaced_captures: list[str] = []          # no captures in the corpus
+
     def __init__(self, scans, store=None) -> None:
         self.scans, self.shots, self._inventory = scans, self._Shots(), None
         self._store, self._lookup = store, None

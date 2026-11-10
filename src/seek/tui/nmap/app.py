@@ -22,7 +22,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
-from textual.timer import Timer
+from textual.geometry import Size
 from textual.widgets import DataTable, Input, Static, Tab, Tabs
 
 from seek import actions
@@ -259,6 +259,47 @@ class ScanTable(DataTable):
 
     def action_line(self, direction: int) -> None:
         self.app.action_line(direction)
+
+    # The viewer only appends one-line rows and clears, so the row order and
+    # the line->row map can grow with each row. DataTable rebuilds both over
+    # every row after every change: per fill chunk, which made a fill quadratic.
+    # shortcut: assumes no sort/remove_row/height>1; revisit if the app uses them.
+    _order: list = []
+    _offsets: list = []
+
+    def add_row(self, *cells, **kwargs):
+        key = super().add_row(*cells, **kwargs)
+        if not self._order:
+            self._order, self._offsets = [], []     # first row: own the lists
+        self._order.append(self.rows[key])
+        self._offsets.append((key, 0))
+        return key
+
+    def clear(self, columns: bool = False):
+        self._order, self._offsets = [], []
+        return super().clear(columns)
+
+    @property
+    def ordered_rows(self) -> list:
+        return self._order
+
+    @property
+    def _y_offsets(self) -> list:
+        return self._offsets
+
+    def _update_dimensions(self, new_rows) -> None:
+        # Every column gets a fixed width from `_lay_columns`, so DataTable's
+        # per-cell measuring (a terminal-size syscall per cell) decides nothing:
+        # it was 2 s of frozen interface per 24 200 rows, on every fill.
+        # shortcut: overrides a private Textual method; re-check on a Textual upgrade.
+        if any(c.auto_width for c in self.columns.values()):
+            super()._update_dimensions(new_rows)
+            return
+        width = sum(c.get_render_width(self) for c in self.columns.values())
+        header = self.header_height if self.show_header else 0
+        # Every row is one line, and `_total_row_height` walks every row.
+        self.virtual_size = Size(width + self._row_label_column_width,
+                                 self.row_count + header)
 
 
 _HINTS = {
@@ -542,6 +583,7 @@ class NmapApp(ScanFlows, App[int]):
         self._tab_marks: dict[str, _Mark] = {}
         self._pending_mark: _Mark | None = None
         self._rows: list[vdefs.Row] = []
+        self._shown = 0
         # The view the rows on screen were built for. A rebuild for that same
         # view can leave them in place; a rebuild for a different one cannot,
         # because they are a different shape.
@@ -567,7 +609,7 @@ class NmapApp(ScanFlows, App[int]):
         self._laid: tuple | None = None
         self._last_width = 0
         self._spec = filtering.FilterSpec()
-        self._filter_debounce: Timer | None = None
+        self._filter_debounce: asyncio.TimerHandle | None = None
         self._unfiltered = 0
         self._loose = 0                 # scattered-letter matches left out
         # Non-zero when candidate files were found and not one of them could be
@@ -875,7 +917,7 @@ class NmapApp(ScanFlows, App[int]):
             # rebuild keeps the header it already has, along with the rows.
             self._lay_columns([])
         self._show_busy()
-        self._build_rows(view, self.scans, self._build_token)
+        self._build_rows([view, self.scans], self._build_token)
         return None
 
     def _needs_building(self, view: vdefs.View) -> bool:
@@ -894,8 +936,16 @@ class NmapApp(ScanFlows, App[int]):
         return "the scan history" if view.kind == "scans" else f"{view.title.lower()}"
 
     @work(thread=True, exclusive=True, group="rows")
-    def _build_rows(self, view: vdefs.View, scans: ScanSet, token: int) -> None:
-        """Build one view's rows off the event loop, reporting as it goes."""
+    def _build_rows(self, job: list, token: int) -> None:
+        """Build one view's rows off the event loop, reporting as it goes.
+
+        `job` is `[view, scans]`, emptied here. A finished Textual worker is
+        cyclic garbage (it sits in its own context), and `bulk` freezes it: its
+        arguments - a whole projection and the model behind it - were pinned
+        for the rest of the session, ~1 M objects per ten tab switches.
+        """
+        view, scans = job
+        job.clear()
         def report(done: int, total: int, unit: str) -> None:
             busy = self._busy
             if busy is None or busy.token != token:
@@ -1020,6 +1070,19 @@ class NmapApp(ScanFlows, App[int]):
         message.append("Esc stops waiting", style="dim")
         pane.update(message)
 
+    def _after(self, delay: float, callback) -> asyncio.TimerHandle:
+        """`set_timer` for a callback that must run.
+
+        A one-shot Textual timer whose deadline has already passed when it
+        first checks the clock - another thread held the GIL just then, which
+        the reader and every projection do - exits without calling back
+        (`skip`). A lost fill chunk left `_filling` set for good, so every later
+        snapshot stayed parked and the viewer showed part of the engagement
+        indefinitely. asyncio never skips; `call_next` keeps Textual's error
+        handling.
+        """
+        return asyncio.get_running_loop().call_later(delay, self.call_next, callback)
+
     def _fill(self, rows: list[vdefs.Row], preserve: bool = False,
               restore: _Mark | None = None, keep: int = 0) -> None:
         """Put `rows` in the table - the first screenful now, the rest after.
@@ -1034,6 +1097,7 @@ class NmapApp(ScanFlows, App[int]):
         every fixture - is filled in one pass, exactly as it always was.
         """
         self._rows = rows
+        self._shown = sum(1 for r in rows if not r.heading)  # status reads it per chunk
         self._rows_view = self.view
         # Where the cursor belongs in *this* list, resolved once against the
         # whole of it. Resolving it per chunk meant a long list dragged the
@@ -1113,7 +1177,7 @@ class NmapApp(ScanFlows, App[int]):
             # start whether or not the screen happened to need repainting, and
             # a millisecond is long enough for input and rendering to get their
             # turn in between.
-            self.set_timer(0.001, lambda: self._fill_more(generation))
+            self._after(0.001, lambda: self._fill_more(generation))
             self._refresh_status()
             return
         self._filling = False
@@ -1279,7 +1343,7 @@ class NmapApp(ScanFlows, App[int]):
         left = self._read_note() or self._busy_note() or self._live_note or Text(
             f"{len(self.scans.hosts)} host(s) across "
             f"{len(self.scans.sources)} scan(s)", style="dim")
-        shown = sum(1 for r in self._rows if not r.heading)
+        shown = self._shown
         right = Text(f"{shown} row{'s' if shown != 1 else ''}", style="bold")
         if self._filling:
             right.append(f"  ·  listing {self._filled} of {len(self._rows)}",
@@ -1404,12 +1468,12 @@ class NmapApp(ScanFlows, App[int]):
         if event.input.id != "filter":
             return
         if self._filter_debounce is not None:
-            self._filter_debounce.stop()
+            self._filter_debounce.cancel()
         delay = self.config.debounce_ms / 1000
         if delay <= 0:
             self._reload_rows()
             return
-        self._filter_debounce = self.set_timer(delay, self._reload_rows)
+        self._filter_debounce = self._after(delay, self._reload_rows)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "filter":
@@ -1420,7 +1484,7 @@ class NmapApp(ScanFlows, App[int]):
     def _flush_filter(self) -> None:
         """Apply a pending filter now - leaving the box must not lose a keystroke."""
         if self._filter_debounce is not None:
-            self._filter_debounce.stop()
+            self._filter_debounce.cancel()
             self._filter_debounce = None
             self._reload_rows()
 
@@ -1518,7 +1582,7 @@ class NmapApp(ScanFlows, App[int]):
         throw the cursor to the top.
         """
         if self._filter_debounce is not None:
-            self._filter_debounce.stop()
+            self._filter_debounce.cancel()
             self._filter_debounce = None
         box = self.query_one("#filter", Input)
         if box.value != text:
@@ -2037,7 +2101,7 @@ class NmapApp(ScanFlows, App[int]):
         if self._live_pending:
             return
         self._live_pending = True
-        self.set_timer(self._LIVE_REFRESH, self._live_refresh)
+        self._after(self._LIVE_REFRESH, self._live_refresh)
 
     def _live_refresh(self) -> None:
         self._live_pending = False
@@ -2228,7 +2292,9 @@ class NmapApp(ScanFlows, App[int]):
                 bulk.freeze()
                 now = time.monotonic()
                 snapshot = None
-                if unread and now - last >= _PUBLISH_EVERY and done < total:
+                # Not while one is still parked: it would only replace it, unseen.
+                if (unread and now - last >= _PUBLISH_EVERY and done < total
+                        and self._next_scans is None):
                     last, unread = now, False
                     snapshot = self._consolidate(acc, failures)
                 self.call_from_thread(self._on_read_progress, token, done, total,
@@ -2332,7 +2398,7 @@ class NmapApp(ScanFlows, App[int]):
             wait = min(time.monotonic() - self._absorb_began, _ABSORB_HEADROOM)
             self._absorb_began = 0.0
         if wait > 0.05 and self._next_scans is not None:
-            self.set_timer(wait, self._take_parked)
+            self._after(wait, self._take_parked)
             return
         self._take_parked()
 
@@ -2380,7 +2446,10 @@ class NmapApp(ScanFlows, App[int]):
     def _read_note(self) -> Text | None:
         """How far the read has got, for the status line. `None` once it has."""
         reading = self._reading
-        if reading is None or not reading.showing:
+        # A finished read whose last snapshot is still parked is not on screen
+        # yet; dropping the note there showed a partial count as the whole.
+        parked = reading is not None and reading.finished and self._next_scans is not None
+        if reading is None or not (reading.showing or parked):
             return None
         note = Text(f"{_SPINNER[self._spin % len(_SPINNER)]} reading scans "
                     f"{reading.done}/{reading.total} {reading.unit}", style="bold")

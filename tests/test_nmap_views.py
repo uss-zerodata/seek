@@ -211,6 +211,19 @@ def test_a_hosts_ports_sort_by_number_not_text(tmp_path):
     assert _sorted_by(rows, 0, desc=True) == list(reversed(_SORTED))
 
 
+def test_the_hostname_column_sorts_by_the_name_it_shows():
+    from seek.nmap.models import Host, ScanSet, Service
+    from seek.tui.nmap import views as vdefs
+
+    by_cert = Host(address="10.0.0.1", services=[
+        Service(protocol="tcp", port=443, names=[("zulu.example", "certificate")])])
+    by_dns = Host(address="10.0.0.2", hostnames=["alpha.example"])
+    nameless = Host(address="10.0.0.3")
+    scans = ScanSet(hosts=[by_cert, by_dns, nameless])
+    shown = _sorted_by(vdefs.hosts_view().rows(scans), 1)
+    assert shown == [vdefs.ABSENT, "alpha.example", "zulu.example"]
+
+
 def test_the_by_port_grouping_sorts_by_number(tmp_path):
     from seek.tui.nmap import views as vdefs
 

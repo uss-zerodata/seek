@@ -10,6 +10,7 @@ for a run. Nothing is cached, indexed or written.
 
 from __future__ import annotations
 
+import functools
 import os
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -346,6 +347,7 @@ def merge(files: list[ScanFile]) -> ScanSet:
     return acc.snapshot()
 
 
+@functools.cache  # every snapshot and every view re-sorts every host by it
 def addr_key(addr: str) -> tuple:
     """Sort IPv4 numerically; anything else lexically after it.
 
