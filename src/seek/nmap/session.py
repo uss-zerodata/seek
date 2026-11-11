@@ -824,7 +824,8 @@ class Session:
                                     chrome_path=cfg.gowitness_chrome_path,
                                     collect_all=cfg.gowitness_collect_all,
                                     settle_ms=cfg.gowitness_settle_ms,
-                                    settle_cap_ms=cfg.gowitness_settle_cap_ms)
+                                    settle_cap_ms=cfg.gowitness_settle_cap_ms,
+                                    settle_delay_s=cfg.gowitness_settle_delay_s)
         return gw_capture.CaptureRun(
             argv=argv, paths=paths, urls=urls, backend=self.gowitness.backend or "",
             blocked=self.capture_blocked(),
@@ -832,7 +833,8 @@ class Session:
             copy_local=remote.local_text(argv) if self.gowitness.available else None,
             copy_remote=remote.capture_snippet(urls, collect_all=cfg.gowitness_collect_all,
                                                settle_ms=cfg.gowitness_settle_ms,
-                                               settle_cap_ms=cfg.gowitness_settle_cap_ms))
+                                               settle_cap_ms=cfg.gowitness_settle_cap_ms,
+                                               settle_delay_s=cfg.gowitness_settle_delay_s))
 
     # --- runs ---------------------------------------------------------------------
 

@@ -18,7 +18,7 @@
     {% if c.title %}<div class="line dim">{{ c.title }}</div>{% endif %}
     {% if c.redirected %}<div class="line dim">→ {{ c.final_url }}</div>{% endif %}
     {% if show_host and c.address %}<div class="line"><a href="{{ links.host(c.address) }}">{{ c.address }}</a>{% if c.port %} · <a href="{{ links.port(c.address, c.protocol, c.port) }}">{{ c.port }}/{{ c.protocol }}</a>{% endif %}</div>{% endif %}
-    {% if show_host and siblings and c.siblings > 1 %}<div class="line"><a class="siblings" href="/?{{ {"address": c.address, "protocol": c.protocol, "port": c.port} | urlencode }}">all {{ c.siblings }} for this service →</a></div>{% endif %}
+    {% if show_host and siblings and c.siblings > 1 %}<div class="line"><a class="siblings" href="/gallery?{{ {"address": c.address, "protocol": c.protocol, "port": c.port} | urlencode }}">all {{ c.siblings }} for this service →</a></div>{% endif %}
     {% if c.database %}<div class="line dim small" title="{{ c.database }}">{{ c.database.rsplit('/', 2)[-2:] | join('/') }}</div>{% endif %}
   </figcaption>
 </figure>

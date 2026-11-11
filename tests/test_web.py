@@ -237,14 +237,14 @@ def test_a_deleted_screenshot_is_404_and_the_page_still_renders(world):
     capture = shots.all()[0]
     capture.shot.unlink()
     assert client.get(f"/media/shot/{capture_id(capture)}").status_code == 404
-    assert client.get("/").status_code == 200
+    assert client.get("/gallery").status_code == 200
 
 
 # --- pages -------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("path", ["/", "/v/hosts", "/v/hosts?path=h:192.0.2.1", "/v/services",
-                                  "/v/stats", "/?q=8080&fragment=1"])
+@pytest.mark.parametrize("path", ["/", "/gallery", "/v/hosts", "/v/hosts?path=h:192.0.2.1",
+                                  "/v/services", "/v/stats", "/gallery?q=8080&fragment=1"])
 def test_every_page_renders(world, path):
     _scans_, _shots, _source, client = world
     response = client.get(path)
@@ -252,17 +252,29 @@ def test_every_page_renders(world, path):
     assert "<" in response.text
 
 
+def test_the_front_page_is_the_host_list_and_old_gallery_links_still_work(world):
+    _scans_, _shots, _source, client = world
+    front = client.get("/", follow_redirects=False)
+    assert front.status_code == 302 and front.headers["location"] == "/v/hosts"
+    old = client.get("/?group=title&q=hektor", follow_redirects=False)
+    assert old.headers["location"] == "/gallery?group=title&q=hektor", \
+        "a gallery link keeps its gallery"
+    assert 'data-tab="hosts" aria-current="page"' in client.get("/").text
+    gallery = client.get("/gallery").text
+    assert '<a href="/gallery" data-tab="gallery" aria-current="page"' in gallery
+
+
 def test_the_gallery_shows_every_capture_and_failures_say_why(world):
     _scans_, shots, _source, client = world
     shots.add_failures({"http://192.0.2.2": "net::ERR_CONNECTION_REFUSED"})
-    html = client.get("/").text
+    html = client.get("/gallery").text
     assert html.count('class="card"') == 8
     assert "ERR_CONNECTION_REFUSED" in html
 
 
 def test_the_gallery_filter_narrows_on_the_server(world):
     _scans_, _shots, _source, client = world
-    html = client.get("/?q='8080&fragment=1").text
+    html = client.get("/gallery?q='8080&fragment=1").text
     assert html.count('class="card"') == 1 and "192.0.2.30:8080" in html
     assert "<html" not in html, "a fragment is the list alone"
 
@@ -469,9 +481,9 @@ def test_the_gallery_narrows_to_one_service(world):
 def test_a_card_offers_the_other_captures_of_its_service(world):
     """Shown each on its own (`group=every`), a card links to its siblings."""
     _scans_, _shots, _source, client = world
-    html = client.get("/?sort=url&group=every").text
+    html = client.get("/gallery?sort=url&group=every").text
     assert html.count("all 2 for this service") == 2, "both captures of 192.0.2.1:80"
-    link = re.search(r'href="(/\?[^"]*address=192.0.2.1[^"]*)"', html).group(1)
+    link = re.search(r'href="(/gallery\?[^"]*address=192.0.2.1[^"]*)"', html).group(1)
     narrowed = client.get(link.replace("&amp;", "&")).text
     assert narrowed.count('class="card"') == 2
     assert "back to every port" in narrowed
@@ -479,7 +491,7 @@ def test_a_card_offers_the_other_captures_of_its_service(world):
 
 def test_the_next_page_keeps_the_sort_and_the_scope(world):
     _scans_, _shots, _source, client = world
-    html = client.get("/?sort=status&desc=1&limit=2").text
+    html = client.get("/gallery?sort=status&desc=1&limit=2").text
     link = re.search(r'class="more" href="\?([^"]+)"', html).group(1).replace("&amp;", "&")
     assert "sort=status" in link and "desc=1" in link and "offset=2" in link
 
@@ -487,7 +499,7 @@ def test_the_next_page_keeps_the_sort_and_the_scope(world):
 def test_an_unknown_sort_is_refused_by_the_api_and_ignored_by_the_page(world):
     _scans_, _shots, _source, client = world
     assert client.get("/api/v1/captures?sort=colour").status_code == 422
-    assert client.get("/?sort=colour").status_code == 200
+    assert client.get("/gallery?sort=colour").status_code == 200
     body = client.get("/api/v1/captures?sort=status&desc=true&address=192.0.2.30").json()
     assert body["total"] == 2
 
@@ -497,13 +509,13 @@ def test_gallery_path_for_rows(tmp_path):
 
     scans = _scans()
     hosts = {r.target.address: r for r in vdefs.hosts_view().rows(scans)}
-    assert gallery_path_for(hosts["192.0.2.30"]) == "/?address=192.0.2.30"
+    assert gallery_path_for(hosts["192.0.2.30"]) == "/gallery?address=192.0.2.30"
     alpha = scans.hosts[0]
     port80 = next(r for r in vdefs.host_detail(alpha).rows(scans) if r.target.port == 80)
-    assert gallery_path_for(port80) == "/?address=192.0.2.1&protocol=tcp&port=80"
+    assert gallery_path_for(port80) == "/gallery?address=192.0.2.1&protocol=tcp&port=80"
     group = next(r for r in vdefs.services_view().rows(scans)
                  if r.target.port == 80 and r.target.host_count > 1)
-    assert gallery_path_for(group) == "/?protocol=tcp&port=80", "one port, several hosts"
+    assert gallery_path_for(group) == "/gallery?protocol=tcp&port=80", "one port, several hosts"
 
 
 def test_no_route_on_the_loop_reads_the_model():
@@ -529,7 +541,7 @@ def test_captures_of_one_port_are_stacked_by_default(world):
     """Two captures of 192.0.2.1:80 (by address and by name) are one card with
     a count, the other behind it - not two services."""
     _scans_, _shots, source, client = world
-    html = client.get("/?sort=url").text
+    html = client.get("/gallery?sort=url").text
     stacks = re.findall(r'<div class="stack" data-key="([^"]+)"', html)
     # ... and two of sso.hektor.cc:443, a host the scans do not have.
     assert sorted(stacks) == ["s:192.0.2.1/tcp/80", "u:sso.hektor.cc:443"]
@@ -546,7 +558,7 @@ def test_captures_of_one_port_are_stacked_by_default(world):
 
 def test_every_screenshot_is_still_one_click_away(world):
     _scans_, _shots, source, client = world
-    flat = client.get("/", params={"group": "every"}).text
+    flat = client.get("/gallery", params={"group": "every"}).text
     assert flat.count('class="card"') == len(source.snapshot().captures)
     assert 'class="stack"' not in flat
 
@@ -563,7 +575,7 @@ def test_clearing_a_filter_keeps_the_rest_of_the_position(world):
     page = client.get("/v/hosts?q=zzzzzz&sort=3&desc=1").text
     link = page.split('">clear the filter')[0].rsplit('href="', 1)[1]
     assert "sort=3" in link and "desc=1" in link, "as Esc does"
-    page = client.get("/?group=every&q=zzzzzz").text
+    page = client.get("/gallery?group=every&q=zzzzzz").text
     link = page.split('">clear the filter')[0].rsplit('href="', 1)[1]
     assert "group=every" in link
 

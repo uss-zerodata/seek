@@ -142,7 +142,7 @@ def test_an_action_that_cannot_run_says_why(world):  # noqa: F811
 def test_the_viewer_is_a_shell_and_the_gallery_is_a_page(world):  # noqa: F811
     client = world[3]
     assert '<body class="shell">' in client.get("/v/hosts").text
-    assert '<body class="">' in client.get("/").text
+    assert '<body class="">' in client.get("/gallery").text
 
 
 def test_the_key_bar_has_hints_and_what_is_loaded(world):  # noqa: F811
@@ -226,7 +226,7 @@ def test_an_empty_record_pane_says_how_to_fill_it(world):  # noqa: F811
 
 
 def test_the_gallery_s_grouping_is_the_viewer_s_chips(world):  # noqa: F811
-    page = world[3].get("/?group=every").text
+    page = world[3].get("/gallery?group=every").text
     choices = re.findall(r"<a [^>]*>", page.split('class="groupings"')[1].split("</nav>")[0])
     assert choices and all('class="chip"' in a for a in choices)
     current = [a for a in choices if "aria-current" in a]

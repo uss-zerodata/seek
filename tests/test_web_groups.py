@@ -69,18 +69,18 @@ def test_look_alike_groups_of_two_databases_are_not_merged(tmp_path):
 def test_a_groups_link_lists_exactly_its_members(world, by):  # noqa: F811
     _scans, _shots, _source, client = world
     for group in _groups(client, by)["groups"]:
-        html = client.get("/?" + group["more"]).text
+        html = client.get("/gallery?" + group["more"]).text
         assert html.count('class="card"') == group["count"], (by, group["label"])
 
 
 def test_the_grouped_gallery_switches_and_keeps_the_filter(world):  # noqa: F811
     _scans, _shots, _source, client = world
-    html = client.get("/", params={"group": "title", "q": "hektor"}).text
+    html = client.get("/gallery", params={"group": "title", "q": "hektor"}).text
     # Titles that say Hektor, and pages whose URL does - the filter reads both.
     labels = re.findall(r'class="group-label">([^<]+)<', html)
     assert {"Home - Hektor.cc", "sso.hektor.cc"} <= set(labels)
     assert html.count('class="card"') == 7, "every hektor capture, grouped"
-    switch = dict(re.findall(r'<a href="/\?([^"]+)"[^>]*data-group="(\w+)"', html))
+    switch = dict(re.findall(r'<a href="/gallery\?([^"]+)"[^>]*data-group="(\w+)"', html))
     assert set(switch.values()) == {"every", "host", "service", "title", "similar"}
     for query_ in switch:
         assert "q=hektor" in query_.replace("&amp;", "&"), "the filter survives a switch"
@@ -90,4 +90,4 @@ def test_the_grouped_gallery_switches_and_keeps_the_filter(world):  # noqa: F811
 def test_an_unknown_grouping(world):  # noqa: F811
     _scans, _shots, _source, client = world
     assert client.get("/api/v1/captures/groups", params={"by": "colour"}).status_code == 422
-    assert client.get("/", params={"group": "colour"}).status_code == 200
+    assert client.get("/gallery", params={"group": "colour"}).status_code == 200

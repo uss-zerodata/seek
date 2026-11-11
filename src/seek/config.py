@@ -133,6 +133,7 @@ class Config:
     # default driver and a fixed three-second delay.
     gowitness_settle_ms: int = 2000
     gowitness_settle_cap_ms: int = 20000
+    gowitness_settle_delay_s: int = 1
     # The vulnerability database (`seek vulndb update`). Empty: `vulndb.sqlite3`
     # in the state directory. Point it at a copy to use one built elsewhere.
     vulndb_path: str = ""
@@ -190,6 +191,7 @@ _SCALAR_KEYS: dict[str, type | tuple[type, ...]] = {
     "gowitness_collect_all": bool,
     "gowitness_settle_ms": int,
     "gowitness_settle_cap_ms": int,
+    "gowitness_settle_delay_s": int,
     "vulndb_path": str,
     "vulndb_stale_days": int,
     "notify_url": str,
@@ -212,6 +214,7 @@ _RANGES: dict[str, tuple[int, int | None]] = {
     "publish_interval_ms": (0, 60_000),
     "gowitness_settle_ms": (0, 60_000),
     "gowitness_settle_cap_ms": (1_000, 600_000),
+    "gowitness_settle_delay_s": (0, 30),
     "format_min_line": (1, None),
     "content_cache_budget": (0, None),
     "gowitness_report_port": (1, 65_535),
@@ -433,6 +436,7 @@ _EXAMPLE_COMMENTS = {
     "gowitness_collect_all": "record network logs, cookies and response bodies too (large)",
     "gowitness_settle_ms": "screenshot once the page has been still this long (0: fixed 3 s delay)",
     "gowitness_settle_cap_ms": "...or after this long, whatever the page is doing",
+    "gowitness_settle_delay_s": "wait this many seconds first, so a redirect on load is followed",
     "vulndb_path": "the vulnerability database; empty means vulndb.sqlite3 in the state dir",
     "vulndb_stale_days": "offer an update when the vulnerability database is older than this",
     "notify_url": "ntfy-compatible webhook told when a scan or capture ends; empty: off",

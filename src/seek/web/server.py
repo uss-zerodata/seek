@@ -215,7 +215,7 @@ def gallery_path_for(row) -> str:
     string, so the narrowing is exact and the filter box stays the user's.
     """
     if row is None:
-        return "/"
+        return "/gallery"
     services = [r for r in row.records if r.service is not None]
     addresses = {r.host.address for r in row.records}
     ports = {(r.service.protocol, r.service.port) for r in services}
@@ -225,4 +225,4 @@ def gallery_path_for(row) -> str:
     if services and len(ports) == 1:
         protocol, port = next(iter(ports))
         query.update(protocol=protocol, port=port)
-    return "/?" + urlencode(query) if query else "/"
+    return "/gallery?" + urlencode(query) if query else "/gallery"

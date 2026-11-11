@@ -37,7 +37,7 @@ gowitness has no wait-for-load flag, but `--javascript` runs a function before
 the screenshot, and measured against 3.2.2 the `gorod` driver awaits the promise
 it returns - the default `chromedp` driver does not (0.7 s for a promise of
 8 s), and neither does `--javascript-file` under either driver. So the capture
-runs `--driver gorod --delay 0` with `settle_script` inline. It resolves when
+runs `--driver gorod` with `settle_script` inline. It resolves when
 the document is complete, every image has arrived, and nothing has changed in
 the page or finished downloading for the quiet window - or at the cap. One
 blind spot, and it is the platform's: a page cannot see a request still in
@@ -46,6 +46,12 @@ late response is photographed early; the quiet window is the knob for that.
 `gorod` without a script does not wait for navigation at all (it records
 `about:blank` as the title), so the driver and the script travel together:
 `settle_ms=0` puts back `chromedp` and the fixed delay.
+
+A page that redirects itself as it loads (`location.replace`, as a NAS login
+does) destroys the page the script runs in; gowitness logs "Inspected target
+navigated or closed" and photographs at once - a blank page. `--delay` runs
+before the script, so `settle_delay_s` (default 1 s) lets the redirect finish
+first. Measured against a real dashboard: 0 s gives a blank page, 1 s the login.
 
 **One argv, two backends.** The container sees `/data` where the host sees the
 capture directory, so the only difference between the two commands is that
@@ -185,14 +191,19 @@ def settle_script(quiet_ms: int, cap_ms: int) -> str:
 def scan_argv(probe: Probe, paths: Paths, *, chrome_path: str = "",
               collect_all: bool = True,
               threads: int = 6, timeout: int = 30, delay: int = 3,
-              settle_ms: int = 2000, settle_cap_ms: int = 20000) -> list[str]:
+              settle_ms: int = 2000, settle_cap_ms: int = 20000,
+              settle_delay_s: int = 1) -> list[str]:
     """The command that captures `paths.urls`, for whichever backend is in use."""
     seen = _MOUNT if probe.backend == "docker" else str(paths.root)
     if settle_ms > 0:
         # The page's own wait must fit inside gowitness's: a timeout shorter
-        # than the cap would fail the very pages the cap exists for.
-        timeout = max(timeout, -(-settle_cap_ms // 1000) + 10)
-        waiting = ["--driver", "gorod", "--delay", "0",
+        # than the delay and the cap would fail the very pages the cap exists for.
+        timeout = max(timeout, settle_delay_s + -(-settle_cap_ms // 1000) + 10)
+        # gowitness sleeps `--delay` before it runs the script, so a page that
+        # redirects itself on load has done so by then; the script would
+        # otherwise die with the page it was started in, and gowitness takes
+        # the screenshot at once - of a blank page.
+        waiting = ["--driver", "gorod", "--delay", str(settle_delay_s),
                    "--javascript", settle_script(settle_ms, settle_cap_ms)]
     else:
         waiting = ["--delay", str(delay)]

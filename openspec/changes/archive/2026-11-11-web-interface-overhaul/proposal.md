@@ -27,7 +27,10 @@ find them, and a reader with twenty thousand hosts sees too few of them at once.
   state a port's or a product's condition; magenta is a mark.
 
 Not changing: the URLs, the API, the keys, the data in any list or record, and
-the rule that nothing is loaded from another host. `/` stays the gallery.
+the rule that nothing is loaded from another host.
+
+Changed after review: `/` opens the Hosts tab, and the gallery moves to
+`/gallery`. A gallery link with gallery parameters is redirected there.
 
 ## Capabilities
 

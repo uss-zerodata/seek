@@ -4,11 +4,11 @@
 {% for g in page.groups %}
 <section class="shot-group">
   <h2><span class="group-label">{{ g.label }}</span> <span class="dim">{{ g.count }}</span>
-    {% if g.count > g.items | length %}<a class="small" href="/?{{ g.more }}">all {{ g.count }} →</a>{% else %}<a class="small" href="/?{{ g.more }}">only these →</a>{% endif %}</h2>
+    {% if g.count > g.items | length %}<a class="small" href="/gallery?{{ g.more }}">all {{ g.count }} →</a>{% else %}<a class="small" href="/gallery?{{ g.more }}">only these →</a>{% endif %}</h2>
   <div class="grid">{% for c in g.items %}{{ shot_card(c, show_host=(group not in ("host", "service"))) }}{% endfor %}</div>
 </section>
 {% else %}
-<p class="empty">{% if q %}nothing matches “{{ q }}” - <a href="/?{{ dict(keep, q="", group=group) | urlencode }}">clear the filter</a>{% else %}no captures found{% endif %}</p>
+<p class="empty">{% if q %}nothing matches “{{ q }}” - <a href="/gallery?{{ dict(keep, q="", group=group) | urlencode }}">clear the filter</a>{% else %}no captures found{% endif %}</p>
 {% endfor %}
 {% if page.offset + page.groups | length < page.total %}
 <p><a class="more" href="?{{ dict(keep, group=group, offset=page.offset + page.limit) | urlencode }}">next {{ page.limit }} groups →</a></p>

@@ -78,7 +78,22 @@ def _missing(request: Request, what: str) -> HTMLResponse:
     return _render(request, "missing.html", status=404, what=what)
 
 
-@router.get("/", response_class=HTMLResponse)
+# What a gallery address carried when the gallery was the front page. A link
+# with any of them was a gallery link, so it still lands in the gallery.
+_GALLERY_PARAMS = frozenset({"q", "offset", "limit", "fragment", "sort", "desc", "address",
+                             "protocol", "port", "title", "similar", "url_host",
+                             "url_port", "group"})
+
+
+@router.get("/")
+def front(request: Request) -> RedirectResponse:
+    """The front page is the host list; an old gallery link keeps its gallery."""
+    if _GALLERY_PARAMS & request.query_params.keys():
+        return RedirectResponse(f"/gallery?{request.url.query}", 302)
+    return RedirectResponse("/v/hosts", 302)
+
+
+@router.get("/gallery", response_class=HTMLResponse)
 def gallery(request: Request, q: str = "", offset: int = 0,
             limit: int = query.DEFAULT_LIMIT, fragment: bool = False,
             sort: str = query.DEFAULT_SORT, desc: bool = False,

@@ -522,9 +522,9 @@ function shots() {
   const tr = document.querySelector("table.rows tr.selected");
   const step = tr?.dataset.step || "";
   const [kind, rest] = [step.slice(0, 2), step.slice(2)];
-  if (kind === "h:") window.location.href = `/?${new URLSearchParams({ address: rest })}`;
-  else if (kind === "p:") { const [a, proto, port] = rest.split("/"); window.location.href = `/?${new URLSearchParams({ address: a, protocol: proto, port })}`; }
-  else window.location.href = "/";
+  if (kind === "h:") window.location.href = `/gallery?${new URLSearchParams({ address: rest })}`;
+  else if (kind === "p:") { const [a, proto, port] = rest.split("/"); window.location.href = `/gallery?${new URLSearchParams({ address: a, protocol: proto, port })}`; }
+  else window.location.href = "/gallery";
 }
 
 export function help(keys) {

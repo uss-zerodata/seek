@@ -546,7 +546,10 @@ A screenshot is taken when the page has settled, not after a fixed delay: once
 it has loaded, its images are in and nothing has changed for
 `gowitness_settle_ms` (2 s), or after `gowitness_settle_cap_ms` (20 s) at the
 latest. Raise the first for pages that sit blank before one late response draws
-them; `0` puts back gowitness's fixed three-second delay.
+them; `0` puts back gowitness's fixed three-second delay. Watching starts after
+`gowitness_settle_delay_s` (1 s), so a page that sends the browser on to its
+login as it loads is photographed where it lands, not blank; raise it for
+slower redirects, or set `0` to start watching at once.
 
 It runs in docker by default (`ghcr.io/sensepost/gowitness`, pulled on first
 use) and falls back to a `gowitness` on `PATH`; `gowitness_mode` pins one or
@@ -581,7 +584,8 @@ gallery instead of one at a time in an image viewer.
 
 | Page | What it shows |
 | --- | --- |
-| `/` | every screenshot, with URL, status, title and the database it came from; failures say why. Sortable by address, host name, port, HTTP status, URL, title, time taken or database, either way; groupable by host, service, page title or look (screenshots that look alike, from gowitness's perceptual grouping) - one click or `b` switches; a card whose service was captured more than once links to all of them together |
+| `/` | the Hosts tab; an older gallery link with its filter, sort or grouping still opens the gallery |
+| `/gallery` | every screenshot, with URL, status, title and the database it came from; failures say why. Sortable by address, host name, port, HTTP status, URL, title, time taken or database, either way; groupable by host, service, page title or look (screenshots that look alike, from gowitness's perceptual grouping) - one click or `b` switches; a card whose service was captured more than once links to all of them together |
 | `/hosts`, `/hosts/<address>` | hosts; one host's ports with each port's screenshots beside it |
 | `/services`, `/services/<proto>/<port>` | services by port number; one service with every host's screenshot |
 | `/captures/<id>` | the screenshot full size, headers, cookies, console log, technologies, TLS names |

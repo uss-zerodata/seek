@@ -2,7 +2,7 @@
 {% block title %}Gallery{% endblock %}
 {% block content %}
 <h1>Screenshots</h1>
-<form class="controls" method="get" action="/" data-list="list">
+<form class="controls" method="get" action="/gallery" data-list="list">
   <input class="filter" type="search" name="q" value="{{ q }}" autocomplete="off" autofocus
          id="gallery-q" aria-label="filter the screenshots" placeholder="Filter screenshots   e.g. login  401  :8443  10.10.10.">
   <button type="button" class="syntax-help" data-for="gallery-q" title="how to search" aria-label="how to search">?</button>
@@ -18,9 +18,9 @@
 </form>
 <nav class="groupings" aria-label="group the screenshots">
   <span class="dim small">group by <kbd>b</kbd></span>
-  <a href="/?{{ dict(keep, group="") | urlencode }}" {% if not group %}aria-current="true"{% endif %} class="chip" title="one card per host:port, its other screenshots stacked behind it">port (stacked)</a>
-  <a href="/?{{ dict(keep, group="every") | urlencode }}" {% if group == "every" %}aria-current="true"{% endif %} data-group="every" class="chip">every screenshot</a>
-  {% for key, label in groupings.items() %}<a href="/?{{ dict(keep, group=key) | urlencode }}" {% if group == key %}aria-current="true"{% endif %} data-group="{{ key }}" class="chip">{{ label }}</a>{% endfor %}
+  <a href="/gallery?{{ dict(keep, group="") | urlencode }}" {% if not group %}aria-current="true"{% endif %} class="chip" title="one card per host:port, its other screenshots stacked behind it">port (stacked)</a>
+  <a href="/gallery?{{ dict(keep, group="every") | urlencode }}" {% if group == "every" %}aria-current="true"{% endif %} data-group="every" class="chip">every screenshot</a>
+  {% for key, label in groupings.items() %}<a href="/gallery?{{ dict(keep, group=key) | urlencode }}" {% if group == key %}aria-current="true"{% endif %} data-group="{{ key }}" class="chip">{{ label }}</a>{% endfor %}
 </nav>
 {% if scope %}
 <p class="scope">only
@@ -29,7 +29,7 @@
   {% if scope.title is defined %}the page title “{{ scope.title or "(none)" }}”{% endif %}
   {% if scope.similar %}one look-alike group{% endif %}
   {% if scope.url_host %}{{ scope.url_host }}{% if scope.url_port %}:{{ scope.url_port }}{% endif %} (not in the scans){% endif %}
-  · <a href="/?{{ {"q": q, "sort": sort, "group": group} | urlencode }}">{{ "back to the groups" if group in groupings else "back to every port" }}</a></p>
+  · <a href="/gallery?{{ {"q": q, "sort": sort, "group": group} | urlencode }}">{{ "back to the groups" if group in groupings else "back to every port" }}</a></p>
 {% endif %}
 <div id="list">{% if group in groupings and not scope %}{% include "_groups.html" %}{% elif not group and not scope %}{% include "_stacks.html" %}{% else %}{% include "_captures.html" %}{% endif %}</div>
 {% endblock %}
