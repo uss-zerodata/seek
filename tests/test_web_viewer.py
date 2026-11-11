@@ -167,7 +167,7 @@ async def test_i_offers_every_capture_of_a_service_in_the_browser(tmp_path, open
             await pilot.pause(0.1)
             if opened:
                 break
-        assert opened[-1] == (f"http://127.0.0.1:{port}/"
+        assert opened[-1] == (f"http://127.0.0.1:{port}/gallery"
                               "?address=192.0.2.1&protocol=tcp&port=80")
         app._web.stop()
 

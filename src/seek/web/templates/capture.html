@@ -15,7 +15,7 @@
     <nav class="cap-actions" aria-label="where this capture belongs">
       {% if capture.address %}<a class="chip" href="{{ links.host(capture.address) }}">Host {{ capture.address }}</a>{% endif %}
       {% if capture.address and capture.port %}<a class="chip" href="{{ links.port(capture.address, capture.protocol, capture.port) }}">Port {{ capture.port }}/{{ capture.protocol }}</a>
-      <a class="chip" href="/?{{ {"address": capture.address, "protocol": capture.protocol, "port": capture.port} | urlencode }}">{% if capture.siblings > 1 %}All {{ capture.siblings }} captures of this port{% else %}In the gallery{% endif %}</a>{% endif %}
+      <a class="chip" href="/gallery?{{ {"address": capture.address, "protocol": capture.protocol, "port": capture.port} | urlencode }}">{% if capture.siblings > 1 %}All {{ capture.siblings }} captures of this port{% else %}In the gallery{% endif %}</a>{% endif %}
       <a class="chip" href="{{ capture.url }}" target="_blank" rel="noopener noreferrer" title="opens the target itself, in a new tab">Open the target ↗</a>
     </nav>
   </header>

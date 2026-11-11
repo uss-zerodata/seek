@@ -81,7 +81,7 @@ def search(session: Session, model, cache: ViewCache, q: str, per_group: int = 8
                    hits=[_name_hit(r) for r in names[:per_group]]),
         s.HitGroup(kind="screenshots", label="Screenshots",
                    total=shots.total if shots else 0,
-                   more="/?" + urlencode({"q": q}),
+                   more="/gallery?" + urlencode({"q": q}),
                    hits=[s.Hit(title=c.title or c.url,
                                subtitle=" · ".join(filter(None, [
                                    str(c.status or ("failed" if c.failed else "")),

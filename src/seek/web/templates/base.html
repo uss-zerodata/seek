@@ -28,7 +28,7 @@
 </header>
 <nav id="tabs" aria-label="views">
   {% for id, label in TABS %}<a href="/v/{{ id }}" data-tab="{{ id }}" {% if nav == id %}aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
-  <a href="/" data-tab="gallery" {% if nav == "gallery" %}aria-current="page"{% endif %}>Screenshots</a>
+  <a href="/gallery" data-tab="gallery" {% if nav == "gallery" %}aria-current="page"{% endif %}>Screenshots</a>
 </nav>
 {% include "_syntax.html" %}
 <main id="main">
