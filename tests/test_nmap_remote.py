@@ -44,6 +44,7 @@ def test_capture_snippet_is_self_contained():
     assert argv[argv.index("-f") + 1] == "gowitness/urls.txt"
     assert argv[argv.index("--screenshot-path") + 1] == "gowitness/screenshots"
     assert settle_script(4000, 30_000) in argv
+    assert argv[argv.index("--delay") + 1] == "1", "the default pause before the script"
     assert argv[argv.index("--write-db-uri") + 1] == "sqlite://gowitness/gowitness.sqlite3"
 
 

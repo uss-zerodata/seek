@@ -106,6 +106,8 @@ def test_max_results_of_zero_is_rejected(tmp_path):
         "content_cache_budget = -9",
         "min_content_query = -1",
         "publish_interval_ms = -1",
+        "gowitness_settle_delay_s = -1",
+        "gowitness_settle_delay_s = 31",
     ],
 )
 def test_out_of_range_numbers_are_rejected(tmp_path, line):
@@ -116,7 +118,8 @@ def test_out_of_range_numbers_are_rejected(tmp_path, line):
 @pytest.mark.parametrize(
     "line",
     ["debounce_ms = 0", "publish_interval_ms = 0", "content_cache_budget = 0",
-     "max_results = 1", "min_content_query = 0"],
+     "max_results = 1", "min_content_query = 0", "gowitness_settle_delay_s = 0",
+     "gowitness_settle_delay_s = 30"],
 )
 def test_meaningful_edge_values_are_accepted(tmp_path, line):
     load_config(_write(tmp_path, line))

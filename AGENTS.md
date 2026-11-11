@@ -507,7 +507,16 @@ together. Do not `query_one(RowList)`: it matches both.
   A page cannot see a request still in flight: one that is silent for longer
   than the quiet window before a single late response is captured early. That
   is the platform's limit; the quiet window is the knob. `--timeout` is raised
-  to cover the cap, never lowered.
+  to cover the delay and the cap, never lowered. A fourth trap, found on a real
+  network's dashboards: a page that redirects itself as it loads
+  (`location.replace`) destroys the page the script runs in, gowitness logs
+  "Inspected target navigated or closed" and photographs at once - blank. It
+  sleeps `--delay` *before* the script, so `gowitness_settle_delay_s` (1 s)
+  lets the redirect finish first; 0 s gave a blank page, 1 s the login.
+  Also observed and not explained: through an added 1.5 s per response,
+  dashboards came out blank more often with six captures in parallel than one
+  at a time (background-tab throttling is the suspect), while the old fixed
+  delay was unaffected.
 - **One `Runner` per tool; whether a second run may start is the caller's call.**
   A `Runner` supervises any number of runs (`active()`, a process per run,
   `cancel(run)`), so `self.runner` (nmap) and `self.captures` (gowitness) need

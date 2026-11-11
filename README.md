@@ -546,7 +546,10 @@ A screenshot is taken when the page has settled, not after a fixed delay: once
 it has loaded, its images are in and nothing has changed for
 `gowitness_settle_ms` (2 s), or after `gowitness_settle_cap_ms` (20 s) at the
 latest. Raise the first for pages that sit blank before one late response draws
-them; `0` puts back gowitness's fixed three-second delay.
+them; `0` puts back gowitness's fixed three-second delay. Watching starts after
+`gowitness_settle_delay_s` (1 s), so a page that sends the browser on to its
+login as it loads is photographed where it lands, not blank; raise it for
+slower redirects, or set `0` to start watching at once.
 
 It runs in docker by default (`ghcr.io/sensepost/gowitness`, pulled on first
 use) and falls back to a `gowitness` on `PATH`; `gowitness_mode` pins one or

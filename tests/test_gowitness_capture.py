@@ -318,7 +318,7 @@ def test_a_capture_waits_for_the_page_not_for_a_clock(tmp_path):
     for probe in (DOCKER, NATIVE):
         argv = scan_argv(probe, _paths(tmp_path))
         assert argv[argv.index("--driver") + 1] == "gorod"
-        assert argv[argv.index("--delay") + 1] == "0", "the script is the wait"
+        assert argv[argv.index("--delay") + 1] == "1", "a redirect on load, then the script"
         assert argv[argv.index("--javascript") + 1] == settle_script(2000, 20000)
         assert "--javascript-file" not in argv, "not awaited"
 
@@ -340,6 +340,23 @@ def test_the_page_s_wait_fits_inside_the_tool_s_timeout(tmp_path):
     assert quick[quick.index("--timeout") + 1] == "30", "never shortened"
 
 
+def test_a_page_that_redirects_on_load_is_followed_first(tmp_path):
+    """gowitness sleeps `--delay` before it runs the script; a script started
+    before a page's own `location.replace` dies with that page, and gowitness
+    then photographs a blank one at once."""
+    argv = scan_argv(DOCKER, _paths(tmp_path), settle_delay_s=3)
+    assert argv[argv.index("--delay") + 1] == "3"
+    assert "--javascript" in argv
+    none = scan_argv(DOCKER, _paths(tmp_path), settle_delay_s=0)
+    assert none[none.index("--delay") + 1] == "0", "0 turns the pause off"
+
+
+def test_the_timeout_covers_the_delay_and_the_cap(tmp_path):
+    argv = scan_argv(DOCKER, _paths(tmp_path), timeout=30, settle_cap_ms=45_000,
+                     settle_delay_s=5)
+    assert int(argv[argv.index("--timeout") + 1]) >= 5 + 45 + 10
+
+
 def test_the_wait_can_be_switched_off(tmp_path):
     """gorod without a script does not wait for navigation at all, so the
     driver and the script go together."""
@@ -353,12 +370,15 @@ def test_the_session_passes_the_configured_wait(tmp_path, monkeypatch):
     from seek.nmap.session import Session
 
     config = Config(nmap_path="/nonexistent/nmap", gowitness_settle_ms=4000,
-                    gowitness_settle_cap_ms=30_000)
+                    gowitness_settle_cap_ms=30_000, gowitness_settle_delay_s=2)
     session = Session(config, [], tmp_path, databases=[], scans=None)
     session.gowitness = DOCKER
     monkeypatch.setattr("seek.nmap.session.export_urls", lambda records: list(records))
     run = session.plan_capture(["https://192.0.2.1:443"])
     assert settle_script(4000, 30_000) in run.argv
+    assert run.argv[run.argv.index("--delay") + 1] == "2"
+    remote_argv = run.copy_remote.splitlines()[-1]
+    assert "--delay 2" in remote_argv, "the snippet for another machine waits the same"
 
 
 def _planning_session(tmp_path, monkeypatch, probe):

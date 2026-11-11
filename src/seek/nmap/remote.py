@@ -40,13 +40,14 @@ def nmap_snippet(scan_args: list[str], targets: list[str], out_name: str) -> str
 
 
 def capture_snippet(urls: list[str], *, collect_all: bool = True,
-                    settle_ms: int = 2000, settle_cap_ms: int = 20000) -> str:
+                    settle_ms: int = 2000, settle_cap_ms: int = 20000,
+                    settle_delay_s: int = 1) -> str:
     """The capture for a machine with only gowitness: it writes its own URL list
     and puts everything under `gowitness/`, the directory discovery looks for."""
     paths = gw_capture.Paths(Path(gw_capture.CAPTURE_DIRNAME))
     argv = gw_capture.scan_argv(Probe(backend="native", path="gowitness"), paths,
                                 collect_all=collect_all, settle_ms=settle_ms,
-                                settle_cap_ms=settle_cap_ms)
+                                settle_cap_ms=settle_cap_ms, settle_delay_s=settle_delay_s)
     written = list(dict.fromkeys(canonical_url(u) for u in urls))
     return "\n".join([
         f"mkdir -p {shlex.quote(str(paths.shots))}",
