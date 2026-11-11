@@ -480,37 +480,285 @@ class Scope:
 # `{ports}` expands to the open ports already in the model, which is the step
 # the reference does with grep between the top-1000 scan and the version scan.
 DEFAULT_PRESETS: dict[str, str] = {
-    "00 · Lookup, DNS names (reverse lookup)": "-vv -T4 -sL -R",
-    "00 · Lookup, DNS names (forward lookup)": "-vv -T4 -sL",
+    # ============================================================
+    # 00 · LOOKUP
+    # ============================================================
 
-    "01 · Discovery, null scan (ICMP/TCP/UDP filtered)": "-vv -T4 -n -sn -sN",
-    "01 · Discovery, common ports (ICMP/TCP/UDP) ": "-vv -T4 -n -sn -PE -PP -PS22,80,445 -PA80 -PU53,123,161,500,31347",  # noqa: E501
-    "01 · Discovery, top ports (TCP/UDP)": "-vv -T4 -n -Pn --open -PS20,21,22,23,25,53,67,68,69,80,110,111,123,135,137,138,139,143,161,162,443,445,500,514,520,631,993,995,1434,1723,1900,3306,3389,4500,5900,8080,49152 -PU20,21,22,23,25,53,67,68,69,80,110,111,123,135,137,138,139,143,161,162,443,445,500,514,520,631,993,995,1434,1723,1900,3306,3389,4500,5900,8080,49152",  # noqa: E501
-    "01 · Discovery, DNS servers (UDP 53)": "-vv -T4 -n -Pn -sU -p53",
+    # Forward DNS lookup without reverse lookups.
+    "00 · Lookup · Forward DNS": "-v -sL -n --host-timeout 2m",
 
-    "02 · Services, top 100 TCP (fast)": "-vv -T4 -n -Pn -sS --top-ports 100 --defeat-rst-ratelimit",  # noqa: E501
-    "02 · Services, top 1000 TCP": "-vv -T4 -n -Pn -sS --top-ports 1000 --host-timeout 1h",
+    # Reverse DNS lookup for all targets.
+    "00 · Lookup · Reverse DNS": "-v -sL -R --host-timeout 2m",
 
-    "02 · Services, top 100 UDP": "-vv -T4 -n -Pn -sUV --top-ports 100 --host-timeout 3h",
-    "02 · Services, top 100 UDP (fast)": "-vv -T4 -n -Pn -sUV --top-ports 100 --max-retries 1 --host-timeout 3h",  # noqa: E501
-    "02 · Services, top 1000 UDP (fast)": "-vv -T4 -n -Pn -sUV --top-ports 1000 --max-retries 1 --host-timeout 5h",  # noqa: E501
 
-    "03 · Details, versions on known ports": "-vv -T4 -n -Pn -sS -A --host-timeout 1h -p{ports}",
-    "03 · Details, full TCP (-p-)": "-vv -T4 -n -Pn -sS -A -p- --host-timeout 3h",
+    # ============================================================
+    # 01 · HOST DISCOVERY
+    # ============================================================
 
-    "04 · Vuln, SMB shares (edit the credentials first)": "-vv -T4 -n -Pn -p139,445 --script smb-enum-shares --script-args smbuser=USERNAME,smbpass=PASSWORD",  # noqa: E501
-    "04 · Vuln, SMB vulnerabilities (139, 445)": "-vv -T4 -n -Pn -p139,445 --script smb-vuln*",
-    "04 · Vuln, SSH vulnerabilities (22)": "-vv -T4 -n -Pn -p22 --script sshv1,ssh2-enum-algos,ssh-hostkey",  # noqa: E501
-    "04 · Vuln, HTTP vulnerabilities (80, 443)": "-vv -T4 -n -Pn -p80,443 --script http-vuln*",
-    "04 · Vuln, general vulnerabilities (all known ports)": "-vv -T4 -n -Pn -p{ports} --script vuln",  # noqa: E501
+    # Complete: broad TCP SYN, TCP ACK and UDP discovery probes,
+    # including the original port selections.
+    "01 · Discovery · Complete (broad TCP/UDP probes)": (
+        "-v -T3 -n -sn -PE -PP "
+        "-PS20,21,22,23,25,53,67,68,69,80,110,111,123,135,137,138,139,143,161,162,443,445,500,514,520,631,993,995,1434,1723,1900,3306,3389,4500,5900,8080,49152 "
+        "-PA80 "
+        "-PU20,21,22,23,25,53,67,68,69,80,110,111,123,135,137,138,139,143,161,162,443,445,500,514,520,631,993,995,1434,1723,1900,3306,3389,4500,5900,8080,49152,31347 "
+        "--initial-rtt-timeout 500ms --max-rtt-timeout 3s --host-timeout 2m"
+    ),
 
-    "05 · Names, from service detection (certs, redirects, NTLM)": "-vv -T4 -Pn -sV -p{ports} --script ssl-cert,http-title,http-headers,rdp-ntlm-info,smb-os-discovery,nbstat,ldap-rootdse,ssl-cert-intaddr",  # noqa: E501
-    "05 · Names, from certificates (queries crt.sh)": "-vv -T4 -Pn -sV -p{ports} --script hostmap-crtsh",  # noqa: E501
-    "05 · Names, from virtual hosts (brute force, noisy)": "-vv -T4 -Pn -p80,443,8080,8443 --script http-vhosts",  # noqa: E501
+    # Fast: original common discovery probes.
+    "01 · Discovery · Fast (original common probes)": (
+        "-v -T4 -n -sn -PE -PP "
+        "-PS22,80,445 -PA80 -PU53,123,161,500,31347 "
+        "--initial-rtt-timeout 400ms --max-rtt-timeout 1500ms "
+        "--host-timeout 45s"
+    ),
 
-    "06 · Creds, anon and default logins": "-vv -T4 -n -Pn -p{ports} --script auth",
-    "06 · Creds, brute force logins": "-vv -T4 -n -Pn -p{ports} --script brute",
+    # Very fast: original common TCP/UDP ports with tighter timeouts.
+    "01 · Discovery · Very fast (original common probes)": (
+        "-v -T4 -n -sn -PE "
+        "-PS22,80,445 -PA80 -PU53,123,161,500,31347 "
+        "--initial-rtt-timeout 250ms --max-rtt-timeout 1s "
+        "--host-timeout 20s"
+    ),
 
+
+    # ============================================================
+    # 02 · TCP PORT ENUMERATION
+    # ============================================================
+
+    # Complete: all TCP ports.
+    "02 · Ports · TCP · Complete (all ports)": (
+        "-v -T3 -n -sS -p- --open "
+        "--max-retries 3 "
+        "--initial-rtt-timeout 500ms --max-rtt-timeout 3s "
+        "--host-timeout 15m"
+    ),
+
+    # Fast: top 1000 TCP ports.
+    "02 · Ports · TCP · Fast (top 1000)": (
+        "-v -T4 -n -sS --top-ports 1000 --open "
+        "--max-retries 2 "
+        "--initial-rtt-timeout 400ms --max-rtt-timeout 1500ms "
+        "--host-timeout 4m"
+    ),
+
+    # Very fast: top 100 TCP ports.
+    "02 · Ports · TCP · Very fast (top 100)": (
+        "-v -T4 -n -sS --top-ports 100 --open "
+        "--max-retries 1 "
+        "--initial-rtt-timeout 250ms --max-rtt-timeout 1s "
+        "--host-timeout 90s"
+    ),
+
+
+    # ============================================================
+    # 02 · UDP PORT ENUMERATION AND SERVICE DETECTION
+    # ============================================================
+
+    # Complete: all UDP ports with maximum version detection intensity.
+    "02 · Ports · UDP · Complete (all ports)": (
+        "-v -T3 -n -sUV -p- --version-all --open "
+        "--max-retries 2 "
+        "--initial-rtt-timeout 500ms --max-rtt-timeout 3s "
+        "--max-scan-delay 2s --host-timeout 30m"
+    ),
+
+    # Fast: top 1000 UDP ports with normal version detection.
+    "02 · Ports · UDP · Fast (top 1000)": (
+        "-v -T4 -n -sUV --top-ports 1000 --open "
+        "--max-retries 2 "
+        "--initial-rtt-timeout 400ms --max-rtt-timeout 1500ms "
+        "--max-scan-delay 1s --host-timeout 10m"
+    ),
+
+    # Very fast: top 100 UDP ports with light version detection.
+    "02 · Ports · UDP · Very fast (top 100)": (
+        "-v -T4 -n -sUV --version-light --top-ports 100 --open "
+        "--max-retries 1 "
+        "--initial-rtt-timeout 250ms --max-rtt-timeout 1s "
+        "--max-scan-delay 500ms --host-timeout 3m"
+    ),
+
+
+    # ============================================================
+    # 03 · TCP SERVICE AND VERSION DETECTION
+    # ============================================================
+
+    # Complete: maximum version-detection intensity (9).
+    "03 · Details · TCP · Complete (all version probes)": (
+        "-v -T3 -n -sS -sV --version-all -p{ports} --open "
+        "--max-retries 2 "
+        "--initial-rtt-timeout 500ms --max-rtt-timeout 3s "
+        "--host-timeout 10m"
+    ),
+
+    # Fast: default version-detection intensity (7).
+    "03 · Details · TCP · Fast (normal version detection)": (
+        "-v -T4 -n -sS -sV -p{ports} --open "
+        "--max-retries 2 "
+        "--initial-rtt-timeout 400ms --max-rtt-timeout 1500ms "
+        "--host-timeout 3m"
+    ),
+
+    # Very fast: light version-detection intensity (2).
+    "03 · Details · TCP · Very fast (light version detection)": (
+        "-v -T4 -n -sS -sV --version-light -p{ports} --open "
+        "--max-retries 1 "
+        "--initial-rtt-timeout 250ms --max-rtt-timeout 1s "
+        "--host-timeout 90s"
+    ),
+
+
+    # ============================================================
+    # 04 · VULNERABILITY ASSESSMENT
+    # ============================================================
+
+    # Complete: all Nmap vulnerability-category scripts.
+    "04 · Vuln · Complete (all vuln scripts)": (
+        "-v -T3 -n -sS -sV --version-all -p{ports} "
+        "--script vuln --script-timeout 90s "
+        "--max-retries 2 --max-rtt-timeout 3s "
+        "--host-timeout 15m"
+    ),
+
+    # Fast: vulnerability scripts categorized as safe.
+    "04 · Vuln · Fast (safe vulnerability scripts)": (
+        "-v -T4 -n -sS -sV -p{ports} "
+        "--script 'vuln and safe' --script-timeout 30s "
+        "--max-retries 1 --max-rtt-timeout 1500ms "
+        "--host-timeout 5m"
+    ),
+
+    # Very fast: safe vulnerability scripts with shorter timeouts.
+    "04 · Vuln · Very fast (short safe checks)": (
+        "-v -T4 -n -sS -sV --version-light -p{ports} "
+        "--script 'vuln and safe' --script-timeout 10s "
+        "--max-retries 1 --max-rtt-timeout 1s "
+        "--host-timeout 2m"
+    ),
+
+
+    # ============================================================
+    # 04 · TARGETED SECURITY CHECKS
+    # ============================================================
+
+    # SMB share enumeration using supplied credentials.
+    "04 · Vuln · SMB share enumeration": (
+        "-v -T3 -n -sS -sV -p139,445 "
+        "--script smb-enum-shares "
+        "--script-args 'smbusername=USERNAME,smbpassword=PASSWORD' "
+        "--script-timeout 30s --host-timeout 3m"
+    ),
+
+    # SMB-specific vulnerability checks.
+    "04 · Vuln · SMB vulnerability checks (139,445)": (
+        "-v -T3 -n -sS -sV -p139,445 "
+        "--script smb-vuln* "
+        "--script-timeout 45s --host-timeout 5m"
+    ),
+
+    # SSH protocol and configuration enumeration.
+    "04 · Audit · SSH configuration (22)": (
+        "-v -T3 -n -sS -sV -p22 "
+        "--script sshv1,ssh2-enum-algos,ssh-hostkey "
+        "--script-timeout 30s --host-timeout 3m"
+    ),
+
+    # HTTP-specific vulnerability checks.
+    "04 · Vuln · HTTP vulnerability checks (80,443)": (
+        "-v -T3 -n -sS -sV -p80,443 "
+        "--script http-vuln* "
+        "--script-timeout 60s --host-timeout 5m"
+    ),
+
+
+    # ============================================================
+    # 05 · NAME AND SERVICE ENRICHMENT
+    # ============================================================
+
+    # Complete: maximum version detection and all selected metadata scripts.
+    "05 · Names · Complete (all metadata scripts)": (
+        "-v -T3 -n -sS -sV --version-all -p{ports} "
+        "--script ssl-cert,http-title,http-headers,rdp-ntlm-info,"
+        "smb-os-discovery,ldap-rootdse,ssl-cert-intaddr "
+        "--script-timeout 60s "
+        "--max-retries 2 --max-rtt-timeout 3s "
+        "--host-timeout 12m"
+    ),
+
+    # Fast: normal version detection and metadata collection.
+    "05 · Names · Fast (service metadata)": (
+        "-v -T4 -n -sS -sV -p{ports} "
+        "--script ssl-cert,http-title,http-headers,rdp-ntlm-info,"
+        "smb-os-discovery,ldap-rootdse,ssl-cert-intaddr "
+        "--script-timeout 30s "
+        "--max-retries 1 --max-rtt-timeout 1500ms "
+        "--host-timeout 4m"
+    ),
+
+    # Very fast: light version detection and a smaller script selection.
+    "05 · Names · Very fast (selected metadata)": (
+        "-v -T4 -n -sS -sV --version-light -p{ports} "
+        "--script ssl-cert,http-title,rdp-ntlm-info,smb-os-discovery "
+        "--script-timeout 10s "
+        "--max-retries 1 --max-rtt-timeout 1s "
+        "--host-timeout 2m"
+    ),
+
+    # NetBIOS enumeration on UDP port 137.
+    "05 · Names · NetBIOS enumeration (UDP 137)": (
+        "-v -T4 -n -sU -sV -p137 "
+        "--script nbstat "
+        "--script-timeout 15s --host-timeout 2m"
+    ),
+
+    # External Certificate Transparency lookup via crt.sh.
+    "05 · Names · External CT lookup (crt.sh)": (
+        "-v -T3 -n -sS -sV -p{ports} "
+        "--script hostmap-crtsh "
+        "--script-timeout 60s --host-timeout 5m"
+    ),
+
+    # HTTP virtual-host discovery. Generates additional HTTP requests.
+    "05 · Names · HTTP virtual hosts (intrusive)": (
+        "-v -T3 -n -sS -sV -p80,443,8080,8443 "
+        "--script http-vhosts "
+        "--script-timeout 45s --host-timeout 3m"
+    ),
+
+
+    # ============================================================
+    # 06 · AUTHENTICATION CHECKS
+    # ============================================================
+
+    # Complete: all Nmap authentication-category scripts.
+    "06 · Auth · Complete (authentication scripts)": (
+        "-v -T3 -n -sS -sV -p{ports} "
+        "--script auth --script-timeout 60s "
+        "--max-retries 2 --host-timeout 10m"
+    ),
+
+    # Fast: authentication scripts categorized as safe.
+    "06 · Auth · Fast (safe authentication scripts)": (
+        "-v -T4 -n -sS -sV -p{ports} "
+        "--script 'auth and safe' --script-timeout 30s "
+        "--max-retries 1 --host-timeout 4m"
+    ),
+
+    # Very fast: safe authentication checks with shorter timeouts.
+    "06 · Auth · Very fast (short safe checks)": (
+        "-v -T4 -n -sS -sV --version-light -p{ports} "
+        "--script 'auth and safe' --script-timeout 10s "
+        "--max-retries 1 --host-timeout 2m"
+    ),
+
+    # Explicit opt-in password-guessing operation.
+    # Apply only to specifically authorized targets and accounts.
+    "06 · Creds · Brute force logins (manual opt-in)": (
+        "-v -T3 -n -sS -sV -p{ports} "
+        "--script brute --script-timeout 15s "
+        "--max-retries 1 --host-timeout 3m"
+    ),
 }
 
 PORTS_PLACEHOLDER = "{ports}"
