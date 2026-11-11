@@ -279,6 +279,22 @@ from the capture database only for ports that pass a rule's other tests, and
 only the first megabyte of each page is searched. Expressions run without a
 time limit, so avoid nesting quantifiers such as `(a+)+`.
 
+**Tagging by hand, and building a rule.** `t` tags the marked rows, or the
+selected one: pick a tag (picking one they all carry removes it), type a new
+name, give a tag a description and issues, or copy a tag's definition to the
+global `tags.yaml` - a copy never carries an address. Tags are saved in
+`seek-tags.yaml` in the first opened folder, so `explored` and `high-value`
+survive the session. `T` turns marked hosts into a rule: it lists what they all
+share, each with how many other hosts share it too, rarest first, and offers the
+common start or end of values that differ (` - READY`). Tick the facts; when
+they also match hosts you did not mark, it lists what those hosts have and yours
+do not - `not 22/tcp open, excludes 500/500` - and says when an exclusion is
+only an assumption for one of yours because port 22 was never scanned there.
+The preview counts the result before you save it to a tag. A tag marked `?`
+names what is missing: filter `tag:zebra-zd420`, mark the uncertain hosts and
+send them to a scan of exactly that port from the export dialog. `R` reads the
+tag files again; `tag:` filters, `b` groups by tag.
+
 **Running scans.** With nmap on the path (the status line says `⌁ nmap 7.94`, or
 `⌁ nmap not found`), `n` starts one: a scope editor — one target per line,
 addresses, `10.0.0.0/24`, `10.0.0.1-20`, hostnames or URLs — then a preset, then

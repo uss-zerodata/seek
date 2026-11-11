@@ -1,7 +1,7 @@
 // Live updates from the session: a new model, changed marks, runs and their
 // lines. The list keeps the selected row when it is replaced; the page says so
 // when the server has gone away rather than showing stale data silently.
-import { refreshList, setLive, logState } from "./actions.js";
+import { refreshList, say, setLive, logState } from "./actions.js";
 
 const root = document.querySelector(".viewer");
 // The key bar's trailing end: what is loaded, or that the session has gone.
@@ -42,6 +42,14 @@ function connect() {
   // A changed model can change the selected row's record; a mark cannot.
   source.addEventListener("model", () => { refreshList(); reloadRecordSoon(); });
   source.addEventListener("marks", () => refreshList());
+  // Tags changed - here, in the terminal, or by a reload: the list's Tags column
+  // and the record's Tags block follow, and what was done is said.
+  source.addEventListener("tags", (e) => {
+    refreshList();
+    reloadRecordSoon();
+    const { text } = JSON.parse(e.data);
+    if (text) say(text);
+  });
   source.addEventListener("run", (e) => {
     const { run } = JSON.parse(e.data);
     running.set(run.id, run);

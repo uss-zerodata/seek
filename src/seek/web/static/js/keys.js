@@ -19,7 +19,7 @@ export const KEYS = [
   [["v"], "nextTab", "next overview"],
   [["V"], "prevTab", "previous overview"],
   [["s"], "stats", "statistics"],
-  [["b"], "group", "group by service, then product, then port"],
+  [["b"], "group", "group by service, then product, then port, then tag"],
   [["u"], "upHosts", "up hosts only (on a host: open ports only)"],
   [["r"], "openPorts", "hosts with open ports only"],
   [["m"], "mark", "mark the row (a bucket marks everything in it)"],
@@ -33,6 +33,9 @@ export const KEYS = [
   [["d"], "full", "the record full-width"],
   [["i"], "shots", "the row's screenshots"],
   [["Q"], "stopWeb", "stop the web interface (asks first)"],
+  [["t"], "tag", "tag the marks, else the row: add or remove a tag, edit or copy one"],
+  [["T"], "buildRule", "build a tag rule from the marked hosts"],
+  [["R"], "reloadTags", "read the tag rule files again"],
   [["?"], "help", "this list"],
 ];
 
@@ -60,6 +63,7 @@ export const HINTS = [
   [["sort"], "sort"],
   [["mark"], "mark"],
   [["export"], "export"],
+  [["tag"], "tag"],
   [["upHosts"], "up only", { when: onHosts }],
   [["upHosts"], "open ports only", { when: onHost }],
   [["openPorts"], "open ports only", { when: onHosts }],

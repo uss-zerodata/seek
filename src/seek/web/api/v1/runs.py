@@ -243,7 +243,7 @@ def _event_json(event: Event) -> str:
     body: dict = {"type": event.type, "origin": event.origin}
     if event.run is not None:
         body["run"] = run_out(event.run).model_dump()
-    if event.type == "line":
+    if event.type in ("line", "tags"):
         body["text"] = event.text
     return json.dumps(body)
 

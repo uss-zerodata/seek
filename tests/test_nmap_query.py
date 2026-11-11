@@ -286,3 +286,8 @@ def test_a_retag_is_not_answered_from_old_samples():
     row = next(r for r in rows if "80" in r.cells[0])
     assert not filtering.matches(spec, row.text, row.addresses, row.records, before)
     assert filtering.matches(spec, row.text, row.addresses, row.records, after)
+
+
+def test_a_tag_term_is_said_in_words():
+    said = " ".join(filtering.explain(parse_filter("tag:printer NOT tag:explored")))
+    assert "a tag like “printer”" in said and "explored" in said

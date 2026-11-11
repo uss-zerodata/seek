@@ -742,7 +742,8 @@ def _say(node: Node) -> str:
         return {"port": f"port {port} (any state)", "open": f"port {port} open",
                 "closed": f"port {port} not open (closed or filtered)",
                 "service": f"a service named like “{node.value}”",
-                "product": f"a product like “{node.value}”"}[node.key]
+                "product": f"a product like “{node.value}”",
+                "tag": f"a tag like “{node.value}”"}[node.key]
     if isinstance(node, Not):
         return "not: " + _say(node.child)
     joiner = " and " if isinstance(node, And) else " or "

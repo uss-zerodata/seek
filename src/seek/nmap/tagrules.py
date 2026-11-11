@@ -275,12 +275,12 @@ _BASE = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 class _LineLoader(_BASE):  # type: ignore[misc, valid-type]
     """Safe loading only - no tag constructs an object - with lines kept."""
 
-    def construct_mapping(self, node, deep=False):
+    def construct_mapping(self, node, deep=False) -> _Mapping:
         out = _Mapping(super().construct_mapping(node, deep=True))
         out.line = node.start_mark.line + 1
         return out
 
-    def construct_sequence(self, node, deep=False):
+    def construct_sequence(self, node, deep=False) -> _List:
         out = _List(super().construct_sequence(node, deep=True))
         out.line = node.start_mark.line + 1
         return out
@@ -572,7 +572,7 @@ def _canonical(value) -> str:
     return json.dumps(value, sort_keys=True, default=str)
 
 
-def plain(value):
+def plain(value: object) -> object:
     """The loader's line-carrying mappings and lists as plain ones, for writing."""
     if isinstance(value, dict):
         return {k: plain(v) for k, v in value.items()}

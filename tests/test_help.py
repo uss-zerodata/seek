@@ -32,3 +32,16 @@ def test_help_reflects_a_rebound_key():
     text = help_text(dict(DEFAULT_KEYS, copy="ctrl+w"))
     assert "^W" in text
     assert "copy path" in text
+
+
+def test_the_viewer_help_names_the_tag_keys_and_their_limits():
+    from seek.tui.nmap.help import _GROUPS
+
+    tags = dict(_GROUPS)["Tags"]
+    text = " ".join(f"{k} {v}" for k, v in tags)
+    for key in ("t", "T", "R"):
+        assert key in dict(tags), key
+    for limit in ("?", "not scanned", "1 MiB", "not: without a port", "(a+)+"):
+        assert limit in text, limit
+    query = " ".join(v for _k, v in dict(_GROUPS)["Query the scan"])
+    assert "tagged printer" in query

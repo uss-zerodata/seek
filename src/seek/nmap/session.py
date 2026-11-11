@@ -33,7 +33,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from seek import notify
 from seek.config import Config
@@ -59,6 +59,10 @@ from seek.nmap.models import Host, ScanSet, Service
 from seek.nmap.runner import ScanRun, count_argv, counted
 from seek.runner import LINE_LIMIT, Run, Runner
 from seek.vulndb import match as vulndb_match
+
+if TYPE_CHECKING:                     # imported where used: neither is needed to start
+    from seek.nmap.filtering import FilterSpec
+    from seek.nmap.tagbuild import Builder
 from seek.vulndb import store as vulndb_store
 
 # How many events a slow listener may fall behind before `line` events are
@@ -536,7 +540,7 @@ class Session:
             return self.inventory()
         return None
 
-    def filter_spec(self, text: str):
+    def filter_spec(self, text: str) -> FilterSpec:
         """The filter as every front end applies it: parsed, and - while the tags
         are not built yet - with its `tag:` terms set aside rather than tested."""
         from seek.nmap import filtering
@@ -714,6 +718,13 @@ class Session:
         if len(self.scans.hosts) <= self.INLINE_TAG_HOSTS:
             return self.tags()
         return None
+
+    def rule_builder(self, records) -> Builder:
+        """A rule builder over these records, counting with the session's own
+        prepared index and tags. Blocking on a large model: call it off the loop."""
+        from seek.nmap import tagbuild
+        tags = self.tags()
+        return tagbuild.start(self._tag_index(), self.scans.files, tags, records)
 
     # Changing tags: planned here, on the loop, from what the front end holds;
     # written off the loop by `apply_tag_change`; adopted back on the loop.

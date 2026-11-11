@@ -411,3 +411,90 @@ def test_a_browser_start_carries_its_notification_choice(tmp_path, monkeypatch):
     assert ok.status_code == 200, ok.text
     assert started[0].notify_url == "https://ntfy.example.test/mine"
     assert started[0].notify_progress
+
+
+def test_a_record_s_tags_are_the_terminal_s_tags(tmp_path):
+    eng = tmp_path / "eng"
+    eng.mkdir()
+    scan = eng / "basic.xml"
+    scan.write_bytes((Path(__file__).parent / "fixtures" / "nmap" / "basic.xml").read_bytes())
+    (eng / "seek-tags.yaml").write_text(
+        "tags:\n  web-ui:\n    issues: [{title: Exposed admin page, severity: medium}]\n"
+        "entries:\n  - {tag: web-ui, host: 192.0.2.2, port: 80/tcp}\n")
+    sess = Session(Config(nmap_path=str(_stub(tmp_path))), [eng], eng, databases=[],
+                   scans=prepare(load([scan])))
+    record = _client(sess).get("/api/v1/records/hosts", params={"step": "h:192.0.2.2"}).json()
+    host = next(h for h in sess.scans.hosts if h.address == "192.0.2.2")
+    assert "web-ui" in record["text"] and "Exposed admin page" in record["text"]
+    terminal = detail_pane.render(host, None, sess.shots, scanned=sess.scanned(),
+                                  inventory=sess.inventory_ready(),
+                                  lookup=sess.lookup_ready(), tags=sess.tags_ready())
+    assert record["text"] == _plain(terminal)
+
+
+TAGGED_RULES = ("tags:\n  web-only:\n    issues: [{title: Exposed, severity: medium}]\n"
+                "    rules: [{when: [{port: 80}, {not: {port: 22/tcp}}]}]\n"
+                "  any-ssh:\n    rules: [{grant: both, when: [{port: 22}]}]\n")
+
+
+@pytest.mark.parametrize("tab, q", [("hosts", ""), ("hosts", "tag:web-only"),
+                                    ("hosts", "NOT tag:any-ssh"), ("group-tag", ""),
+                                    ("services", "tag:any-ssh")])
+async def test_every_overview_lists_what_the_terminal_lists_with_tags(tmp_path, tab, q):
+    eng = tmp_path / "eng"
+    eng.mkdir()
+    paths = []
+    for p in PATHS:
+        (eng / p.name).write_bytes(p.read_bytes())
+        paths.append(eng / p.name)
+    (eng / "seek-rules.yaml").write_text(TAGGED_RULES)
+    app = NmapApp(prepare(load(paths)), Config(nmap_path=str(_stub(tmp_path))),
+                  sources=[eng], scan_dir=eng)
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.3)
+        app._activate(tab)
+        await pilot.pause(0.3)
+        if q:
+            app._set_filter(q)
+            app._reload_rows()
+            await pilot.pause(0.3)
+        terminal = [list(r.cells) for r in app._rows]
+        assert terminal, "something is tagged"
+        web = _client(app.session).get(f"/api/v1/views/{tab}", params={"q": q}).json()
+        assert [r["cells"] for r in web["rows"]] == terminal
+
+
+@pytest.mark.asyncio
+async def test_a_tag_made_in_the_terminal_reaches_the_browser_s_stream(tmp_path):
+    eng = tmp_path / "eng"
+    eng.mkdir()
+    scan = eng / "basic.xml"
+    scan.write_bytes((FIX / "basic.xml").read_bytes())
+    sess = Session(Config(nmap_path=str(_stub(tmp_path))), [eng], eng, databases=[],
+                   scans=prepare(load([scan])))
+    server = WebServer(CachedSource(lambda: sess.scans, lambda: sess.shots), "127.0.0.1", 0,
+                       session=sess)
+    await server.start()
+    seen: list[dict] = []
+
+    def listen():
+        with urllib.request.urlopen(server.url + "/api/v1/events", timeout=10) as stream:
+            for raw in stream:
+                line = raw.decode().strip()
+                if line.startswith("data:"):
+                    seen.append(json.loads(line[5:]))
+                    if any(e["type"] == "tags" for e in seen):
+                        return
+
+    try:
+        listener = threading.Thread(target=listen, daemon=True)
+        listener.start()
+        await asyncio.sleep(0.3)
+        from seek.nmap.export import Record
+        change = sess.plan_tag([Record(sess.scans.hosts[0])], "explored", add=True)
+        await sess.apply_tag_change(change, origin="tui")
+        await asyncio.to_thread(listener.join, 10)
+        (event,) = [e for e in seen if e["type"] == "tags"]
+        assert event["origin"] == "tui" and event["text"].startswith("tagged 1 as explored")
+    finally:
+        server.stop()

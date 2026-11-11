@@ -195,11 +195,12 @@ class MultiChoiceScreen(ModalScreen[list[str] | None]):
     """
 
     def __init__(self, prompt: str, choices: list[tuple[str, str]],
-                 preselected: tuple[str, ...] = ()) -> None:
+                 preselected: tuple[str, ...] = (), confirm_label: str = "Export these") -> None:
         super().__init__()
         self._prompt = prompt
         self._choices = choices
         self._preselected = preselected
+        self._confirm_label = confirm_label
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -207,7 +208,7 @@ class MultiChoiceScreen(ModalScreen[list[str] | None]):
             yield SelectionList(*[Selection(label, cid, cid in self._preselected)
                                   for cid, label in self._choices])
             yield Label("space toggles · Tab then ↵ to confirm · Esc cancel", id="hint")
-            yield Button("Export these", id="confirm")
+            yield Button(self._confirm_label, id="confirm")
 
     def on_mount(self) -> None:
         self.query_one(SelectionList).focus()

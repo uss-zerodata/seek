@@ -344,3 +344,47 @@ def test_every_vhost_becomes_a_url_on_the_port_that_revealed_it():
     # whether it is served there is exactly what a vhost check answers, and the
     # provenance is on screen for the reader to judge.
     assert "https://gamma.corp.example" in urls
+
+
+# --- tags and issues ---------------------------------------------------------------
+
+
+def _tagged_world():
+    from seek.nmap import tagfiles, tagging, tagrules
+    from seek.nmap.tagfiles import Entry
+
+    scans = prepare(load([FIX / "basic.xml"]))
+    _doc, defs = tagrules.load(
+        "tags:\n  web-only:\n    issues: [{title: Exposed, severity: low},"
+        " {title: Default PIN, severity: high}]\n"
+        "    rules: [{when: [{port: 80}, {not: {port: 8080/tcp}}]}]\n", "r.yaml")
+    order, _ = tagrules.order(defs.tags)
+    loaded = tagfiles.Loaded(tags=defs.tags, order=order,
+                             entries={Path("t.yaml"): (Entry("web-ui", "192.0.2.2", "tcp", 80),)})
+    return scans, tagging.build(scans.hosts, scans.files, loaded)
+
+
+def test_tags_and_issues_are_export_fields_with_uncertainty_marked():
+    scans, tags = _tagged_world()
+    records = export.records_for(scans.hosts, tags)
+    text, _ = export.produce(records, "custom", "csv", ["address", "tags", "issues"])
+    lines = dict(line.split(",", 1) for line in text.splitlines()[1:])
+    # 8080/tcp was never scanned in basic.xml, so `web-only` is an assumption.
+    assert lines["192.0.2.1"] == "web-only?,high: Default PIN (web-only); low: Exposed (web-only)"
+    assert lines["192.0.2.2"].startswith('"web-only?,web-ui"'), "a host record has its ports' tags"
+    assert lines["192.0.2.3"] == ","
+
+
+def test_a_service_record_carries_its_host_s_tags_too():
+    scans, tags = _tagged_world()
+    host = next(h for h in scans.hosts if h.address == "192.0.2.2")
+    svc = next(s for s in host.services if s.port == 80)
+    (record,) = export.tagged([export.Record(host, svc)], tags)
+    assert record.tags == ("web-only?", "web-ui")
+    assert record == export.Record(host, svc), "tags never change what a record is"
+
+
+def test_without_tags_the_fields_are_empty():
+    text, _ = export.produce(_records("basic"), "custom", "csv", ["address", "tags"])
+    header, *rows = text.splitlines()
+    assert header == "address,tags" and rows and all(r.endswith(",") for r in rows)

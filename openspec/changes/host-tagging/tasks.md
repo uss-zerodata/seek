@@ -40,7 +40,7 @@
 - [x] 4.5 Body reads: batched `substr(html, 1, BODY_CAP)` per database in chunks of 500, read-only with a 2 s busy timeout, "not evaluated" counts for missing or empty bodies and locked databases, LRU cache on `(path, mtime_ns, size, row_id, pattern)`; verify tests with a database that has bodies, one without the `html` column and one held locked by another connection
 - [x] 4.6 Compatibility test: run a synthetic copy of the colleague's example rules over synthetic scans of a Ricoh printer, a Catalyst switch and an AXIS camera; verify the host tags equal those `categorize_systems` gives, and that the documented service-tag difference holds
 - [ ] 4.7 Add a tagging phase to `benchmarks/bench_nmap.py` with 200 generated rules over the 24 200-host corpus; verify it finishes in at most 1 s, and record the baseline in the script's docstring (measured: 1370 ms cold, about 900 ms when the session reuses the prepared index; the cold build misses 1 s on this worst-case corpus, so this stays open for a decision)
-- [ ] 4.8 README and help text: the uncertainty marker and its evidence, the body cap, port-less negations, and the warning about nested quantifiers; verify the help text test lists them
+- [x] 4.8 README and help text: the uncertainty marker and its evidence, the body cap, port-less negations, and the warning about nested quantifiers; verify the help text test lists them
 
 ## 5. Session
 
@@ -53,38 +53,38 @@
 
 - [x] 6.1 `nmap/filtering.py`: the `tag:` field in `FIELDS`, `Field.test` and the sample key; `matches(..., tags_of=None)`; "tags not ready" in `FilterSpec.ignored`; verify the new filter scenarios and add `tag:` tests beside the other field-term tests in `test_nmap_query` (that corpus compares plain queries through both paths, and a `tag:` query is never plain), while the plain-path comparison stays green
 - [x] 6.2 `Session.row_text` appends tag names, with the tags generation in its cache key; verify fuzzy `zebra` finds a tagged host and stops finding it after the tag is removed
-- [ ] 6.3 `nmap/views.py`: `group_by(..., key="tag", tags=...)`; host tags bucket all open services or the host record; verify the grouping scenarios, including a host under several tags and untagged services left out
-- [ ] 6.4 `nmap/export.py`: `Record.tags` and `Record.issues`, `records_for(hosts, tagset=None)`, fields `tags` and `issues` with uncertain tags marked; verify every export format test and that `test_version_1_fields_are_pinned` still passes
-- [ ] 6.5 `tui/nmap/record.py`: the Tags block after the names block, with source, issues, severity styles and evidence; verify record tests in the terminal and in `web/record.py` output
-- [ ] 6.6 Update AGENTS.md: the changed stateless rule, the tag file names and precedence, the `tag:` field and sample key, and the "never rewrite a human file" rule; verify `uv run ruff check` and the docs links
+- [x] 6.3 `nmap/views.py`: `group_by(..., key="tag", tags=...)`; host tags bucket all open services or the host record; verify the grouping scenarios, including a host under several tags and untagged services left out
+- [x] 6.4 `nmap/export.py`: `Record.tags` and `Record.issues`, `records_for(hosts, tagset=None)`, fields `tags` and `issues` with uncertain tags marked; verify every export format test and that `test_version_1_fields_are_pinned` still passes
+- [x] 6.5 `tui/nmap/record.py`: the Tags block after the names block, with source, issues, severity styles and evidence; verify record tests in the terminal and in `web/record.py` output
+- [x] 6.6 Update AGENTS.md: the changed stateless rule, the tag file names and precedence, the `tag:` field and sample key, and the "never rewrite a human file" rule; verify `uv run ruff check` and the docs links
 
 ## 7. Rule builder
 
-- [ ] 7.1 `nmap/tagbuild.py`: facts per host, shared facts ranked by rarity, service-anchored facts, common prefix or suffix proposals of at least 4 characters as anchored literals; verify the "Five printers", rarity and literal scenarios
-- [ ] 7.2 Exclusions through the tagging evaluator: contrast set, ranking, greedy cover up to 3, uncovered selected hosts listed as assumptions; verify the 5-of-505 scenario, the no-single-fact scenario and the assumption scenario
-- [ ] 7.3 Preview counts and the confirmation for a draft that excludes the whole selection; edge cases for one host, nothing shared and vanished hosts; verify each in unit tests
-- [ ] 7.4 Measure the builder on the 24 200-host corpus; verify each step takes at most 300 ms
-- [ ] 7.5 README: the builder workflow, from marks to a saved rule, and how to scan the ports an uncertain tag names; verify the README test from 2.7 still passes
+- [x] 7.1 `nmap/tagbuild.py`: facts per host, shared facts ranked by rarity, service-anchored facts, common prefix or suffix proposals of at least 4 characters as anchored literals; verify the "Five printers", rarity and literal scenarios
+- [x] 7.2 Exclusions through the tagging evaluator: contrast set, ranking, greedy cover up to 3, uncovered selected hosts listed as assumptions; verify the 5-of-505 scenario, the no-single-fact scenario and the assumption scenario
+- [x] 7.3 Preview counts and the confirmation for a draft that excludes the whole selection; edge cases for one host, nothing shared and vanished hosts; verify each in unit tests
+- [x] 7.4 Measure the builder on the 24 200-host corpus; verify each step takes at most 300 ms
+- [x] 7.5 README: the builder workflow, from marks to a saved rule, and how to scan the ports an uncertain tag names; verify the README test from 2.7 still passes
 
 ## 8. Terminal viewer
 
-- [ ] 8.1 Tags column in the host view: ASCII names, `?` for uncertain, `+N` overflow, highest-severity colour, tags generation in `View.stamp`; verify view tests and `test_web_layout` colour tokens are unaffected
-- [ ] 8.2 `t` tag dialog (`OptionList` of tags with counts, new name input, add or remove, "Edit definition…", "Copy to global"), with file work in a thread worker and errors on the status line; verify with `Pilot` tests marked `slow`
-- [ ] 8.3 Definition editor for description and issues, severity from a list; verify a `Pilot` test that adds an issue and sees it in the record
-- [ ] 8.4 `T` builder screen with fact and exclusion lists, preview line and save; verify a `Pilot` test that builds the five-printer rule end to end
-- [ ] 8.5 `R` reload, rule problems on the status line, help overlay entries for `t`, `T`, `R` and the `tag:` field; verify help and key hint tests
+- [x] 8.1 Tags column in the host view: ASCII names, `?` for uncertain, `+N` overflow, highest-severity colour, tags generation in `View.stamp`; verify view tests and `test_web_layout` colour tokens are unaffected
+- [x] 8.2 `t` tag dialog (`OptionList` of tags with counts, new name input, add or remove, "Edit definition…", "Copy to global"), with file work in a thread worker and errors on the status line; verify with `Pilot` tests marked `slow`
+- [x] 8.3 Definition editor for description and issues, severity from a list; verify a `Pilot` test that adds an issue and sees it in the record
+- [x] 8.4 `T` builder as the viewer's own dialogs in sequence (shared facts, then exclusions, each ticked in a list with counts; then the preview with save); verify a `Pilot` test that builds the five-printer rule end to end
+- [x] 8.5 `R` reload, rule problems on the status line, help overlay entries for `t`, `T`, `R` and the `tag:` field; verify help and key hint tests
 
 ## 9. Web interface
 
-- [ ] 9.1 `web/schemas.py` and `web/api/v1/tags.py` with the routes from design D12, registered in `ROUTERS`; reading routes plain `def`, changing routes `async def` with the origin check and `asyncio.to_thread` for file work; verify `test_no_route_on_the_loop_reads_the_model` and an origin refusal test
-- [ ] 9.2 `keys.js` gains `t`, `T` and `R` with hints, and `actions.js` handlers using `dialog(...)`; verify `test_every_terminal_key_has_a_browser_key` and `test_web_layout.py`
-- [ ] 9.3 Pages: Tags column, record block, `tag:` filter and tag grouping through the shared projections; verify `test_every_overview_lists_what_the_terminal_lists` with tags present
-- [ ] 9.4 A tag added in the browser appears in the terminal viewer and the reverse, via `Event("tags")`; verify with the session event tests and an SSE test
+- [x] 9.1 `web/schemas.py` and `web/api/v1/tags.py` with the routes from design D12, registered in `ROUTERS`; reading routes plain `def`, changing routes `async def` with the origin check and `asyncio.to_thread` for file work; verify `test_no_route_on_the_loop_reads_the_model` and an origin refusal test
+- [x] 9.2 `keys.js` gains `t`, `T` and `R` with hints, and `actions.js` handlers using `dialog(...)`; verify `test_every_terminal_key_has_a_browser_key` and `test_web_layout.py`
+- [x] 9.3 Pages: Tags column, record block, `tag:` filter and tag grouping through the shared projections; verify `test_every_overview_lists_what_the_terminal_lists` with tags present
+- [x] 9.4 A tag added in the browser appears in the terminal viewer and the reverse, via `Event("tags")`; verify with the session event tests and an SSE test
 
 ## 10. Integration checks
 
-- [ ] 10.1 Run `uv run ruff check`, `uv run pytest -q`, and `openspec validate host-tagging --strict`; verify all are clean
-- [ ] 10.2 Open the gitignored real scans with a copy of the colleague's rules and a nested folder layout; verify by hand that tags, uncertainty and collisions match expectations, and that no file is written until a tag is changed
+- [x] 10.1 Run `uv run ruff check`, `uv run pytest -q`, and `openspec validate host-tagging --strict`; verify all are clean
+- [x] 10.2 Open the gitignored real scans with a copy of the colleague's rules and a nested folder layout; verify by hand that tags, uncertainty and collisions match expectations, and that no file is written until a tag is changed (no real scans in this workspace: checked on a synthetic nested layout - alice/ with the colleague's rules, bob/ overriding the parent, a global file overridden by the project - through the session; precedence, merging, warnings and the first write were as specified; the browser flows were driven by hand in Chromium against `seek nmap serve`)
 
 ## Workflow follow-up
 

@@ -637,3 +637,116 @@ class EarlierOut(BaseModel):
 class EarlierListsOut(BaseModel):
     recent: list[EarlierOut]
     frequent: list[EarlierOut]
+
+
+# --- tags --------------------------------------------------------------------------
+
+
+class IssueIn(BaseModel):
+    title: str
+    severity: str
+    description: str = ""
+    references: list[str] = []
+
+
+class TagOut(BaseModel):
+    name: str
+    description: str = ""
+    issues: list[IssueIn] = []
+    sources: list[str] = []
+    hosts: int = 0
+    services: int = 0
+    uncertain: int = 0
+    notes: list[str] = []
+
+
+class ProblemOut(BaseModel):
+    level: str
+    message: str
+    where: str = ""
+    tag: str | None = None
+
+
+class TagsOut(BaseModel):
+    """Every tag, its counts and sources, and what is wrong with the tag files."""
+    ready: bool
+    tags: list[TagOut]
+    problems: list[ProblemOut]
+    unmatched_entries: int = 0
+    files: list[str] = []
+    home: str | None = None
+
+
+class TagEntriesIn(BaseModel):
+    """Add or take off a manual tag: on these rows, or on the marks when none."""
+    tag: str
+    add: bool = True
+    rows: list[RowRef] = []
+
+
+class DefinitionIn(BaseModel):
+    description: str = ""
+    issues: list[IssueIn] = []
+
+
+class TagChangeOut(BaseModel):
+    saved: list[str]
+    errors: list[str]
+    summary: str = ""
+
+
+class FactIO(BaseModel):
+    """One fact of the rule builder, as proposed and as sent back."""
+    kind: str
+    protocol: str | None = None
+    port: int | None = None
+    value: str = ""
+    partial: str = ""
+    label: str = ""
+
+
+class ProposalOut(BaseModel):
+    fact: FactIO
+    selected: int
+    others: int
+    excludes: int = 0
+    assumed_on: list[str] = []
+
+
+class BuilderIn(BaseModel):
+    rows: list[RowRef] = []
+    positive: list[FactIO] = []
+    negative: list[FactIO] = []
+
+
+class RuleIn(BuilderIn):
+    grant: str = "host"
+
+
+class SharedOut(BaseModel):
+    selected: list[str]
+    facts: list[ProposalOut]
+    partial: list[ProposalOut]
+    notes: list[str]
+
+
+class CombinationOut(BaseModel):
+    facts: list[FactIO]
+    excludes: int
+    remaining: int
+
+
+class ExclusionsOut(BaseModel):
+    matched: int
+    unwanted: int
+    single: list[ProposalOut]
+    combination: CombinationOut | None = None
+    notes: list[str] = []
+
+
+class PreviewOut(BaseModel):
+    matched: list[str]
+    selected: int
+    assumed: list[str]
+    of_selection: int
+    confirm: str = ""

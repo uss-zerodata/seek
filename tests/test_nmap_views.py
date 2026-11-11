@@ -305,3 +305,26 @@ def test_the_cached_order_is_the_sort_and_never_the_cache_itself(tmp_path):
             assert got == expected, (col, desc)
             assert got is not view.ordered(rows, col, desc), "a copy, never the cache"
     assert view.ordered(list(rows), 0, False) is None, "only the view's own rows are cached"
+
+
+def _tags(scans, entries):
+    from seek.nmap import tagfiles, tagging
+    from seek.nmap.tagfiles import Entry
+
+    loaded = tagfiles.Loaded(entries={Path("seek-tags.yaml"): tuple(Entry(*e) for e in entries)})
+    return tagging.build(scans.hosts, scans.files, loaded)
+
+
+def test_group_by_tag_lists_every_tagged_port_under_every_tag():
+    scans = _scans("basic")
+    tags = _tags(scans, [("printer", "192.0.2.1"), ("explored", "192.0.2.1"),
+                         ("web-ui", "192.0.2.2", "tcp", 80), ("explored", "192.0.2.3")])
+    grouped = {k: sorted((h.address, s.port) for h, s in v)
+               for k, v in views.group_by(scans.hosts, "tag", tags=tags)}
+    assert grouped["printer"] == [("192.0.2.1", 22), ("192.0.2.1", 80)], "its open ports"
+    assert grouped["explored"] == grouped["printer"], "under each tag; .3 has no port"
+    assert grouped["web-ui"] == [("192.0.2.2", 80)], "a service tag, that port alone"
+
+
+def test_group_by_tag_without_tags_is_empty():
+    assert views.group_by(_scans("basic").hosts, "tag") == []

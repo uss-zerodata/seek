@@ -343,3 +343,37 @@ async def test_the_filter_says_when_tags_are_not_ready(tmp_path, monkeypatch):
     assert spec.is_empty and any("tags not ready" in i for i in spec.ignored)
     session.tags()
     assert not session.filter_spec("tag:web-only").is_empty
+
+
+async def test_the_rule_builder_counts_with_the_session_s_model(tmp_path):
+    from seek.nmap import tagbuild
+
+    session = _engagement(tmp_path)
+    host = next(h for h in session.scans.hosts if h.address == "192.0.2.2")
+    b = session.rule_builder([Record(host)])
+    shared = tagbuild.shared(b)
+    open80 = next(p for p in shared.facts if p.fact.label == "80/tcp open")
+    assert (open80.selected, open80.others) == (1, 1), "192.0.2.1 has 80 open too"
+    assert any(p.fact.kind is tagbuild.Kind.TAG and p.fact.value == "web-only"
+               for p in shared.facts), "the session's tags are facts"
+
+
+async def test_the_host_list_shows_tags_worst_first_and_follows_a_retag(tmp_path):
+    from seek.tui.nmap import views as vdefs
+
+    session = _engagement(tmp_path, rules=(
+        "tags:\n  web-only:\n    issues: [{title: Exposed, severity: medium}]\n"
+        "    rules: [{when: [{port: 80}, {not: {port: 8080/tcp}}]}]\n"
+        "  aaa:\n    rules: [{when: [{port: 80}]}]\n"
+        "  bbb:\n    rules: [{when: [{port: 80}]}]\n"))
+    view = vdefs.hosts_view(session=session)
+    assert view.columns[-1] == "Tags"
+    rows = {r.cells[0]: r for r in view.rows(session.scans)}
+    row = rows["192.0.2.2"]
+    # 8080/tcp was never probed in basic.xml: an assumption, worst issue first.
+    assert row.cells[-1] == "web-only? aaa +1" and row.tones[-1] == "warn"
+    assert rows["192.0.2.3"].cells[-1] == "", "untagged"
+    host = session.scans.hosts[2]
+    await session.apply_tag_change(session.plan_tag([Record(host)], "explored", True))
+    again = {r.cells[0]: r for r in view.rows(session.scans)}
+    assert again["192.0.2.3"].cells[-1] == "explored", "a re-tag rebuilds the rows"

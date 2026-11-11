@@ -463,9 +463,11 @@ hosts. It runs in a worker or the threadpool.
   name. `Enter` adds or removes. The dialog also offers "Edit definition…",
   which edits the description and issues and lets a severity be picked from a
   list, and "Copy to global".
-- `T` opens the builder screen. It has two lists, shared facts and exclusions,
-  each with check boxes and counts. The preview line sits below them. Saving
-  asks for the tag.
+- `T` opens the builder as a sequence of the viewer's existing dialogs: the
+  shared facts as a list to tick, with counts; then the exclusions the same
+  way; then the preview, which offers saving and asks for the tag. One screen
+  with two lists was the first plan; the existing dialogs already fit the
+  terminal and say how to leave, and the choices are the same.
 - `R` reloads the rule files.
 
 The tag dialog follows the modal rules in AGENTS.md: it uses an `OptionList`,

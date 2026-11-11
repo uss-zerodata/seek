@@ -54,6 +54,7 @@ from seek.tui.nmap.commands import ScanCommands
 from seek.tui.nmap.flows import ScanFlows
 from seek.tui.nmap.help import NmapHelpScreen
 from seek.tui.nmap.reader import DetailReader
+from seek.tui.nmap.tagflows import TagFlows
 from seek.web.source import WebModel
 
 # The filter box keeps focus, exactly as the query box does in a search session,
@@ -358,7 +359,7 @@ FILTER_HINTS = [("type", "to filter"), ("↵/Esc", "back to the list"),
                 ("'x ^x !x", "exact / prefix / exclude")]
 
 
-class NmapApp(ScanFlows, App[int]):
+class NmapApp(ScanFlows, TagFlows, App[int]):
     CSS = """
     /* Same conventions as the search session: ANSI themes collapse
        $panel/$surface/$boost to the terminal background, so regions are fenced
@@ -460,6 +461,9 @@ class NmapApp(ScanFlows, App[int]):
         Binding("x", "export", "Export", show=False),
         Binding("i", "open_shot", "Open the screenshot", show=False),
         Binding("W", "report_server", "Web report", show=False),
+        Binding("t", "tag", "Tag", show=False),
+        Binding("T", "build_rule", "Build a tag rule", show=False),
+        Binding("R", "reload_tags", "Reload tag rules", show=False),
         Binding("w", "open_web", "Web interface", show=False),
         Binding("question_mark", "help", "Help", show=False),
         Binding("up,k", "move(-1)", "Up", show=False),
@@ -576,7 +580,7 @@ class NmapApp(ScanFlows, App[int]):
         self._abandoned = ""            # what the last cancelled build was doing
         self._report_mode = "condensed"
         self._log_frozen = False
-        self.stack: list[vdefs.View] = [vdefs.hosts_view()]
+        self.stack: list[vdefs.View] = [vdefs.hosts_view(session=self.session)]
         # One mark per level pushed onto `stack`, so unwinding restores both the
         # cursor and the sort the level below was left in.
         self._marks: list[_Mark] = []
@@ -669,6 +673,13 @@ class NmapApp(ScanFlows, App[int]):
         elif event.type == "marks" and event.origin != "tui":
             self._reload_rows(preserve=True)
             self._refresh_status()
+        elif event.type == "tags":
+            # Every view that shows tags is stamped with their generation, so
+            # a rebuild picks the change up, whoever made it.
+            self._reload_rows(preserve=True)
+            self._refresh_status()
+            if event.origin not in ("tui", "") and event.text:
+                self.notify(event.text)
 
     # `Owner`: a finished run is folded back into the model by this viewer's
     # own reading pipeline, whichever front end started it.
@@ -751,15 +762,17 @@ class NmapApp(ScanFlows, App[int]):
         # Measured in the worker when these are the view's own rows, which is
         # every case that is big enough for the difference to matter.
         counted = self.view.measured(rows)
-        if counted is not None:
-            natural = [max(header, cell)
-                       for header, cell in zip(natural, counted, strict=False)]
-        else:
+        if counted is None:
+            counted = [0] * len(natural)
             for row in rows:
                 for i, cell in enumerate(row.cells[:len(natural)]):
                     width = width_of(cell)
-                    if width > natural[i]:
-                        natural[i] = width
+                    if width > counted[i]:
+                        counted[i] = width
+        natural = [max(header, cell) for header, cell in zip(natural, counted, strict=False)]
+        # A column with nothing in any cell - Tags, before anything is tagged -
+        # may shrink to almost nothing: its header is all it would show.
+        floors = [6 if i < len(counted) and counted[i] else 1 for i in range(len(natural))]
         table = self.query_one(DataTable)
         available = (table.scrollable_content_region.width
                      or table.size.width or 100) - 2 - _MARK_W
@@ -770,11 +783,16 @@ class NmapApp(ScanFlows, App[int]):
         # Trim the widest column repeatedly until it fits; never below a floor
         # that still shows something useful.
         widths = list(natural)
-        floor = 6
         while sum(widths) + per_column_padding * len(widths) > available:
-            widest = max(range(len(widths)), key=lambda i: widths[i])
-            if widths[widest] <= floor:
+            # An empty column gives way first, then the widest with room to give.
+            empty = [i for i, w in enumerate(widths) if floors[i] == 1 and w > 1]
+            if empty:
+                widths[empty[0]] = 1
+                continue
+            room = [i for i in range(len(widths)) if widths[i] > floors[i]]
+            if not room:
                 break
+            widest = max(room, key=lambda i: widths[i])
             widths[widest] -= 1
         return widths
 
@@ -1357,6 +1375,9 @@ class NmapApp(ScanFlows, App[int]):
                          style="dim")
         if self._marked:
             right.append(f"  ·  {len(self._marked)} marked", style=_MARK_STYLE)
+        loaded = self.session.tag_files
+        if loaded is not None and any(p.level == "error" for p in loaded.problems):
+            right.append("  ·  some tag rules have problems (By tag, or R)", style="yellow")
         total_runs = len(self.runner.runs) + len(self.captures.runs)
         if total_runs:
             right.append(f"  ·  {total_runs} run(s)", style="dim")
@@ -1567,7 +1588,7 @@ class NmapApp(ScanFlows, App[int]):
         if self._active_tab != "hosts":
             self._activate("hosts")
         setattr(self, flag, not getattr(self, flag))
-        self.stack[-1] = vdefs.hosts_view(self._only_up, self._only_ports)
+        self.stack[-1] = vdefs.hosts_view(self._only_up, self._only_ports, self.session)
         self._reset_sort()
 
     def _mark_current(self) -> _Mark:
@@ -3205,6 +3226,11 @@ class NmapApp(ScanFlows, App[int]):
             fmt = await self._pick_format()
             if fmt is None:
                 return
+            if exporter.TAG_FIELDS & set(fields):
+                # The first build of a large model's tags walks every host;
+                # it is cached after, but never work for the event loop.
+                tags = await asyncio.to_thread(self.session.tags)
+                records = exporter.tagged(records, tags)
             text, fmt = exporter.produce(records, "custom", fmt, fields)
         else:
             if exporter.EXPORTS[which][2] is None:

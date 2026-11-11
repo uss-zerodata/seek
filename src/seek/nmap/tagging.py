@@ -771,3 +771,37 @@ def build(hosts: list[Host], files: list[ScanFile], loaded: Loaded,
         counts[name] = TagCount(len(per_host), len(per_service), len(uncertain_hosts))
     return TagSet(host_tags, service_tags, dict(loaded.tags), tuple(problems), counts,
                   {n: tuple(v) for n, v in notes.items()}, unmatched)
+
+
+def evaluate(index: _Index, node: tr.Node, tags: TagSet | None = None) -> Outcome:
+    """One condition over every host of a prepared index - what the rule builder
+    counts with, so its counts are the ones a saved rule will give.
+
+    Tag clauses read `tags`; host numbers in the outcome index `index.hosts`.
+    """
+    index._clauses.clear()
+    ev = _Eval(index)
+    if tags is not None:
+        position = {h.address: n for n, h in enumerate(index.hosts)}
+        for name in tags.tag_names:
+            certain: set[int] = set()
+            assumed: dict[int, Evidence] = {}
+            holders: dict[str, Grant] = {}
+            for address, per in tags.hosts.items():
+                if name in per:
+                    holders[address] = per[name]
+            for (address, _p, _n), per in tags.services.items():
+                if name in per:
+                    g = per[name]
+                    holders[address] = holders[address].join(g) if address in holders else g
+            for address, g in holders.items():
+                h = position.get(address)
+                if h is None:
+                    continue
+                if g.uncertain:
+                    assumed[h] = g.evidence
+                else:
+                    certain.add(h)
+            ev.tag_certain[name] = certain
+            ev.tag_assumed[name] = {h: e for h, e in assumed.items() if h not in certain}
+    return ev.node(node, index.all_hosts)

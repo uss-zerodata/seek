@@ -65,4 +65,4 @@ def tab_view(tab: str, session: Session, only_up: bool = False,
         return vdefs.statistics_view()
     if tab in GROUP_TABS:
         return vdefs.grouping_view(tab.removeprefix("group-"), session)
-    return vdefs.hosts_view(only_up, only_ports)
+    return vdefs.hosts_view(only_up, only_ports, session)
