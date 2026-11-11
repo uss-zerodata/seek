@@ -25,7 +25,9 @@ preference to one that does not.
 Where two scans identify the same service differently, a scan that actually
 probed the port SHALL take precedence over one that only guessed the service
 from the port number, regardless of the order the files were given in. An
-observed host state SHALL likewise take precedence over an asserted one.
+observed host state SHALL likewise take precedence over an asserted one, and
+where two observed states disagree, `up` SHALL take precedence over `down`,
+regardless of file order.
 
 The system SHALL record which source file each host and each service was seen in,
 and SHALL make that provenance visible, so that when scans disagree or a fact
@@ -62,6 +64,14 @@ appears in only one of them the user can tell which scan it came from.
 #### Scenario: An observed host state beats an asserted one
 - **WHEN** one scan asserts a host `up` with reason `user-set` and another records it `up` for an observed reason
 - **THEN** the consolidated host carries the observed state and reason
+
+#### Scenario: Observed up beats observed down
+- **WHEN** one discovery scan records a host `down` and another discovery scan records it `up`
+- **THEN** the consolidated host is `up` with that scan's reason, in either file order
+
+#### Scenario: An asserted up does not beat an observed down
+- **WHEN** a discovery scan records a host `down` and a `-Pn` scan asserts it `up` without finding an open port
+- **THEN** the consolidated host keeps the recorded `down`
 
 ### Requirement: Malformed input is reported and skipped
 A file that cannot be parsed SHALL NOT abort the run. The system SHALL report
@@ -204,7 +214,7 @@ statistics view with its selection intact.
 - **THEN** every host running that same service is listed
 
 #### Scenario: A coverage figure opens its hosts
-- **WHEN** the user opens the evidenced-reachable figure
+- **WHEN** the user opens the up figure
 - **THEN** exactly those hosts are listed, as a list of hosts with their usual columns
 
 #### Scenario: A total opens the breakdown behind it
@@ -243,19 +253,30 @@ statistics view with its selection intact.
 Each view SHALL provide a filter that narrows the listed rows as the user types,
 using the same query grammar as the search session — space-separated terms
 combined with AND, `'exact`, `^prefix`, `suffix$`, `!negate`, and smart-case —
-matched against the row's fields. Clearing the filter SHALL restore the full
-list. The characters a row matched on SHALL be highlighted where they appear in
-the list, so the user can see why a row survived the filter.
+matched against the row's fields and against what the row's screenshots say:
+their page titles, URLs, technologies and HTTP status. Clearing the filter SHALL
+restore the full list. The characters a row matched on SHALL be highlighted
+where they appear in the list, so the user can see why a row survived the filter.
 
-A filter term denoting an address range SHALL be understood as one and tested
-against the addresses the row belongs to, rather than as text. That covers both
-an explicit prefix (`10.10.10.32/26`) and a complete address, which denotes the
-single host (`10.10.10.5` is `10.10.10.5/32`). A term that is not a complete
-address — one still being typed, or an invalid one — SHALL remain an ordinary
-fuzzy term, so that partial input still matches every address containing it.
-Range terms and fuzzy terms SHALL compose in one expression, and a range term
-SHALL be negatable like any other. The range actually being applied SHALL be
-visible, since a prefix is resolved to the network containing it.
+When some rows contain the filter's words as written, only those SHALL be
+listed; rows that match only because the letters occur scattered SHALL be left
+out, counted, and named as left out, and `~` in the filter SHALL list them too.
+When no row contains the words, the fuzzy matches SHALL be listed as they are,
+so a typo still finds something.
+
+A complete address SHALL denote every address beginning with it, so that the
+list narrows smoothly while it is typed (`10.10.10.1` lists `.1`, `.10`–`.19`
+and `.100`–`.199`); `=10.10.10.1` or `10.10.10.1/32` SHALL denote that host
+alone. A term with an explicit prefix (`10.10.10.32/26`) SHALL be an address
+range. Addresses and ranges side by side SHALL be a union. An incomplete address
+SHALL remain an ordinary fuzzy term. Address terms and fuzzy terms SHALL compose
+in one expression, and an address term SHALL be negatable like any other. The
+addresses actually being applied SHALL be visible.
+
+A port SHALL be written as nmap and URLs write it: `:443`, `443/tcp`, `53/udp`
+or `port:443` SHALL denote a port with that number whatever its state, and
+`10.10.10.10:8080` SHALL denote that host with that port. `open:` and `closed:`
+SHALL keep asking for the state as well.
 
 #### Scenario: Typing narrows the list
 - **WHEN** the user types `apache` in the service view's filter
@@ -281,9 +302,13 @@ visible, since a prefix is resolved to the network containing it.
 - **WHEN** the user filters with `10.10.10.0/24 apache`
 - **THEN** rows must both fall in that range and fuzzy-match `apache`
 
-#### Scenario: A complete address selects that host alone
+#### Scenario: A complete address is a beginning
 - **WHEN** the user filters with `10.10.10.5`
-- **THEN** only the host `10.10.10.5` is listed, and `10.10.10.50` is not
+- **THEN** `10.10.10.5` and `10.10.10.50` are listed, and `10.10.10.6` is not
+
+#### Scenario: One host exactly
+- **WHEN** the user filters with `=10.10.10.5`
+- **THEN** only the host `10.10.10.5` is listed
 
 #### Scenario: A partial address still matches many
 - **WHEN** the user has typed `10.10.10.` and not yet completed the address
@@ -293,14 +318,31 @@ visible, since a prefix is resolved to the network containing it.
 - **WHEN** a range term is active
 - **THEN** the interface shows the range being applied
 
+#### Scenario: A port by number
+- **WHEN** the user filters the host list with `:443`
+- **THEN** every host with a port 443 recorded is listed, whether it is open, closed or filtered
+
+#### Scenario: A host and a port
+- **WHEN** the user filters with `10.10.10.10:8080`
+- **THEN** only `10.10.10.10` is listed, and only if it has a port 8080
+
+#### Scenario: Words before letters
+- **WHEN** the user filters with `synology` and one host's screenshot title says Synology while two other rows only contain those letters scattered
+- **THEN** only that host is listed, the interface says two looser matches were left out, and `synology ~` lists all three
+
+#### Scenario: A screenshot finds its host
+- **WHEN** a host's only mention of Hektor is the title of its captured web page and the user filters with `hektor`
+- **THEN** the host is listed
+
 ### Requirement: Sorting
 Each view SHALL allow sorting by any of its columns, in ascending and descending
 order, and SHALL indicate which column is sorted and in which direction, both on
 the column itself and in the status line. Sorting SHALL apply to the filtered set.
 
-Choosing a column and reversing the order SHALL be separate actions: choosing a
-column SHALL always sort ascending, and one dedicated action SHALL reverse the
-current order. Values SHALL be ordered by their meaning rather than their text —
+Choosing a column SHALL sort by it ascending; choosing the column that is
+already sorted SHALL reverse the order, and choosing it again SHALL reverse it
+back. Which column counts as already sorted SHALL be the one the view indicates,
+including the order a view opens in. Values SHALL be ordered by their meaning rather than their text —
 in particular IP addresses SHALL sort numerically, so that `10.0.0.2` precedes
 `10.0.0.11`, and port numbers SHALL sort numerically even where they are shown
 as part of a label such as `80/tcp`.
@@ -318,8 +360,16 @@ without knowing a key.
 - **THEN** hosts are ordered by that count and the view indicates the sorted column and direction
 
 #### Scenario: Reversing a sort
-- **WHEN** the user invokes the reverse action
-- **THEN** the order reverses, and choosing a column again does not
+- **WHEN** the user sorts by a column and then chooses the same column again
+- **THEN** the order reverses, and choosing it a third time restores ascending order
+
+#### Scenario: Another column starts ascending
+- **WHEN** the list is sorted descending by one column and the user chooses another
+- **THEN** the list is sorted by the new column in ascending order
+
+#### Scenario: The opening order counts as chosen
+- **WHEN** a list opens sorted by its first column and the user chooses that column
+- **THEN** the order reverses
 
 #### Scenario: Addresses sort numerically
 - **WHEN** a host list containing `10.0.0.2`, `10.0.0.11` and `10.0.0.100` is sorted by address
@@ -328,6 +378,18 @@ without knowing a key.
 #### Scenario: Ports sort numerically
 - **WHEN** a list containing ports `80/tcp`, `443/tcp` and `8080/tcp` is sorted by its port column
 - **THEN** they are ordered `80/tcp`, `443/tcp`, `8080/tcp`
+
+#### Scenario: The protocol only breaks ties
+- **WHEN** a list holding `8080/tcp`, `80/tcp`, `22/tcp`, `8080/udp`, `443/tcp` and `53/udp` is sorted by its port column
+- **THEN** they are ordered `22/tcp`, `53/udp`, `80/tcp`, `443/tcp`, `8080/tcp`, `8080/udp`
+
+#### Scenario: A column listing several ports sorts numerically
+- **WHEN** a grouping is sorted by its Ports column
+- **THEN** its rows are ordered by their ports compared as numbers, first port first, and the ports within each cell are in the same order
+
+#### Scenario: A host's ports are listed by number wherever they are listed
+- **WHEN** a host has `8080/tcp`, `80/tcp`, `22/tcp`, `8080/udp`, `443/tcp` and `53/udp`, from one scan or merged from several
+- **THEN** its record, its port list before any column is chosen, and an export of it all give them as `22/tcp`, `53/udp`, `80/tcp`, `443/tcp`, `8080/tcp`, `8080/udp` - never every TCP port before every UDP one
 
 #### Scenario: A view opens in its own order
 - **WHEN** the statistics view is opened
@@ -339,7 +401,8 @@ without knowing a key.
 
 #### Scenario: Sorting by clicking a heading
 - **WHEN** the user clicks the heading of a column
-- **THEN** the list is sorted by that column, as if its number had been pressed
+- **THEN** the list is sorted by that column, as if its number had been pressed,
+  and clicking it again reverses the order
 
 #### Scenario: Sorting respects the filter
 - **WHEN** a filter is active and the user sorts
@@ -450,49 +513,85 @@ inferred.
 - **WHEN** the viewer was opened on `dir1 dir2` and the user starts a scan
 - **THEN** the review names a location under `dir1` as where the scan will write
 
-### Requirement: Host reachability is reported by evidence, not by asserted state
+### Requirement: A host is up by an open port or by real host discovery
 When a scan was run with host discovery disabled (`-Pn`), nmap marks every target
 `up` regardless of whether it responded, with the status reason `user-set`. The
-system SHALL NOT present such an asserted state as an observed one. It SHALL
-detect that a scan asserted host state, and SHALL classify each host by the
-evidence actually present — whether it has any responding port, any service, any
-OS match, or any script result — so that "reachable" reflects the scan's findings
-rather than its assumptions.
+system SHALL NOT present such an asserted state as an observed one, and SHALL
+detect it per host from that reason.
 
-The host overview SHALL default to the evidence-based classification, SHALL keep
-the raw nmap state available, and SHALL make the discrepancy visible rather than
-silently reporting the asserted number. Filtering by reachability SHALL operate
-on the evidence-based classification.
+The system SHALL decide whether a host is up by one rule, and every part of the
+viewer that says whether a host is up — the host list's state, the up-only
+filter, the statistics, the `-Pn` warning and the export — SHALL use that rule:
 
-The same key SHALL ask the same question of a single host's port list, the one
-list that shows closed and filtered ports as well as open ones: there it SHALL
-restrict the list to open ports, in place, without leaving the host. The choice
-SHALL carry to the next host opened, and SHALL be independent of the host-list
-filter. A host with no open port SHALL say so and name the key that lists every
-port.
+- a host with at least one open port SHALL be up, however it was scanned;
+- a host that a scan with host discovery recorded `up` SHALL be up, even with no
+  open port;
+- a host whose only claim to being up is a state asserted by `-Pn` SHALL NOT be
+  up. Closed ports, filtered ports, an OS match or script results SHALL NOT make
+  it up.
 
-#### Scenario: A `-Pn` scan does not report every target as reachable
-- **WHEN** a scan run with `-Pn` marks 255 targets `up` with reason `user-set`, and only 9 of them have any port, service, OS or script data
-- **THEN** the viewer reports 9 hosts as showing evidence of being reachable, not 255
+The host list SHALL say which of these applies: up by host discovery, up only
+through an open port, asserted but unconfirmed, or down. It SHALL keep nmap's
+recorded state and reason available, and SHALL make it visible when a scan
+asserted more hosts up than the rule accepts, rather than silently reporting the
+asserted number. The interface SHALL call this state "up".
+
+A second, tighter host-list filter SHALL keep only the hosts with at least one
+open port, on a key of its own. The two filters SHALL be independent toggles
+that combine; since every host with an open port is up, both together SHALL
+list the same hosts as the tighter one alone, and turning either off SHALL leave
+the other as it was. From any other overview, either key SHALL go to the host
+list and apply there. The list's title SHALL name the filters that are on.
+
+Both keys SHALL ask the same question of a single host's port list, the one
+list that shows closed and filtered ports as well as open ones: there either
+SHALL restrict the list to open ports, in place, without leaving the host. The
+choice SHALL carry to the next host opened, and SHALL be independent of the
+host-list filters. A host with no open port SHALL say so and name the key that
+lists every port.
+
+#### Scenario: A `-Pn` scan does not report every target as up
+- **WHEN** a scan run with `-Pn` marks 255 targets `up` with reason `user-set`, and only 9 of them have an open port
+- **THEN** the viewer reports 9 hosts as up, not 255
+
+#### Scenario: Under `-Pn`, only an open port counts
+- **WHEN** a `-Pn` scan records a host with only closed and filtered ports, an OS guess and a script result
+- **THEN** the host is not up, and the host list labels it as unconfirmed
+
+#### Scenario: Host discovery is enough without `-Pn`
+- **WHEN** a scan without `-Pn` records a host `up` with reason `echo-reply` and finds no open port on it
+- **THEN** the host is up
+
+#### Scenario: An open port is always enough
+- **WHEN** a host has an open port and its recorded state is `down` or asserted
+- **THEN** the host is up, and the host list shows that the open port is what makes it up
 
 #### Scenario: The discrepancy is surfaced
-- **WHEN** a scan asserted host state for more hosts than show any evidence
-- **THEN** the interface says so, giving both the asserted count and the evidence-based count
+- **WHEN** a scan asserted host state for more hosts than are up by the rule
+- **THEN** the interface says so, giving both the asserted count and the count of hosts that are up
 
 #### Scenario: The raw state remains available
-- **WHEN** a host is marked `up` with reason `user-set` but shows no evidence
+- **WHEN** a host is marked `up` with reason `user-set` but has no open port
 - **THEN** the viewer can still show that nmap recorded it as `up`, and why
 
-#### Scenario: A scan with real host discovery is unaffected
-- **WHEN** a scan was run without `-Pn` and hosts are `up` for reasons such as `echo-reply` or `syn-ack`
-- **THEN** the evidence-based classification agrees with the recorded state
+#### Scenario: Filtering to up hosts uses the rule
+- **WHEN** the user filters the host view to up hosts in a scan set that mixes `-Pn` and discovery scans
+- **THEN** exactly the hosts with an open port or a recorded discovery `up` are listed
 
-#### Scenario: Filtering by reachability uses evidence
-- **WHEN** the user filters the host view to reachable hosts in a `-Pn` scan
-- **THEN** only hosts with evidence are listed
+#### Scenario: Filtering to hosts with an open port
+- **WHEN** the user presses `r` on a host list holding a `-Pn` host with an open port, a host that answered discovery with no open port, and a `-Pn` host with neither
+- **THEN** only the first is listed, and the title says the list is limited to open ports
+
+#### Scenario: The two filters combine
+- **WHEN** both `u` and `r` are on and the user presses `r` again
+- **THEN** the list shows every up host, and `u` is still on
+
+#### Scenario: The open-port filter from another tab
+- **WHEN** the user presses `r` on the statistics tab
+- **THEN** the host list is shown, limited to hosts with an open port
 
 #### Scenario: A host's ports filtered to the open ones
-- **WHEN** a host's port list shows two open ports and one closed, and the user presses `u`
+- **WHEN** a host's port list shows two open ports and one closed, and the user presses `u` or `r`
 - **THEN** only the two open ports are listed, the host stays open, and the host list is not filtered
 
 #### Scenario: A host with no open port
@@ -501,11 +600,12 @@ port.
 
 ### Requirement: Aggregate statistics
 The system SHALL provide a statistics view over the current (filtered) model
-giving at least: the number of targets, how many were asserted up, how many show
-evidence of being reachable, and how many have open ports; per service name, how
-many times it occurs and on which ports; and per open port, how many hosts
-expose it and which services were seen on it. It SHALL also report the total
-number of distinct services and the total number of distinct open ports.
+giving at least: the number of targets, how many were asserted up, how many are
+up by the rule that decides whether a host is up, and how many have open ports;
+per service name, how many times it occurs and on which ports; and per open
+port, how many hosts expose it and which services were seen on it. It SHALL also
+report the total number of distinct services and the total number of distinct
+open ports.
 
 The view SHALL be divided into labelled sections — at least host coverage, the
 per-service breakdown and the per-port breakdown — each introduced by a heading
@@ -518,9 +618,9 @@ Every line SHALL open the records it counts, so that a figure is a way into the
 data rather than a summary of it. No figure SHALL be reported only as a
 truncated list inside another line's detail.
 
-#### Scenario: Host counts distinguish asserted from evidenced
+#### Scenario: Host counts distinguish asserted from up
 - **WHEN** the statistics view is shown for a `-Pn` scan
-- **THEN** targets, asserted-up, evidenced-reachable and hosts-with-open-ports are each reported separately
+- **THEN** targets, asserted-up, up and hosts-with-open-ports are each reported separately
 
 #### Scenario: Service occurrence counts
 - **WHEN** the statistics view is shown
@@ -566,12 +666,13 @@ version detail. Groups SHALL be ordered by size by default.
 ### Requirement: Derived lists can be exported
 The output of this viewer is frequently the input to another command, so the
 system SHALL let the user export derived lists: at least the host addresses, the
-distinct open ports as a comma-separated list, `host:port` pairs, and HTTP/HTTPS
-URLs constructed from the detected services including non-standard ports. Export
-SHALL offer the same destinations as the search session — standard output, the
-clipboard, or a file — and, when scanning is available, scanning the selected
-records as a further destination, which SHALL carry their addresses into the
-scan flow as the scope.
+addresses of the hosts that are up by the rule that decides whether a host is
+up, the distinct open ports as a comma-separated list, `host:port` pairs, and
+HTTP/HTTPS URLs constructed from the detected services including non-standard
+ports. Export SHALL offer the same destinations as the search session — standard
+output, the clipboard, or a file — and, when scanning is available, scanning the
+selected records as a further destination, which SHALL carry their addresses
+into the scan flow as the scope.
 
 An export SHALL act on the marked records when any exist, and on the current
 (filtered) view when none do. Which of the two is being exported SHALL be stated
@@ -586,6 +687,14 @@ selected.
 #### Scenario: Export a host list
 - **WHEN** the user exports host addresses from a filtered host view
 - **THEN** the addresses of the filtered hosts are produced, one per line
+
+#### Scenario: Export the up hosts
+- **WHEN** the user exports up hosts from a scan set holding a `-Pn` host with no open port, a `-Pn` host with an open port, and a host that answered discovery with no open port
+- **THEN** the last two addresses are produced and the first is not
+
+#### Scenario: The export agrees with the filter
+- **WHEN** the user filters the host view to up hosts and exports all hosts, and separately exports up hosts from the unfiltered view
+- **THEN** both exports produce the same addresses
 
 #### Scenario: Export a port list
 - **WHEN** the user exports the port list
@@ -701,8 +810,12 @@ terminal is too short to show it and a usable list at once.
 - **THEN** each scan is a line of its own saying what it established, rather than a comma-separated list of file names
 
 #### Scenario: An asserted state is labelled in the detail
-- **WHEN** the cursor is on a host whose `up` state came from `-Pn` and which shows no evidence
-- **THEN** the detail says the state was asserted rather than observed
+- **WHEN** the cursor is on a host whose `up` state came from `-Pn` and which has no open port
+- **THEN** the detail says the state was asserted and is unconfirmed, rather than observed
+
+#### Scenario: What makes a host up is labelled in the detail
+- **WHEN** the cursor is on a host that is up only because of an open port
+- **THEN** the detail says the open port is what makes it up, and still shows the state nmap recorded
 
 #### Scenario: The pane can be dismissed
 - **WHEN** the user presses the detail-pane key
@@ -963,8 +1076,12 @@ to report, and the message SHALL sit inside the same region the rows occupy.
 - **THEN** its column headers are still shown and the message appears directly beneath them
 
 #### Scenario: An option emptied the list
-- **WHEN** the reachable-only host list has no hosts with evidence
-- **THEN** the message says so and names the key that lists every host
+- **WHEN** the up-only host list has no host that is up
+- **THEN** the message says that no host is up and names the key that lists every host
+
+#### Scenario: Two options emptied the list
+- **WHEN** both host-list filters are on and no host has an open port
+- **THEN** the message says that no host has an open port and names both keys
 
 #### Scenario: Empty because the work is not finished
 - **WHEN** the host list has no rows because the scans are still being read
@@ -1059,7 +1176,7 @@ and the number of marked records SHALL be shown while any exist.
 An exported list is read by another tool, so its shape matters as much as its
 contents. Alongside the named derived lists, the system SHALL let the user
 choose which fields to write, from a catalogue covering both host facts —
-address, hostname, operating system, recorded state, evidence of reachability,
+address, hostname, operating system, recorded state, whether the host is up,
 the scans a record was seen in — and service facts — port, protocol, service
 name, product, version, and the URL where one applies. Field order in the output
 SHALL be fixed by the catalogue, so that two exports of the same fields are
@@ -1086,10 +1203,6 @@ the value as written.
 - **WHEN** the user exports as CSV
 - **THEN** the first line names the fields, and a value containing a comma is quoted
 
-#### Scenario: A banner cannot become a formula
-- **WHEN** a product string from a scanned host begins with `=` and the user exports as CSV
-- **THEN** the cell is written with a leading `'`, and the same export as text or JSON keeps the string as written
-
 #### Scenario: JSON is one object per record
 - **WHEN** the user exports as JSON
 - **THEN** the output parses as a list of objects whose keys are the chosen fields
@@ -1097,6 +1210,10 @@ the value as written.
 #### Scenario: Repeated rows collapse
 - **WHEN** the chosen fields are the address alone and several marked services belong to one host
 - **THEN** that address is written once
+
+#### Scenario: A banner cannot become a formula
+- **WHEN** a product string from a scanned host begins with `=` and the user exports as CSV
+- **THEN** the cell is written with a leading `'`, and the same export as text or JSON keeps the string as written
 
 ### Requirement: Every name a host is known by is visible
 A scan learns a host's names from several kinds of evidence — a reverse lookup,
@@ -1637,3 +1754,28 @@ any term it ignored.
 #### Scenario: Matches are still highlighted
 - **WHEN** the user filters with `apache OR nginx`
 - **THEN** the characters matching whichever term a row matched on are highlighted
+
+### Requirement: The viewer shares its session with the web interface
+The terminal viewer SHALL keep its model, its runs and its marks in the session
+it shares with the web interface. A scan or capture started from the browser
+SHALL be listed in the viewer's Scans tab and supervised exactly like one started
+in the terminal - including the quit guard, which SHALL ask before quitting while
+a browser-started run is still going. A mark made in the browser SHALL be shown
+on the viewer's rows and counted in its status bar, and the viewer's own tab,
+filter, sort and cursor SHALL NOT be moved by anything done in the browser.
+
+#### Scenario: A run started in the browser shows in the terminal
+- **WHEN** the user starts a capture in the browser
+- **THEN** the terminal viewer's status bar counts it as running and its Scans tab lists it
+
+#### Scenario: Quitting while a browser-started scan runs
+- **WHEN** the user quits the terminal viewer while a scan started in the browser is running
+- **THEN** the viewer asks first, as it does for a scan it started itself
+
+#### Scenario: A mark from the browser
+- **WHEN** the user marks a host in the browser
+- **THEN** the terminal viewer shows the host's row as marked and its mark count goes up by one
+
+#### Scenario: The cursor stays put
+- **WHEN** the user drills into a host in the browser
+- **THEN** the terminal viewer's list, tab and selected row do not change
