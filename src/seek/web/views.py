@@ -121,12 +121,11 @@ def listing(session: Session, view: vdefs.View, q: str = "",
     if sort is not None:
         col, down = sort, bool(desc)
     col = min(max(col, 0), max(0, len(view.columns) - 1))
-    spec = filtering.parse_filter(q.strip()) if q.strip() else filtering.FilterSpec()
+    spec = session.filter_spec(q)
     unfiltered = sum(1 for r in rows if not r.heading)
     loose = 0
     if not spec.is_empty:
-        rows = [r for r in rows if r.heading
-                or filtering.matches(spec, session.row_text(r), r.addresses, r.records)]
+        rows = [r for r in rows if r.heading or session.row_matches(spec, r)]
         rows, loose = filtering.prefer_firm(spec, rows, session.row_text)
         live = {r.section for r in rows if not r.heading}
         rows = [r for r in rows if not r.heading or r.section in live]
@@ -224,7 +223,7 @@ def overview(session: Session, cache: ViewCache, tab: str, path: list[str], q: s
         columns=list(shown.columns), sort=shown.sort, desc=shown.desc,
         total=shown.total, count=sum(1 for r in shown.rows if not r.heading),
         offset=offset, limit=limit, marks=len(session.marks),
-        understood=filtering.explain(filtering.parse_filter(q)) if q.strip() else [],
+        understood=filtering.explain(session.filter_spec(q)) if q.strip() else [],
         loose=shown.loose,
         rows=[_row_out(session, model, r) for r in shown.rows[offset:offset + limit]])
 

@@ -20,6 +20,7 @@ _STATIC: list[tuple[str, str, str, object]] = [
     ("Group by service", "Hosts and ports per service name", "_activate", "group-service"),
     ("Group by product", "Hosts and ports per product", "_activate", "group-product"),
     ("Group by port", "Hosts per port", "_activate", "group-port"),
+    ("Group by tag", "Hosts and ports per tag", "_activate", "group-tag"),
     ("Next overview", "Move one tab right (v)", "_cycle_tab", 1),
     ("Previous overview", "Move one tab left (V)", "_cycle_tab", -1),
     ("Only up hosts / open ports",

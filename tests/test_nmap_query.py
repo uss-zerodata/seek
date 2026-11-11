@@ -218,3 +218,71 @@ def test_a_plain_query_gives_the_same_rows_through_the_tree(query):
             if filtering.matches(spec, r.text, r.addresses, r.records)]
            for spec in (plain, tree)]
     assert got[0] == got[1]
+
+
+# --- tag: ------------------------------------------------------------------------
+
+
+def _tagged(entries):
+    from seek.nmap import tagfiles, tagging
+
+    scans = prepare(load([FIX / "basic.xml"]))
+    loaded = tagfiles.Loaded(entries={Path("seek-tags.yaml"): tuple(entries)})
+    return scans, tagging.build(scans.hosts, scans.files, loaded)
+
+
+def _tag_hosts(query: str, entries) -> list[str]:
+    scans, tags = _tagged(entries)
+    spec = parse_filter(query)
+    return [r.cells[0] for r in vdefs.hosts_view().rows(scans)
+            if filtering.matches(spec, r.text, r.addresses, r.records, tags)]
+
+
+def _entry(tag, host, proto=None, port=None):
+    from seek.nmap.tagfiles import Entry
+    return Entry(tag, host, proto, port)
+
+
+TAGGED = [_entry("printer", "192.0.2.1"), _entry("printer", "192.0.2.2"),
+          _entry("explored", "192.0.2.2"), _entry("explored", "192.0.2.3"),
+          _entry("web-ui", "192.0.2.2", "tcp", 80)]
+
+
+def test_a_host_tag_and_its_negation():
+    assert _tag_hosts("tag:printer NOT tag:explored", TAGGED) == ["192.0.2.1"]
+
+
+def test_tag_terms_are_anchored_like_the_other_fields():
+    assert _tag_hosts("tag:^print", TAGGED) == ["192.0.2.1", "192.0.2.2"]
+    assert _tag_hosts("tag:^rinter", TAGGED) == []
+
+
+def test_a_service_tag_ties_to_its_port():
+    assert _tag_hosts("tag:web-ui open:80", TAGGED) == ["192.0.2.2"]
+    assert _tag_hosts("tag:web-ui open:22", TAGGED) == [], "one port carries both or none"
+
+
+def test_a_host_with_no_ports_is_found_by_its_tag():
+    assert "192.0.2.3" in _tag_hosts("tag:explored", TAGGED)
+
+
+def test_before_tags_are_ready_tag_terms_are_set_aside_and_named():
+    spec = filtering.without_tags(parse_filter("tag:printer OR open:22"))
+    assert any("tags not ready" in i for i in spec.ignored)
+    rows = _rows("basic")
+    kept = [r.cells[0] for r in rows if filtering.matches(spec, r.text, r.addresses, r.records)]
+    assert kept == ["192.0.2.1"], "the rest of the filter still applies"
+    only = filtering.without_tags(parse_filter("NOT tag:printer"))
+    assert only.is_empty, "nothing left to test is no filter, never an empty list"
+    assert "tags not ready" in describe(only)
+
+
+def test_a_retag_is_not_answered_from_old_samples():
+    scans, before = _tagged([])
+    _scans, after = _tagged([_entry("web-ui", "192.0.2.2", "tcp", 80)])
+    spec = parse_filter("tag:web-ui")
+    rows = [r for r in vdefs.services_view().rows(scans) if len(r.records) > 1]
+    assert rows, "a service row standing for several hosts"
+    row = next(r for r in rows if "80" in r.cells[0])
+    assert not filtering.matches(spec, row.text, row.addresses, row.records, before)
+    assert filtering.matches(spec, row.text, row.addresses, row.records, after)

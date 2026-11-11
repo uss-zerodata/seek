@@ -1,0 +1,56 @@
+# Tag rules for seek. Copy this file to an engagement folder as
+# seek-rules.yaml, or to seek's config directory as rules.yaml to apply it to
+# every engagement. Every value below is an example, not a fact about a network.
+seek: 1
+
+# The colleague's format (`categorize_systems`), read as it is.
+rules:
+  - name: Printer (port-based)
+    pattern:
+      all:
+        - nmap_port: { port: 515, state: open }
+        - nmap_port: { port: 9100, state: open }
+    host_tags: ["printer"]
+
+  - name: Cisco Catalyst switch
+    pattern:
+      all:
+        - nmap_port: { port: 80, product: "OpenResty web app server" }
+        - nmap_port: { port: 443, product: "OpenResty web app server" }
+        - nmap_port: { port: 830, state: open }
+    host_tags: ["switch", "cisco", "catalyst"]
+
+# seek's own section: tags with issues, rules with negation.
+tags:
+  ricoh:
+    description: Ricoh multifunction printer
+    rules:
+      - name: Web Image Monitor and LPD
+        when:
+          - tag: printer
+          - title: Web Image Monitor
+
+  zebra-zd420:
+    description: Zebra ZD420 label printer
+    issues:
+      - title: Admin interface protected only by a 4-digit PIN
+        severity: medium
+        description: >-
+          The printer's settings pages accept a numeric PIN of four digits,
+          which can be guessed in minutes.
+    rules:
+      - name: ZD420 status page, no ssh
+        when:
+          - port: 80/tcp
+            body: { literal: "ZD420" }
+          - port: 9100/tcp
+          - not: { port: 22/tcp }
+
+  axis-camera:
+    description: AXIS network camera
+    rules:
+      - name: AXIS ports and certificate
+        grant: both
+        when:
+          - { port: 554/tcp }
+          - { port: 443/tcp, cert_issuer: "Axis Communications" }

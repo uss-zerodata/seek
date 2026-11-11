@@ -172,15 +172,24 @@ def statistics(hosts: list[Host], report: Report | None = None) -> Statistics:
     )
 
 
-def group_by(hosts: list[Host], key: str,
-             report: Report | None = None) -> list[tuple[str, list[tuple[Host, Service]]]]:
-    """Group open services by ``service``, ``product`` or ``port``.
+def group_by(hosts: list[Host], key: str, report: Report | None = None,
+             tags=None) -> list[tuple[str, list[tuple[Host, Service]]]]:
+    """Group open services by ``service``, ``product``, ``port`` or ``tag``.
 
     Services with no detected product are omitted from the product grouping
-    rather than collected under an empty name.
+    rather than collected under an empty name. By tag, a port is under every
+    tag it carries - its own and its host's - and an untagged port under none;
+    `tags` is the session's `TagSet`.
     """
     buckets: dict[str, list[tuple[Host, Service]]] = defaultdict(list)
     for host in counted(hosts, report, HOSTS):
+        if key == "tag":
+            if tags is None:
+                continue
+            for svc in host.open_services:
+                for name in tags.names(host.address, svc.protocol, svc.port):
+                    buckets[name].append((host, svc))
+            continue
         for svc in host.open_services:
             if key == "product":
                 label = svc.product

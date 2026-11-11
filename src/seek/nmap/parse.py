@@ -16,6 +16,7 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from seek.nmap.coverage import merge_ranges, parse_ranges
 from seek.nmap.models import Host, OsMatch, ScanFile, ScriptResult, Service, Times, by_port
 
 
@@ -131,6 +132,10 @@ def parse_file(path: Path, label: str | None = None) -> ScanFile:
     source = label or path.name
     root = None
     complete = True
+    probed: dict[str, list[tuple[int, int]]] = {}
+    unreadable: set[str] = set()
+    timed_out: set[str] = set()
+    not_scanned: set[str] = set()
     try:
         stream = ET.iterparse(path, events=("start", "end"))
         _, root = next(stream)
@@ -140,8 +145,18 @@ def parse_file(path: Path, label: str | None = None) -> ScanFile:
         start = root.get("start")
         for event, el in stream:
             if event == "end" and el.tag == "host":
-                hosts.append(_host(el, source))
+                host = _host(el, source)
+                hosts.append(host)
+                # A host that timed out, or that nmap found down, was not
+                # probed on the ports `<scaninfo>` lists (nmap 7.94 DTD:
+                # `<host timedout="true">`).
+                if el.get("timedout") == "true":
+                    timed_out.add(host.address)
+                if host.state == "down":
+                    not_scanned.add(host.address)
                 el.clear()  # free the subtree; keeps memory flat over big files
+            elif event == "end" and el.tag == "scaninfo":
+                _scaninfo(el, probed, unreadable)
     except ET.ParseError as exc:
         if root is None or root.tag != "nmaprun" or not hosts:
             # Nothing finished before it broke: there is nothing to keep.
@@ -156,4 +171,25 @@ def parse_file(path: Path, label: str | None = None) -> ScanFile:
         raise NmapParseError(f"{path}: empty file") from None
     return ScanFile(path=path, args=args, hosts=hosts,
                     start=int(start) if start and start.isdigit() else None,
-                    label=source, complete=complete)
+                    label=source, complete=complete,
+                    coverage={p: merge_ranges(r) for p, r in probed.items()
+                              if p not in unreadable},
+                    coverage_unknown=unreadable, timed_out=timed_out,
+                    not_scanned=not_scanned)
+
+
+# `-sO` lists IP protocol numbers, not ports: nothing a port rule can ask about.
+_NOT_PORTS = frozenset({"ip"})
+
+
+def _scaninfo(el: ET.Element, probed: dict, unreadable: set[str]) -> None:
+    """One `<scaninfo protocol services>`: a protocol's probed ports. Several per
+    protocol add up (`-sS -sA`). A list that cannot be read makes that protocol's
+    coverage unknown, not empty - and the file still loads."""
+    protocol = (el.get("protocol") or "").lower()
+    if not protocol or protocol in _NOT_PORTS:
+        return
+    try:
+        probed.setdefault(protocol, []).extend(parse_ranges(el.get("services") or ""))
+    except ValueError:
+        unreadable.add(protocol)

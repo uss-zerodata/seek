@@ -66,7 +66,7 @@ meets every field of the condition. Without a `state` field, a port condition
 SHALL require the port to be open.
 
 #### Scenario: Fields describe one port
-- **WHEN** a condition requires service `http` and product `nginx`, and the host has http on port 80 served by Apache and nginx on port 8443 with service `https-alt`
+- **WHEN** a condition requires service `http` and product `nginx`, and the host has http on port 80 served by Apache and nginx on port 8443 with service `ssl`
 - **THEN** the condition does not hold
 
 #### Scenario: Open by default

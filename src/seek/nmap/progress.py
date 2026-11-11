@@ -29,6 +29,7 @@ Report = Callable[[int, int, str], None]
 FILES = "files"
 SCANS = "scans"
 HOSTS = "hosts"
+TAGS = "tags"
 
 # Reported once per this many items. Small enough that a bar moves visibly on
 # a projection that takes a second, large enough that a slow receiver cannot

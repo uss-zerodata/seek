@@ -287,7 +287,7 @@ const HANDLERS = {
   prevTab: () => switchTab(-1),
   stats: () => go(root.dataset.tab === "stats" ? "/v/hosts" : "/v/stats"),
   group: () => {
-    const groups = ["group-service", "group-product", "group-port"];
+    const groups = ["group-service", "group-product", "group-port", "group-tag"];
     const at = groups.indexOf(root.dataset.tab);
     go(`/v/${groups[(at + 1) % groups.length]}`);
   },

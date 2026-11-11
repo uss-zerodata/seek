@@ -30,7 +30,7 @@ from __future__ import annotations
 import re
 import sqlite3
 import threading
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from html import unescape
 from pathlib import Path
@@ -130,6 +130,10 @@ class Capture:
     console: list[tuple[str, str]] = field(default_factory=list)
     network: list[tuple[str, str]] = field(default_factory=list)
     tls: str = ""
+    # The certificate's subject and issuer as gowitness stored them, for tag
+    # rules; `tls` is the line shown, built from the same row.
+    tls_subject: str = ""
+    tls_issuer: str = ""
     sans: list[str] = field(default_factory=list)
     shot: Path | None = None
     # The page's `<meta name="generator">`, when the stored HTML has one.
@@ -360,13 +364,17 @@ def read_database(path: Path, shots: Path | Callable[[str], Path | None] | None 
             if row["value"]:
                 sans.setdefault(row["tls_id"], []).append(str(row["value"]))
         tls_line: dict[int, str] = {}
+        tls_names: dict[int, tuple[str, str]] = {}
         tls_sans: dict[int, list[str]] = {}
         for row in _rows(con, "tls", ("id", "result_id", "protocol", "cipher",
-                                      "issuer", "valid_to"), tables):
+                                      "issuer", "subject_name", "valid_to"), tables):
             keys = row.keys()
             if "result_id" not in keys:
                 continue
             tls_line[row["result_id"]] = _tls_line(row)
+            tls_names[row["result_id"]] = (
+                str(row["subject_name"] or "") if "subject_name" in keys else "",
+                str(row["issuer"] or "") if "issuer" in keys else "")
             if "id" in keys:
                 tls_sans[row["result_id"]] = sans.get(row["id"], [])
 
@@ -408,6 +416,8 @@ def read_database(path: Path, shots: Path | Callable[[str], Path | None] | None 
                 console=console.get(rid, []),
                 network=network.get(rid, []),
                 tls=tls_line.get(rid, ""),
+                tls_subject=tls_names.get(rid, ("", ""))[0],
+                tls_issuer=tls_names.get(rid, ("", ""))[1],
                 sans=tls_sans.get(rid, []),
                 shot=_shot(shots, name),
                 generator=generators.get(rid, ""),
@@ -500,3 +510,55 @@ class Captures:
 def _identity(capture: Capture) -> tuple:
     """One capture: which database, which URL, taken when."""
     return (str(capture.database or ""), canonical_url(capture.url), capture.probed_at)
+
+
+# --- page bodies, for tag rules --------------------------------------------------
+
+# Tag rules may search a page's body. Bodies can be megabytes each, so they are
+# never kept on `Capture`: they are read here, a chunk of rows at a time, cut
+# at `BODY_CAP`, handed on and dropped (design D6 of host-tagging).
+BODY_CAP = 1024 * 1024
+BODY_CHUNK = 500
+# A capture still writing holds the database; wait this long, then report it.
+BODY_BUSY_SECONDS = 2.0
+
+
+class BodiesUnavailable(Exception):
+    """The database could not be read for bodies (locked, damaged); retried later."""
+
+
+def read_bodies(path: Path, row_ids: Iterable[int], cap: int = BODY_CAP
+                ) -> Iterator[tuple[int, str | None]]:
+    """`(row_id, body)` for the rows asked for: the first `cap` characters of
+    each, or None where the database has no body for it (`--skip-html`, a
+    gowitness without the column, an empty page)."""
+    ids = sorted({int(r) for r in row_ids})
+    if not ids:
+        return
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=BODY_BUSY_SECONDS)
+    except sqlite3.Error as exc:
+        raise BodiesUnavailable(f"{path.name}: {exc}") from None
+    try:
+        try:
+            has_html = "results" in _tables(con) and "html" in _columns(con, "results")
+        except sqlite3.Error as exc:
+            raise BodiesUnavailable(f"{path.name}: {exc}") from None
+        if not has_html:
+            for rid in ids:
+                yield rid, None
+            return
+        for start in range(0, len(ids), BODY_CHUNK):
+            chunk = ids[start:start + BODY_CHUNK]
+            marks = ",".join("?" * len(chunk))
+            try:
+                rows = dict(con.execute(
+                    f"select id, substr(html, 1, ?) from results where id in ({marks})",
+                    [cap, *chunk]))
+            except sqlite3.Error as exc:
+                raise BodiesUnavailable(f"{path.name}: {exc}") from None
+            for rid in chunk:
+                body = rows.get(rid)
+                yield rid, body if isinstance(body, str) and body else None
+    finally:
+        con.close()

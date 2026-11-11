@@ -856,13 +856,12 @@ class NmapApp(ScanFlows, App[int]):
     def _narrow(self, rows: list[vdefs.Row]) -> list[vdefs.Row]:
         """Apply the filter box and the current sort to ``rows``."""
         text = self.query_one("#filter", Input).value.strip()
-        self._spec = filtering.parse_filter(text) if text else filtering.FilterSpec()
+        self._spec = self.session.filter_spec(text)
         self._unfiltered = sum(1 for r in rows if not r.heading)
         self._loose = 0
         if not self._spec.is_empty:
             rows = [r for r in rows
-                    if r.heading or filtering.matches(self._spec, self.session.row_text(r),
-                                                      r.addresses, r.records)]
+                    if r.heading or self.session.row_matches(self._spec, r)]
             # Rows containing the words, when any do; the scattered-letter
             # matches are counted and named in the status line (`~` shows them).
             rows, self._loose = filtering.prefer_firm(self._spec, rows,
@@ -964,6 +963,12 @@ class NmapApp(ScanFlows, App[int]):
             # the way for its length, and the interpreter comes back to the
             # event loop between keystrokes rather than at 5 ms boundaries.
             with bulk.bulk(), bulk.responsive():
+                # Tags before the rows: the host list's Tags column reads them.
+                # A small model is tagged where it is first asked, in
+                # milliseconds; a large one here, off the event loop.
+                if (scans is self.session.scans
+                        and len(scans.hosts) > self.session.INLINE_TAG_HOSTS):
+                    self.session.tags(report)
                 view.rows(scans, report)
                 # The inventory is a projection every record reads (its
                 # Software block); building it here, once per model, keeps that

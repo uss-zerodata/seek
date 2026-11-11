@@ -410,10 +410,12 @@ def service_detail(group: proj.ServiceGroup) -> View:
     )
 
 
-def grouping_view(key: str) -> View:
+def grouping_view(key: str, session=None) -> View:
+    """By service, product or port - or by tag, which needs the session's tags."""
     def build(scans: ScanSet, report: Report | None = None) -> list[Row]:
         out = []
-        for label, members in proj.group_by(scans.hosts, key, report):
+        tags = session.tags(report) if key == "tag" and session is not None else None
+        for label, members in proj.group_by(scans.hosts, key, report, tags):
             group = Grouping(key=key, label=label, members=list(members))
             addresses = tuple(h.address for h in group.hosts)
             ports = group.ports
@@ -435,6 +437,9 @@ def grouping_view(key: str) -> View:
         title=f"Grouped by {key}",
         columns=(key.capitalize(), "Occurrences", "Hosts", "Ports"),
         build=build, kind="grouping", tab=f"group-{key}", reports=True,
+        # Tags change without the model changing: a tag or a rule edit rebuilds.
+        stamp=((lambda: (session.tags_generation, session.shots.generation))
+               if key == "tag" and session is not None else None),
     )
 
 

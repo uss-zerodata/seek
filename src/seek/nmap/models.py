@@ -221,6 +221,18 @@ class ScanFile:
     # False when the XML stops part-way - a cancelled or crashed scan. The
     # hosts it finished are kept; the viewer says the file is incomplete.
     complete: bool = True
+    # Which ports the scan probed, per protocol, as sorted, merged inclusive
+    # ranges - from its `<scaninfo>`, which nmap writes before any host. Kept
+    # per file, never on `Host`: `merge` writes later files into the first
+    # file's hosts, so a per-host flag would leak from one file to another.
+    coverage: dict[str, tuple[tuple[int, int], ...]] = field(default_factory=dict)
+    # Protocols whose port list could not be read: their coverage is unknown,
+    # which is not the same as "nothing probed".
+    coverage_unknown: set[str] = field(default_factory=set)
+    # Hosts this scan did not probe fully: timed out (`<host timedout="true">`)
+    # or found down, whose ports nmap does not scan.
+    timed_out: set[str] = field(default_factory=set)
+    not_scanned: set[str] = field(default_factory=set)
 
     def __repr__(self) -> str:
         """A summary, for the same reason `ScanSet` has one.

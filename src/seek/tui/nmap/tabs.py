@@ -14,12 +14,13 @@ TABS: list[tuple[str, str]] = [
     ("group-service", "By service"),
     ("group-product", "By product"),
     ("group-port", "By port"),
+    ("group-tag", "By tag"),
     ("inventory", "Inventory"),
     ("findings", "Findings"),
     ("names", "Names"),
     ("scans", "Scans"),
 ]
-GROUP_TABS = ("group-service", "group-product", "group-port")
+GROUP_TABS = ("group-service", "group-product", "group-port", "group-tag")
 
 
 def scans_view(session: Session) -> vdefs.View:
@@ -63,5 +64,5 @@ def tab_view(tab: str, session: Session, only_up: bool = False,
     if tab == "stats":
         return vdefs.statistics_view()
     if tab in GROUP_TABS:
-        return vdefs.grouping_view(tab.removeprefix("group-"))
+        return vdefs.grouping_view(tab.removeprefix("group-"), session)
     return vdefs.hosts_view(only_up, only_ports)
