@@ -50,7 +50,8 @@
 
 ## 6. Verify and document
 
-- [ ] 6.1 Run `seek nmap serve` on the fixtures and on `benchmarks/gen_nmap_corpus.py` output; check every tab, the gallery and a capture page in light and dark, at 1440, 1000 and 400 px, by keyboard only and by mouse only
-- [ ] 6.2 Resolve the open questions in design.md with the user (bundled face, landing page; thumbnail size is settled at 36x22)
+- [x] 6.1 Run `seek nmap serve` on the fixtures and on `benchmarks/gen_nmap_corpus.py` output; check every tab, the gallery and a capture page in light and dark, at 1440, 1000 and 400 px, by keyboard only and by mouse only
+- [x] 6.2 Resolve the open questions in design.md with the user (bundled face, landing page; thumbnail size is settled at 36x22)
 - [x] 6.3 `AGENTS.md`: add the web layout rules (shell, tokens, controls dispatch to `handlers`, key bar from `KEYS`); correct the OpenSpec section's stale change path
-- [ ] 6.4 `openspec validate web-interface-overhaul --strict`; `uv run ruff check`; full suite green
+- [x] 6.4 `openspec validate web-interface-overhaul --strict`; `uv run ruff check`; full suite green
+- [x] 6.5 `/` redirects to the Hosts tab and the gallery moves to `/gallery`; a `/` link with gallery parameters redirects there unchanged; every gallery link, the tab, `i` and the search's "all" link use `/gallery`; verified by `test_the_front_page_is_the_host_list_and_old_gallery_links_still_work` and the browser checks

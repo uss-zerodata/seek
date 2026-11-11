@@ -129,25 +129,12 @@ within the record. Before a row is selected the pane SHALL say how to select one
 ### Requirement: A record's views are tabs, shown only when there is a choice
 A record that can be read more than one way SHALL show its views as tabs in the
 record header, with the one on screen marked: a run's three reports on the Scans
-tab; elsewhere the record itself and nmap's own text about it. The text SHALL be
-one tab however many scans have some; the other scans SHALL stay reachable from
-the record's own lines and by stepping within the text. Clicking a tab SHALL
-open that view. `o` SHALL step to the next view and
-wrap around, unless the record's cursor is on a line that opens something, which
-it then opens. Beside the tabs a control naming `o` SHALL do the same. When a
-record has only one view, neither the tabs nor that control SHALL be shown.
+tab; elsewhere the record itself and nmap's own text about it. When a record has
+only one view, neither the tabs nor the next-view control SHALL be shown.
 
 #### Scenario: A host seen in two scans
 - **WHEN** the selected host's record lists two scans with text
 - **THEN** the header shows two tabs - the record and nmap's text - with the record marked
-
-#### Scenario: Stepping with the key
-- **WHEN** the user presses `o` twice on that record without moving the record cursor
-- **THEN** the first scan's text and the record again are shown in turn, and the marked tab follows
-
-#### Scenario: A scan chosen from the record
-- **WHEN** the user clicks the second scan's line in the record
-- **THEN** that scan's text is shown and the text tab is marked
 
 #### Scenario: A record with nothing else to show
 - **WHEN** the selected row's record has no scan text
@@ -157,48 +144,83 @@ record has only one view, neither the tabs nor that control SHALL be shown.
 - **WHEN** a row of the Scans tab is selected
 - **THEN** the tabs read overview, diff and raw output, and clicking one shows that report
 
+
+### Requirement: nmap's text is one view however many scans have some
+The text SHALL be one tab however many scans have some; the other scans SHALL
+stay reachable from the record's own lines and by stepping within the text.
+
+#### Scenario: A scan chosen from the record
+- **WHEN** the user clicks the second scan's line in the record
+- **THEN** that scan's text is shown and the text tab is marked
+
+
+### Requirement: A record's views are opened by click or by `o`
+Clicking a tab SHALL open that view. `o` SHALL step to the next view and wrap
+around, unless the record's cursor is on a line that opens something, which it
+then opens. Beside the tabs a control naming `o` SHALL do the same.
+
+#### Scenario: Stepping with the key
+- **WHEN** the user presses `o` twice on that record without moving the record cursor
+- **THEN** the first scan's text and the record again are shown in turn, and the marked tab follows
+
+
 ### Requirement: A capture's page leads with its picture
 A capture's page SHALL show the screenshot first and largest, with what was
 recorded about the response beside it on a wide screen and below it on a narrow
-one, grouped as response, technologies, TLS and source. The page SHALL use the
-window's full width: on a screen wide enough for three columns the folded lists
-SHALL sit beside the picture and the facts rather than under them. Its heading SHALL be the
+one, grouped as response, technologies, TLS and source. Its heading SHALL be the
 URL with the response status, followed by the page title. Links to the capture's
 host, its port, the other captures of that port and the target itself SHALL be
-controls at the top of the page. Headers, cookies, console and network entries
-SHALL each be a section with its count that can be folded; headers SHALL start
-open. A capture without a picture SHALL say whether it failed, give the reason
-and offer the target.
+controls at the top of the page.
 
 #### Scenario: A capture that belongs to a port
 - **WHEN** the page of a capture of `https://192.0.2.30` is opened
 - **THEN** the screenshot comes before the recorded facts, and the top of the page offers the host, port 443/tcp and the target
 
-#### Scenario: A failed capture
-- **WHEN** the capture failed
-- **THEN** the picture's place says the capture failed, gives the reason and links to the target
+
+### Requirement: A capture's page uses the window's full width
+The page SHALL use the window's full width: on a screen wide enough for three
+columns the folded lists SHALL sit beside the picture and the facts rather than
+under them.
 
 #### Scenario: A very wide window
 - **WHEN** the window is 2200 px wide
 - **THEN** the picture, the facts and the lists are three columns that together fill the width
 
+
+### Requirement: A capture's long lists can be folded
+Headers, cookies, console and network entries SHALL each be a section with its
+count that can be folded; headers SHALL start open.
+
 #### Scenario: Long lists
 - **WHEN** the capture has headers and network entries
 - **THEN** the headers are shown, the network entries are folded under a heading with their count, and opening it shows them
+
+
+### Requirement: A capture without a picture says why
+A capture without a picture SHALL say whether it failed, give the reason and
+offer the target.
+
+#### Scenario: A failed capture
+- **WHEN** the capture failed
+- **THEN** the picture's place says the capture failed, gives the reason and links to the target
+
 
 ### Requirement: The new-scan dialog offers the screenshot capture
 The dialog that starts a scan SHALL list the gowitness screenshot capture among
 its presets. Choosing it SHALL replace the scope and command fields with what
 would be captured - the number of HTTP(S) URLs of the marked rows, or of the
 listed rows when nothing is marked, and the first of them - and SHALL start that
-capture, the same one the export dialog starts. When gowitness is not available
-the entry SHALL stay in the list, disabled, with the reason. When the selection
-holds no HTTP or HTTPS service the dialog SHALL say so and the start control
-SHALL be disabled.
+capture, the same one the export dialog starts.
 
 #### Scenario: Capturing from the scan dialog
 - **WHEN** the user opens the new-scan dialog on a list of hosts, chooses the gowitness entry and starts it
 - **THEN** a capture of those hosts' HTTP(S) URLs starts and the Scans tab shows it
+
+
+### Requirement: The capture entry says why it cannot start
+When gowitness is not available the entry SHALL stay in the list, disabled,
+with the reason. When the selection holds no HTTP or HTTPS service the dialog
+SHALL say so and the start control SHALL be disabled.
 
 #### Scenario: gowitness is missing
 - **WHEN** gowitness cannot be run
@@ -207,6 +229,7 @@ SHALL be disabled.
 #### Scenario: Nothing to capture
 - **WHEN** the listed rows have no HTTP or HTTPS service and the gowitness entry is chosen
 - **THEN** the dialog says so and cannot be started
+
 
 ### Requirement: A key bar shows the keys for the current view
 The bottom of a viewer page SHALL show the keys that apply to the current view,
@@ -288,3 +311,21 @@ control in the viewer SHALL name its key.
 #### Scenario: A key without a control
 - **WHEN** the list of keys is compared with the controls on a viewer page
 - **THEN** every action key is offered by a control or listed in the key overlay that `?` opens
+
+### Requirement: The front page is the host list
+The interface's front page SHALL redirect to the Hosts tab. The screenshot
+gallery SHALL be at `/gallery`. A front-page address that carries any of the
+gallery's parameters SHALL redirect to `/gallery` with the same parameters, so
+an older gallery link still opens the gallery it named.
+
+#### Scenario: Opening the interface
+- **WHEN** the browser opens the interface's address without a path
+- **THEN** the Hosts tab is shown and marked as the current tab
+
+#### Scenario: An older gallery link
+- **WHEN** the browser opens `/?group=title&q=login`
+- **THEN** the gallery grouped by page title and filtered by `login` is shown, at `/gallery?group=title&q=login`
+
+#### Scenario: The Screenshots tab
+- **WHEN** the user clicks the Screenshots tab
+- **THEN** the gallery opens at `/gallery`, and every link in it stays on `/gallery`

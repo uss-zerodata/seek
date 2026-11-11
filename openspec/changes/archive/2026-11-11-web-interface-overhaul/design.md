@@ -32,7 +32,6 @@ https://claude.ai/artifact/4TsU8Ui8tMEDGMvcA1hPFW
 - No change to routes, API, schemas, the session or the terminal viewer.
 - No new list columns, no new data in a record.
 - No resizable panes, no theme switch, no saved preferences.
-- No change of the landing page: `/` stays the gallery.
 - No motion. Keys used a hundred times an hour must not animate.
 
 ## Decisions
@@ -134,9 +133,14 @@ Four steps, each shippable and each leaving the suite green: shell and tokens;
 toolbar, table and key bar; record header; gallery, capture, search and dialogs.
 Rollback is reverting the step. No data or URL migration.
 
-## Open Questions
+## Resolved Questions
 
-- Is a bundled monospace face worth about 100 kB of package size for identical
-  rendering across machines?
-- Should `/` become the Hosts list with the gallery as a tab? Left out because
-  it changes a URL people may have bookmarked.
+- **No bundled monospace face.** The system's monospace font renders the pages
+  consistently in both themes at 1440, 1000 and 400 px, so 100 kB of package
+  size buys nothing. Decided by the user.
+- **`/` is the Hosts tab, and the gallery is `/gallery`.** Decided by the user,
+  accepting that a bookmark of plain `/` now opens the hosts. A `/` link that
+  carries any gallery parameter (`q`, `sort`, `group`, `address`, `port` and the
+  others) is redirected to `/gallery` with its query unchanged, so a filtered or
+  grouped gallery bookmark still works. Every gallery link, the tab, `i` and the
+  search's "all" link point at `/gallery` directly.

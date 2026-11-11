@@ -18,4 +18,4 @@
 
 ## 3. Finish
 
-- [ ] 3.1 README, AGENTS.md; ruff, full pytest, `openspec validate run-notifications --strict`
+- [x] 3.1 README, AGENTS.md; ruff, full pytest, `openspec validate run-notifications --strict`
