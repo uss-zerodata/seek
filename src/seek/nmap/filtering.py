@@ -22,7 +22,7 @@ is that host with that port. `open:`/`closed:` still ask for the state as well.
 from __future__ import annotations
 
 import ipaddress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from seek.engine.query import ParsedQuery, parse_query
 from seek.engine.score import match_score
@@ -134,16 +134,18 @@ def _in(network: Network, addresses: tuple[str, ...]) -> bool:
 
 
 def matches(spec: FilterSpec, text: str, addresses: tuple[str, ...] = (),
-            records: tuple = ()) -> bool:
+            records: tuple = (), tags=None) -> bool:
     """Does a row pass? Network terms gate; the fuzzy query scores.
 
     `records` are the row's `(host, service)` records, which field terms are
-    tested against; the plain path never looks at them.
+    tested against; the plain path never looks at them. `tags` is the session's
+    `TagSet`, which `tag:` terms read - give a spec `without_tags` first when
+    there is none yet.
     """
     if spec.is_empty:
         return True
     if spec.expr is not None:
-        return _Row(text, addresses, records).eval(spec.expr)
+        return _Row(text, addresses, records, tags).eval(spec.expr)
     # Several positive ranges are a *union*: `10.0.0.0/8 192.168.0.0/16` is the
     # two networks people actually mean, the way a target list reads. Requiring
     # every one of them, as this used to, asks for an address in both at once -
@@ -198,7 +200,7 @@ def describe(spec: FilterSpec) -> str:
 # a missing `)` is implied, a dangling operator or an empty field is dropped
 # and named in `FilterSpec.ignored`, and nothing half-typed empties the list.
 
-FIELDS = frozenset({"open", "closed", "port", "service", "product"})
+FIELDS = frozenset({"open", "closed", "port", "service", "product", "tag"})
 _OPERATORS = frozenset({"AND", "OR", "NOT", "|", "!", "(", ")"})
 
 
@@ -219,7 +221,8 @@ class Range:
 
 @dataclass(frozen=True, slots=True)
 class Field:
-    """A fact about one port: its state, its service name or its product."""
+    """A fact about one port: its state, its service name, its product, or a tag
+    it carries - its own or its host's."""
     key: str
     value: str
     port: int | None = None
@@ -228,7 +231,21 @@ class Field:
     start: bool = False                 # `^value`
     end: bool = False                   # `value$`
 
-    def test(self, svc) -> bool:
+    def _text_test(self, have: str) -> bool:
+        if self.start and self.end:
+            return have == self.text
+        if self.start:
+            return have.startswith(self.text)
+        if self.end:
+            return have.endswith(self.text)
+        return self.text in have
+
+    def test(self, svc, tags: frozenset[str] = frozenset()) -> bool:
+        """`svc` None is a host with no ports at all: only its tags can match."""
+        if self.key == "tag":
+            return any(self._text_test(t) for t in tags)
+        if svc is None:
+            return False
         if self.key == "port":
             # Any port a scan recorded with this number - whatever its state.
             return svc.port == self.port and (not self.proto or svc.protocol == self.proto)
@@ -241,13 +258,7 @@ class Field:
             # scan recorded is not here at all, so it matches neither key.
             return bool(svc.state) and svc.state != "open"
         have = ((svc.name if self.key == "service" else svc.product) or "").lower()
-        if self.start and self.end:
-            return have == self.text
-        if self.start:
-            return have.startswith(self.text)
-        if self.end:
-            return have.endswith(self.text)
-        return self.text in have
+        return self._text_test(have)
 
 
 @dataclass(frozen=True, slots=True)
@@ -335,6 +346,47 @@ def _is_port_term(token: str) -> bool:
     """A port, or a host with a port - what the plain path cannot express."""
     body = token[1:] if token.startswith("!") else token
     return _port_of(body) is not None or _address_port(body) is not None
+
+
+def _prune_tags(node):
+    """The expression without its `tag:` terms; None when nothing is left. A NOT
+    whose child goes goes with it - "none of nothing" would empty the list."""
+    if isinstance(node, Field):
+        return None if node.key == "tag" else node
+    if isinstance(node, Not):
+        child = _prune_tags(node.child)
+        return None if child is None else Not(child)
+    if isinstance(node, (And, Or)):
+        kids = [k for k in (_prune_tags(c) for c in node.children) if k is not None]
+        if not kids:
+            return None
+        return kids[0] if len(kids) == 1 else type(node)(tuple(kids))
+    return node
+
+
+def _tag_terms(node) -> list[str]:
+    if isinstance(node, Field):
+        return [f"tag:{node.value}"] if node.key == "tag" else []
+    if isinstance(node, Not):
+        return _tag_terms(node.child)
+    if isinstance(node, (And, Or)):
+        return [t for c in node.children for t in _tag_terms(c)]
+    return []
+
+
+def uses_tags(spec: FilterSpec) -> bool:
+    return spec.expr is not None and bool(_tag_terms(spec.expr))
+
+
+def without_tags(spec: FilterSpec, reason: str = "tags not ready") -> FilterSpec:
+    """The spec for a moment with no tags yet: its `tag:` terms named as ignored
+    rather than tested, so a half-built projection never empties the list."""
+    if not uses_tags(spec):
+        return spec
+    terms = _tag_terms(spec.expr)
+    pruned = _prune_tags(spec.expr)
+    return replace(spec, expr=pruned,
+                   ignored=[*spec.ignored, *(f"{t} ({reason})" for t in terms)])
 
 
 def _field(key: str, value: str) -> Field | None:
@@ -523,48 +575,71 @@ def _parse_expr(tokens: list[str]) -> FilterSpec:
 # every term exactly. Kept per records tuple (rows are cached with the model,
 # so the tuple is the same object keystroke after keystroke); the tuple is held
 # beside its answer so a recycled `id` can never be mistaken for it.
-_SAMPLES: dict[int, tuple[tuple, list]] = {}
+_SAMPLES: dict[int, tuple[tuple, list, object]] = {}
 _SAMPLES_MAX = 4096
 
 
-def _representatives(records: tuple) -> list:
+def _names(tags, host, svc) -> frozenset[str]:
+    if tags is None:
+        return frozenset()
+    if svc is None:
+        return tags.names(host.address)
+    return tags.names(host.address, svc.protocol, svc.port)
+
+
+def _ports(record, tags) -> list[tuple]:
+    """A record's `(service, tag names)` pairs: its own service, or every port
+    of its host - and a host with no ports at all as one portless sample, so
+    its tags can still be asked about."""
+    svc = getattr(record, "service", None)
+    services = [svc] if svc is not None else record.host.services
+    if not services:
+        return [(None, _names(tags, record.host, None))]
+    return [(each, _names(tags, record.host, each)) for each in services]
+
+
+def _representatives(records: tuple, tags=None) -> list:
+    # The tag set is part of the key, held beside it like the records: a
+    # re-tag must not be answered from the samples of the tags before it.
     hit = _SAMPLES.get(id(records))
-    if hit is not None and hit[0] is records:
+    if hit is not None and hit[0] is records and hit[2] is tags:
         return hit[1]
-    seen: dict[tuple, object] = {}
+    seen: dict[tuple, tuple] = {}
     for record in records:
-        svc = getattr(record, "service", None)
-        for each in ([svc] if svc is not None else record.host.services):
-            seen.setdefault((each.port, each.protocol, each.state, each.name, each.product),
-                            each)
+        for each, names in _ports(record, tags):
+            key = ((each.port, each.protocol, each.state, each.name, each.product)
+                   if each is not None else None, names)
+            seen.setdefault(key, (each, names))
     if len(_SAMPLES) >= _SAMPLES_MAX:
         _SAMPLES.clear()                    # a new model; the old rows are gone
     found = list(seen.values())
-    _SAMPLES[id(records)] = (records, found)
+    _SAMPLES[id(records)] = (records, found, tags)
     return found
 
 
 class _Row:
     """One row under evaluation; its ports are gathered once, when first asked."""
 
-    __slots__ = ("text", "addresses", "records", "_services")
+    __slots__ = ("text", "addresses", "records", "tags", "_services")
 
-    def __init__(self, text: str, addresses: tuple[str, ...], records: tuple) -> None:
+    def __init__(self, text: str, addresses: tuple[str, ...], records: tuple,
+                 tags=None) -> None:
         self.text = text
         self.addresses = addresses
         self.records = records
+        self.tags = tags
         self._services: list | None = None
 
     def services(self) -> list:
-        """A record's own service, or every port of its host - closed and
-        filtered included, or `closed:` could never match a host row."""
+        """`(service, tag names)` for a record's own service, or for every port
+        of its host - closed and filtered included, or `closed:` could never
+        match a host row."""
         if self._services is None:
             records = self.records
             if len(records) == 1:
-                svc = getattr(records[0], "service", None)
-                self._services = [svc] if svc is not None else records[0].host.services
+                self._services = _ports(records[0], self.tags)
             else:
-                self._services = _representatives(records)
+                self._services = _representatives(records, self.tags)
         return self._services
 
     def eval(self, node: Node) -> bool:
@@ -574,7 +649,7 @@ class _Row:
             return (any(_in(n, self.addresses) for n in node.networks)
                     or any(a.startswith(p) for p in node.prefixes for a in self.addresses))
         if isinstance(node, Field):
-            return any(node.test(s) for s in self.services())
+            return any(node.test(s, names) for s, names in self.services())
         if isinstance(node, Not):
             return not self.eval(node.child)            # "none of the ports"
         if isinstance(node, Or):
@@ -582,7 +657,8 @@ class _Row:
         # AND: the field terms directly under it are one clause, satisfied by
         # a single port; everything else is a condition on the row.
         fields = [c for c in node.children if isinstance(c, Field)]
-        if fields and not any(all(f.test(s) for f in fields) for s in self.services()):
+        if fields and not any(all(f.test(s, names) for f in fields)
+                              for s, names in self.services()):
             return False
         return all(self.eval(c) for c in node.children if not isinstance(c, Field))
 
@@ -666,7 +742,8 @@ def _say(node: Node) -> str:
         return {"port": f"port {port} (any state)", "open": f"port {port} open",
                 "closed": f"port {port} not open (closed or filtered)",
                 "service": f"a service named like “{node.value}”",
-                "product": f"a product like “{node.value}”"}[node.key]
+                "product": f"a product like “{node.value}”",
+                "tag": f"a tag like “{node.value}”"}[node.key]
     if isinstance(node, Not):
         return "not: " + _say(node.child)
     joiner = " and " if isinstance(node, And) else " or "

@@ -19,7 +19,7 @@ import csv
 import io
 import json
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from seek.nmap import inventory as inv_mod
@@ -46,6 +46,10 @@ class Record:
 
     host: Host
     service: Service | None = None
+    # Filled only for an export that asks for them (`tagged`); never part of
+    # what a record *is*, so marks and comparisons ignore them.
+    tags: tuple[str, ...] = field(default=(), compare=False)
+    issues: tuple[str, ...] = field(default=(), compare=False)
 
     @property
     def identity(self) -> tuple:
@@ -59,9 +63,36 @@ class Record:
         return [self.service] if self.service is not None else self.host.open_services
 
 
-def records_for(hosts: Iterable[Host]) -> list[Record]:
-    """Whole hosts as records - what an export over a host list used to take."""
-    return [Record(h) for h in hosts]
+def records_for(hosts: Iterable[Host], tags=None) -> list[Record]:
+    """Whole hosts as records - what an export over a host list used to take.
+    With the session's `TagSet`, each carries its tags and their issues."""
+    records = [Record(h) for h in hosts]
+    return tagged(records, tags) if tags is not None else records
+
+
+TAG_FIELDS = frozenset({"tags", "issues"})
+
+
+def tagged(records: Iterable[Record], tags) -> list[Record]:
+    """The records with their tags and issues filled in, from a `TagSet`.
+
+    A service record carries its own tags and its host's; a host record its
+    own and those of its ports. An uncertain tag is written `name?`; an issue
+    as `severity: title (tag)`, the most severe first.
+    """
+    out = []
+    for r in records:
+        address = r.host.address
+        grants = dict(tags.of_host(address))
+        services = [r.service] if r.service is not None else r.host.services
+        for svc in services:
+            for name, g in tags.of_service(address, svc.protocol, svc.port).items():
+                grants[name] = grants[name].join(g) if name in grants else g
+        names = tuple(f"{n}?" if grants[n].uncertain else n for n in sorted(grants))
+        issues = sorted(tags.issues(grants), key=lambda ti: (-ti[1].severity.rank, ti[1].title))
+        out.append(Record(r.host, r.service, names,
+                          tuple(f"{i.severity}: {i.title} ({t})" for t, i in issues)))
+    return out
 
 
 def _is_http(svc: Service) -> bool:
@@ -131,6 +162,8 @@ FIELDS: list[tuple[str, Callable[[Record], str]]] = [
     ("tunnel", lambda r: _svc(r, lambda s: s.tunnel)),
     ("vulns", lambda r: str(sum(len(s.vulnerabilities) for s in r.services))),
     ("url", lambda r: "" if r.service is None else service_url(r.host, r.service)),
+    ("tags", lambda r: ",".join(r.tags)),
+    ("issues", lambda r: "; ".join(r.issues)),
 ]
 FIELD_NAMES = [name for name, _ in FIELDS]
 _ACCESSORS = dict(FIELDS)

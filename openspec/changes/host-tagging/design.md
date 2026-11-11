@@ -289,8 +289,10 @@ fields, selected only when the columns exist. The display line stays as it is.
 
 - `<scaninfo protocol services>` adds the parsed ranges to
   `ScanFile.coverage[protocol]`. Protocol `ip` from `-sO` is ignored. A
-  malformed `services` attribute drops coverage for that protocol only and is
-  noted in `ScanSet.failures`.
+  malformed `services` attribute puts that protocol in
+  `ScanFile.coverage_unknown` and the file still loads. `ScanSet.failures` is
+  not used, because it lists files that could not be read at all. The tag
+  problems name the protocol instead.
 - `<host timedout="true">` adds the address to `ScanFile.timed_out`.
 - `<host>` with status `down` adds the address to `ScanFile.not_scanned`,
   because nmap does not probe ports of a host it found down.
@@ -309,9 +311,12 @@ ports and covers nothing.
 
 ### D8. Tag files are found during the scan walk
 
-`_scans_below` collects `seek-rules.yaml`, `seek-rules.yml` and `seek-tags.yaml`
-in the same walk. A second walk would double the start-up cost on large trees.
-`discover` returns them next to the scan paths. A file named directly makes seek
+`tagfiles.find` collects `seek-rules.yaml`, `seek-rules.yml` and
+`seek-tags.yaml` with `gowitness.locate.files_below`, the walker capture
+discovery already uses, by the scan search's rules. That is a second walk of
+the opened folders, as capture discovery already is: tens of milliseconds on a
+large tree, against changing `discover`'s interface for the command and both
+re-read paths. A file named directly makes seek
 look in that file's own folder, without descending. The global files are
 `config_dir()/rules.yaml` and `config_dir()/tags.yaml`. Dot folders are skipped,
 as they are for scans. This is documented, because a `.seek/` folder would
@@ -332,11 +337,11 @@ Issues are united by title, ignoring case. When titles match and severities
 differ, the higher severity wins and a warning is added. Descriptions keep the
 first in path order, with a warning when they differ.
 
-**Reload.** `TagFiles` keeps `(path, mtime_ns, size)` for every file. It checks
-them on every model publication and on the explicit reload, `R`. A change
-reloads all files. That is cheap, and partial reloads would complicate
-precedence. A file that appears in a new subfolder is found when the next re-read
-walks the tree.
+**Reload.** `Loaded` keeps `(path, mtime_ns, size)` for every file. Every model
+publication re-stats the known files, on the loop, which is a stat per file. A
+change reloads all of them, because partial reloads would complicate
+precedence. Finding new files is a walk of the sources, so only the explicit
+reload, `R`, does it, off the loop. A file in a new subfolder is found then.
 
 ### D9. Writing `seek-tags.yaml` and `tags.yaml`
 
@@ -458,9 +463,11 @@ hosts. It runs in a worker or the threadpool.
   name. `Enter` adds or removes. The dialog also offers "Edit definition…",
   which edits the description and issues and lets a severity be picked from a
   list, and "Copy to global".
-- `T` opens the builder screen. It has two lists, shared facts and exclusions,
-  each with check boxes and counts. The preview line sits below them. Saving
-  asks for the tag.
+- `T` opens the builder as a sequence of the viewer's existing dialogs: the
+  shared facts as a list to tick, with counts; then the exclusions the same
+  way; then the preview, which offers saving and asks for the tag. One screen
+  with two lists was the first plan; the existing dialogs already fit the
+  terminal and say how to leave, and the choices are the same.
 - `R` reloads the rule files.
 
 The tag dialog follows the modal rules in AGENTS.md: it uses an `OptionList`,

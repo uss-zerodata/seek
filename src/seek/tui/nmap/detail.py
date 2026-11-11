@@ -21,6 +21,7 @@ rather than built in one pass.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from rich.console import Group, RenderableType
 from rich.text import Text
@@ -385,6 +386,98 @@ def _script_block(scripts) -> list[Text]:
     return out
 
 
+def _tag_source(source: str) -> str:
+    """Where a tag came from, short: a rule as `file:line name`, a manual entry as
+    `manual (file)` - with the folder shortened the way the user would type it."""
+    from seek.paths import short_path
+
+    if source.startswith("manual (") and source.endswith(")"):
+        return f"manual ({short_path(Path(source[8:-1]))})"
+    where, _, name = source.partition(" ")
+    path, colon, line = where.rpartition(":")
+    if colon and line.isdigit():
+        return f"{short_path(Path(path))}:{line} {name}".strip()
+    return source
+
+
+def _tag_block(grants: list[tuple[str, object, str]], tags) -> list[Text]:
+    """The Tags block: each tag, where it came from, what it assumes, its issues.
+
+    `grants` is `(name, Grant, where)` - `where` says a tag is on one port of a
+    host, or inherited from the host, or empty for the record's own.
+    """
+    if not grants:
+        return []
+    out: list[Text] = [Text(""), _section("Tags", len(grants))]
+    for name, grant, where in grants:
+        line = Text(" " * 4)
+        line.append("• ", style=_KEY)
+        line.append(name, style="bold")
+        if grant.uncertain:
+            line.append(" ?", style="yellow")
+        if where:
+            line.append(f"  {where}", style=_KEY)
+        if grant.sources:
+            line.append("  " + _tag_source(grant.sources[0]), style=_KEY)
+            if len(grant.sources) > 1:
+                line.append(f" +{len(grant.sources) - 1}", style=_KEY)
+        out.append(line)
+        if grant.uncertain:
+            out.append(_sub("assumes", ", ".join(grant.evidence)))
+        d = tags.defs.get(name)
+        if d is None:
+            continue
+        for issue in sorted(d.issues, key=lambda i: -i.severity.rank):
+            issue_line = Text(" " * 8)
+            issue_line.append(f"{issue.severity.value:<9}",
+                              style=_SEVERITY_STYLE.get(issue.severity.value.upper(), _KEY))
+            issue_line.append(issue.title)
+            out.append(issue_line)
+    return out
+
+
+def _host_tags(host: Host, tags) -> list[tuple[str, object, str]]:
+    found = [(n, g, "") for n, g in sorted(tags.of_host(host.address).items())]
+    for svc in host.services:
+        for n, g in sorted(tags.of_service(host.address, svc.protocol, svc.port).items()):
+            found.append((n, g, f"on {svc.port}/{svc.protocol}"))
+    return found
+
+
+def _service_tags(svc: Service, host: Host, tags) -> list[tuple[str, object, str]]:
+    found = [(n, g, "") for n, g in
+             sorted(tags.of_service(host.address, svc.protocol, svc.port).items())]
+    found += [(n, g, "from the host") for n, g in sorted(tags.of_host(host.address).items())]
+    return found
+
+
+def _tag_summary(name: str, tags) -> list[Text]:
+    """A tag's own record, at the top of its bucket: what it is, what it costs."""
+    out: list[Text] = []
+    d = tags.defs.get(name)
+    count = tags.counts.get(name)
+    if d is not None and d.description:
+        out.append(_pair("is", d.description))
+    if count is not None:
+        out.append(_pair("tagged", f"{count.hosts} host(s), {count.services} port(s)"))
+        if count.uncertain:
+            out.append(_pair("uncertain", f"{count.uncertain} host(s) - an assumption, "
+                                          "see each host", "yellow"))
+    for note in tags.notes.get(name, ()):
+        out.append(_pair("note", note, _KEY))
+    if d is not None and d.issues:
+        out += [Text(""), _section("Issues", len(d.issues))]
+        for issue in sorted(d.issues, key=lambda i: -i.severity.rank):
+            line = Text(" " * 4)
+            line.append(f"{issue.severity.value:<9}",
+                        style=_SEVERITY_STYLE.get(issue.severity.value.upper(), _KEY))
+            line.append(issue.title)
+            out.append(line)
+            if issue.description:
+                out.append(_sub("", issue.description))
+    return out
+
+
 def _state_text(host: Host) -> tuple[str, str]:
     """The up rule's verdict, with what nmap recorded kept beside it."""
     if host.discovered:
@@ -402,7 +495,7 @@ def _state_text(host: Host) -> tuple[str, str]:
 def host_detail(host: Host, shots: Captures | None = None, full: bool = False,
                 scanned: rawlog.Scanned | None = None,
                 inventory: inv_mod.Inventory | None = None,
-                lookup: vmatch.Lookup | None = None) -> list[Line]:
+                lookup: vmatch.Lookup | None = None, tags=None) -> list[Line]:
     state, style = _state_text(host)
     os_text = host.os or ABSENT
     if host.os and host.osclass:
@@ -435,6 +528,8 @@ def host_detail(host: Host, shots: Captures | None = None, full: bool = False,
             line.append(f"{name:<32}")
             line.append(source, style=_KEY)
             parts.append(line)
+    if tags is not None:
+        parts.extend(_tag_block(_host_tags(host, tags), tags))
     if host.open_services:
         parts.append(Text(""))
         parts.append(_section("Services", len(host.open_services)))
@@ -464,7 +559,7 @@ def service_detail(svc: Service, host: Host | None = None,
                    shots: Captures | None = None, full: bool = False,
                    scanned: rawlog.Scanned | None = None,
                    inventory: inv_mod.Inventory | None = None,
-                   lookup: vmatch.Lookup | None = None) -> list[Line]:
+                   lookup: vmatch.Lookup | None = None, tags=None) -> list[Line]:
     state_line = Text()
     state_line.append(f"  {'state':<{_LABEL_W}}", style=_KEY)
     state_line.append(str(svc.state or ABSENT), style="bold green" if svc.is_open else _KEY)
@@ -496,6 +591,8 @@ def service_detail(svc: Service, host: Host | None = None,
             line.append(f"{name:<32}")
             line.append(source, style=_KEY)
             parts.append(line)
+    if tags is not None and host is not None:
+        parts.extend(_tag_block(_service_tags(svc, host, tags), tags))
     if inventory is not None and host is not None:
         comps = inventory.of_service(host, svc)
         where = (host.address, svc.protocol, svc.port)
@@ -570,18 +667,19 @@ def group_detail(group: ServiceGroup,
     return lines_of(parts)
 
 
-def grouping_detail(group: Grouping,
-                    shots: Captures | None = None) -> list[Line]:
-    """The report for one `by service` / `by product` / `by port` bucket."""
+def grouping_detail(group: Grouping, shots: Captures | None = None,
+                    tags=None) -> list[Line]:
+    """The report for one `by service` / `product` / `port` / `tag` bucket."""
     hosts = group.hosts
     parts: list[RenderableType] = [
         _heading(group.label, f"grouped by {group.key}"),
         _pair("hosts", len(hosts), "bold"),
         _pair("services", len(group.members)),
         _pair("ports", ", ".join(group.ports)),
-        Text(""),
-        _section("Hosts", len(hosts)),
     ]
+    if group.key == "tag" and tags is not None:
+        parts.extend(_tag_summary(group.label, tags))
+    parts += [Text(""), _section("Hosts", len(hosts))]
     # Indexed in one pass rather than rescanning every member per host: a
     # bucket can hold twenty-four thousand hosts and three hundred thousand
     # services, and "for each host, scan every member" is their product -
@@ -971,7 +1069,7 @@ def render(target: object, host: Host | None = None,
            shots: Captures | None = None, full: bool = False,
            scanned: rawlog.Scanned | None = None,
            inventory: inv_mod.Inventory | None = None,
-           lookup: vmatch.Lookup | None = None) -> list[Line]:
+           lookup: vmatch.Lookup | None = None, tags=None) -> list[Line]:
     """The record for one row, as the lines it is made of.
 
     `full` is the reader's depth: the same record, with everything a capture
@@ -989,13 +1087,13 @@ def render(target: object, host: Host | None = None,
     if isinstance(target, ServiceGroup):
         return group_detail(target, shots)
     if isinstance(target, Grouping):
-        return grouping_detail(target, shots)
+        return grouping_detail(target, shots, tags)
     if isinstance(target, inv_mod.Entry):
         return entry_detail(target, lookup, full)
     if isinstance(target, vmatch.Affected):
         return affected_detail(target, lookup)
     if isinstance(target, Service):
-        return service_detail(target, host, shots, full, scanned, inventory, lookup)
+        return service_detail(target, host, shots, full, scanned, inventory, lookup, tags)
     if isinstance(target, Host):
-        return host_detail(target, shots, full, scanned, inventory, lookup)
+        return host_detail(target, shots, full, scanned, inventory, lookup, tags)
     return [Line(Text(""))]

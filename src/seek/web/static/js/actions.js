@@ -553,4 +553,163 @@ async function stopWeb() {
   });
 }
 
-export const handlers = { mark, clearMarks, export: exportDialog, newScan, scanGaps, updateVulndb, cancel, freeze, stopWeb, shots };
+// --- tags --------------------------------------------------------------------------
+
+// What `t` and `T` act on: the marks when there are any - the server takes an
+// empty row list as "the marks" - else the selected row. The terminal's rule.
+async function tagTargets() {
+  let marks;
+  try { marks = await send("GET", "/api/v1/marks"); } catch (e) { say(e.message); return null; }
+  if (marks.count) return { rows: [], label: `${marks.count} marked` };
+  const tr = document.querySelector("table.rows tr.selected");
+  if (!tr) { say("nothing to tag - select a row or mark some"); return null; }
+  const v = view();
+  return { rows: [{ tab: v.tab, path: v.path, step: tr.dataset.step }], label: "the selected row" };
+}
+
+function reportChange(out) {
+  if (out.errors.length) say(out.errors.join("; "));
+  else if (out.saved.length) say(`${out.summary} · saved in ${out.saved.join(", ")}`);
+  else say("nothing to change");
+  refreshList();
+}
+
+const SEVERITIES = ["info", "low", "medium", "high", "critical"];
+
+async function tag() {
+  const t = await tagTargets();
+  if (!t) return;
+  let known;
+  try { known = await send("GET", "/api/v1/tags"); } catch (e) { say(e.message); return; }
+  const d = dialog(`Tag ${t.label}`, `
+      <p><label>tag <input name="tag" list="tag-names" autocomplete="off"></label>
+      <datalist id="tag-names">${known.tags.map((x) => `<option value="${esc(x.name)}">`).join("")}</datalist></p>
+      <p class="dim small">lowercase letters, digits, . _ - · Remove takes off a tag given by hand</p>`,
+    `<button value="add" class="primary">Add</button> <button value="remove">Remove</button>
+         <button value="edit">Edit its description and issues…</button>
+         <button value="global">Copy to the global file</button>
+         <button value="cancel">Cancel</button>`);
+  const form = d.querySelector("form");
+  form.tag.focus();
+  d.addEventListener("close", async () => {
+    const choice = d.returnValue;
+    const name = form.tag.value.trim();
+    if (!["add", "remove", "edit", "global"].includes(choice)) return;
+    if (!name) { say("no tag name given"); return; }
+    if (choice === "edit") { editTag(name, known.tags.find((x) => x.name === name.toLowerCase())); return; }
+    try {
+      reportChange(choice === "global"
+        ? await send("POST", `/api/v1/tags/${encodeURIComponent(name)}/global`)
+        : await send("POST", "/api/v1/tags/entries", { tag: name, add: choice === "add", rows: t.rows }));
+    } catch (e) { say(e.message); }
+  });
+}
+
+function editTag(name, current) {
+  const issue = (i = { title: "", severity: "medium", description: "" }) => `
+      <p class="issue"><input name="title" value="${esc(i.title)}" placeholder="issue title">
+        <select name="severity">${SEVERITIES.map((s) => `<option${s === i.severity ? " selected" : ""}>${s}</option>`).join("")}</select>
+        <input name="idesc" value="${esc(i.description || "")}" placeholder="description"></p>`;
+  const d = dialog(`Edit ${name}`, `
+      <p><label>description <input name="description" value="${esc(current?.description || "")}"></label></p>
+      <div class="issues">${(current?.issues || []).map(issue).join("")}${issue()}</div>
+      <p class="dim small">clear an issue's title to remove it; the blank row adds one</p>`,
+    `<button value="save" class="primary">Save</button> <button value="cancel">Cancel</button>`);
+  const form = d.querySelector("form");
+  d.addEventListener("close", async () => {
+    if (d.returnValue !== "save") return;
+    const titles = [...form.querySelectorAll("input[name=title]")];
+    const sevs = [...form.querySelectorAll("select[name=severity]")];
+    const descs = [...form.querySelectorAll("input[name=idesc]")];
+    const issues = titles.map((x, k) => ({ title: x.value.trim(), severity: sevs[k].value,
+                                           description: descs[k].value.trim() }))
+                         .filter((i) => i.title);
+    try {
+      reportChange(await send("PUT", `/api/v1/tags/${encodeURIComponent(name)}`,
+                              { description: form.description.value.trim(), issues }));
+    } catch (e) { say(e.message); }
+  });
+}
+
+async function reloadTags() {
+  try {
+    const out = await send("POST", "/api/v1/tags/reload");
+    const errors = out.problems.filter((p) => p.level === "error").length;
+    say(`tag rules reloaded: ${out.files.length} file(s), ${out.tags.length} tag(s)` +
+        (errors ? `, ${errors} problem(s)` : ""));
+    refreshList();
+  } catch (e) { say(e.message); }
+}
+
+// `T`: shared facts, then exclusions, then the preview - each a choice, as in the
+// terminal; every count comes from the server's rule builder.
+async function buildRule() {
+  const t = await tagTargets();
+  if (!t) return;
+  let shared;
+  try { shared = await send("POST", "/api/v1/tags/builder", { rows: t.rows }); }
+  catch (e) { say(e.message); return; }
+  if (shared.notes.length) say(shared.notes.join(" · "));
+  const offered = [...shared.facts, ...shared.partial];
+  if (!offered.length) return;
+  const d = dialog(`What ${shared.selected.length} selected host(s) share`, `
+      <p class="dim small">the number is how many other hosts share it too</p>
+      <fieldset class="facts">${offered.map((p, k) => `<label><input type="checkbox" name="fact" value="${k}"> ${esc(p.fact.label)} <span class="dim">(${p.others} others)</span></label><br>`).join("")}</fieldset>`,
+    `<button value="next" class="primary">Next</button> <button value="cancel">Cancel</button>`);
+  d.addEventListener("close", async () => {
+    if (d.returnValue !== "next") return;
+    const positive = [...d.querySelectorAll("input[name=fact]:checked")].map((c) => offered[+c.value].fact);
+    if (!positive.length) { say("choose at least one fact"); return; }
+    let ex;
+    try { ex = await send("POST", "/api/v1/tags/builder/exclusions", { rows: t.rows, positive }); }
+    catch (e) { say(e.message); return; }
+    excludeStep(t, positive, ex);
+  });
+}
+
+function excludeStep(t, positive, ex) {
+  if (!ex.unwanted) { previewStep(t, positive, []); return; }
+  const choices = [];
+  if (ex.combination) {
+    choices.push({ facts: ex.combination.facts,
+                   label: `not ${ex.combination.facts.map((f) => f.label).join(" and ")} (leaves ${ex.combination.remaining})` });
+  }
+  ex.single.forEach((p) => choices.push({ facts: [p.fact],
+    label: `not ${p.fact.label} (excludes ${p.excludes}/${ex.unwanted}` +
+           (p.assumed_on.length ? `, assumed on ${p.assumed_on.length} selected)` : ")") }));
+  const d = dialog(`These facts also match ${ex.unwanted} unselected host(s)`, `
+      <fieldset class="facts">${choices.map((c, k) => `<label><input type="checkbox" name="ex" value="${k}"> ${esc(c.label)}</label><br>`).join("")}</fieldset>`,
+    `<button value="next" class="primary">Next</button> <button value="cancel">Cancel</button>`);
+  d.addEventListener("close", () => {
+    if (d.returnValue !== "next") return;
+    const negative = [];
+    d.querySelectorAll("input[name=ex]:checked").forEach((c) => choices[+c.value].facts.forEach((f) => {
+      if (!negative.some((n) => n.label === f.label)) negative.push(f);
+    }));
+    previewStep(t, positive, negative);
+  });
+}
+
+async function previewStep(t, positive, negative) {
+  let shown;
+  try { shown = await send("POST", "/api/v1/tags/builder/preview", { rows: t.rows, positive, negative }); }
+  catch (e) { say(e.message); return; }
+  const d = dialog("Save the rule", `
+      <p>Matches ${shown.matched.length} host(s): ${shown.selected} of ${shown.of_selection} selected, ${shown.assumed.length} on an assumption.</p>
+      ${shown.confirm ? `<p class="why">${esc(shown.confirm)} - save anyway?</p>` : ""}
+      <p><label>to tag <input name="tag" autocomplete="off"></label></p>`,
+    `<button value="save" class="primary">Save</button> <button value="cancel">Cancel</button>`);
+  const form = d.querySelector("form");
+  d.addEventListener("close", async () => {
+    const name = form.tag.value.trim();
+    if (d.returnValue !== "save") return;
+    if (!name) { say("no tag name given"); return; }
+    try {
+      reportChange(await send("POST", `/api/v1/tags/${encodeURIComponent(name)}/rules`,
+                              { rows: t.rows, positive, negative }));
+    } catch (e) { say(e.message); }
+  });
+}
+
+export const handlers = { mark, clearMarks, export: exportDialog, newScan, scanGaps, updateVulndb, cancel, freeze, stopWeb, shots,
+  tag, buildRule, reloadTags };

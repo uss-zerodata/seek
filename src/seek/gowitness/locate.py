@@ -54,7 +54,7 @@ def is_gowitness_db(path: Path) -> bool:
         con.close()
 
 
-def _walk(root: Path) -> Iterable[Path]:
+def files_below(root: Path) -> Iterable[Path]:
     """Every file below `root`: dot directories and symlinked ones skipped,
     unreadable ones passed over - the same rules as the scan search."""
     stack = [root]
@@ -86,7 +86,7 @@ def find_databases(paths: Iterable[Path]) -> list[Path]:
     for root in paths:
         root = Path(root)
         found = ([root] if root.is_file() else
-                 (p for p in _walk(root) if p.suffix.lower() in DB_SUFFIXES))
+                 (p for p in files_below(root) if p.suffix.lower() in DB_SUFFIXES))
         for path in found:
             try:
                 key = path.resolve()
@@ -114,7 +114,7 @@ class ShotIndex:
             self._by_name = {}
             for root in self.roots:
                 if root.is_dir():
-                    for path in _walk(root):
+                    for path in files_below(root):
                         if path.suffix.lower() in IMAGE_SUFFIXES:
                             self._by_name.setdefault(path.name, path)
         return self._by_name.get(name)

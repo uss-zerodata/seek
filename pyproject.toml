@@ -1,6 +1,6 @@
 [project]
 name = "seek-tui"
-version = "0.8.10"
+version = "0.9.0"
 description = "Interactive terminal search for files, directories, and file contents"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -11,6 +11,7 @@ dependencies = [
     "fastapi>=0.141.1",
     "uvicorn>=0.54.0",
     "jinja2>=3.1.6",
+    "pyyaml>=6.0.3",
 ]
 
 [project.scripts]

@@ -39,6 +39,9 @@ def _key_at(row: vdefs.Row) -> tuple:
 
 def _narrow(rows: Iterable[vdefs.Row], q: str) -> list[vdefs.Row]:
     spec = filtering.parse_filter(q.strip()) if q.strip() else filtering.FilterSpec()
+    # These lists read the model alone, without the session's tags: a `tag:`
+    # term is set aside and named, never left to empty the list.
+    spec = filtering.without_tags(spec, "tags are in the views, /api/v1/views")
     kept = [r for r in rows if not r.heading
             and filtering.matches(spec, r.text, r.addresses, r.records)]
     return sorted(kept, key=_key_at)

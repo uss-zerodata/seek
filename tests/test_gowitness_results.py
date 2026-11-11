@@ -90,6 +90,27 @@ def test_tls_detail_and_its_san_list_are_read():
     assert any(c.sans for c in captures), "no certificate SAN names were read"
 
 
+def test_the_certificate_subject_and_issuer_are_kept_apart_for_tag_rules():
+    captures, _ = _read()
+    by_url = {c.url: c for c in captures}
+    https = by_url["https://sso.hektor.cc:443"]
+    assert (https.tls_subject, https.tls_issuer) == ("sso.hektor.cc", "YR2")
+    assert by_url["http://sso.hektor.cc:443"].tls_subject == "", "no certificate, no subject"
+
+
+def test_no_tls_table_leaves_subject_and_issuer_empty(tmp_path):
+    path = tmp_path / "gowitness.sqlite3"
+    path.write_bytes(FIX.read_bytes())
+    con = sqlite3.connect(path)
+    con.execute("drop table tls_san_lists")
+    con.execute("drop table tls")
+    con.commit()
+    con.close()
+    captures, problems = res.read_database(path)
+    assert len(captures) == 7 and problems == []
+    assert all(c.tls_subject == c.tls_issuer == "" for c in captures)
+
+
 def test_an_empty_reason_over_http2_is_not_an_error():
     captures, _ = _read()
     h2 = [c for c in captures if c.protocol == "h2"]

@@ -1,0 +1,68 @@
+# A synthetic copy of the rule format of `categorize_systems` (both of its
+# dialects: the pattern types of its main branch and `service_match` from its
+# newer branch). Read by seek unchanged.
+rules:
+  - name: Cisco Catalyst switch
+    pattern:
+      all:
+        - nmap_port: { port: 80, product: "OpenResty web app server" }
+        - nmap_port: { port: 443, product: "OpenResty web app server" }
+        - nmap_port: { port: 830, state: open }
+    host_tags: ["switch", "cisco", "catalyst"]
+
+  - name: Printer (port-based)
+    pattern:
+      all:
+        - nmap_port: { port: 515, state: open }
+        - nmap_port: { port: 9100, state: open }
+    host_tags: ["printer"]
+
+  - name: Ricoh printer
+    pattern:
+      all:
+        - html_title: { regex: "Web Image Monitor" }
+        - nmap_port: { port: 515, state: open }
+    host_tags: ["printer", "ricoh"]
+    service_tags: ["ricoh-web-ui"]
+
+  - name: Zebra printer (gowitness)
+    pattern:
+      any:
+        - html_body: { regex: "Zebra Technologies" }
+        - html_body: { regex: "ZD420" }
+    host_tags: ["printer", "zebra"]
+
+  - name: Redirecting appliance
+    pattern:
+      html_redirect: { regex: "/login\\.html$" }
+    host_tags: ["appliance"]
+
+  - name: Hikvision camera (service_match)
+    pattern:
+      service_match:
+        port: 443
+        state: open
+        protocol: tcp
+        title: "Login"
+        "cert:issuer": "HIKVISION"
+        "cert:subject": "CN=cam"
+        hostname: 'cam\.example\.net$'
+        network_log: "doc/page/login\\.asp"
+    host_tags: ["cctv", "hikvision"]
+    service_tags: ["hikvision-web-ui"]
+
+  - name: Ricoh by tag
+    pattern:
+      all:
+        - has_tag: { tag: printer }
+        - nmap_port: { port: 54080, service: ipp }
+    host_tags: ["ricoh"]
+
+  - name: AXIS IP Camera
+    pattern:
+      all:
+        - nmap_port: { port: 80, state: open }
+        - nmap_port: { port: 443, state: open }
+        - nmap_port: { port: 554, state: open }
+        - nmap_port: { port: 49152, state: open }
+    host_tags: ["cctv", "axis"]

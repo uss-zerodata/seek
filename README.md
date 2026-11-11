@@ -204,6 +204,97 @@ When a filter leaves nothing, the list says what matched nothing and how to get
 back — `Esc` clears it. Modals (export, fields, format) move with `↑`/`↓`, choose
 with `↵` and cancel with `Esc`, and say so on their own last line.
 
+**Tagging hosts.** A tag names a kind of host or service - `printer`,
+`zebra-zd420`, `explored` - and can carry known issues, so a weakness that a
+whole model of device shares is flagged on every host that is that model. A tag
+is granted by rules in a YAML file, or by hand. Rules read the scans and the
+gowitness captures: ports, products, versions, scripts, certificates, page
+titles and bodies, redirects, headers and names.
+
+```yaml
+tags:
+  zebra-zd420:
+    description: Zebra ZD420 label printer
+    issues:
+      - title: Admin interface protected only by a 4-digit PIN
+        severity: medium            # info, low, medium, high or critical
+    rules:
+      - name: ZD420 status page, no ssh
+        when:                       # every condition must hold
+          - port: 80/tcp
+            body: {literal: "ZD420"}
+          - port: 9100/tcp
+          - not: {port: 22/tcp}     # no port of the host is 22/tcp open
+```
+
+A tag is granted when any of its rules matches, and its issues go to every host
+it is granted to - so keep issues on narrow tags, and a broad tag like `printer`
+without them. Keys in one condition describe one port: `{port: 80, product:
+nginx}` is nginx on port 80, not nginx somewhere. Without `state:` a port must
+be open. `not:` takes one condition and means that no port of the host
+satisfies it. `any:` and `all:` group conditions, `tag:` asks for another tag,
+and `grant: service` (or `both`) tags the matching ports instead of the host.
+Text is a regular expression matched anywhere and ignoring case; `{regex:
+"READY", case: true}` respects case, and `{literal: "Jetty(i-jetty)"}` matches
+the text as written. Quote values YAML would read as something else: `"no"`,
+`"1.10"`.
+
+The rule files of the colleague's tool `categorize_systems` are read as they
+are - `rules:` with `nmap_port`, `html_title`, `html_body`, `html_redirect`,
+`service_match`, `has_tag`, `all` and `any` - and can sit in one file with a
+`tags:` section. Two things differ there on purpose: text ignores case and is
+searched, and a service tag goes to every port a condition matched, where
+`categorize_systems` tags only the ports common to every pattern of a rule.
+`examples/seek-rules.yaml` is a starting point.
+
+**Where rules live.** seek reads every `seek-rules.yaml` (or `.yml`) and every
+`seek-tags.yaml` in the opened folders and every folder below them, by the rules
+that find scans - folders whose name starts with a dot are not searched - and
+`rules.yaml` and `tags.yaml` in the config directory. All of them apply to every
+scan that is open, so opening the parent of everyone's scan folders tags them
+all the same way. `seek-rules.yaml` is yours: seek reads it and never writes
+it. `seek-tags.yaml` is seek's: manual tags and the definitions made in the
+viewer go there, in the first opened folder; edit it if you like, but comments
+do not survive seek's next write. A file seek cannot read is skipped with a
+problem that names it and the line, and never rewritten. When two files define
+the same tag differently:
+
+| The files | Which definition applies |
+| --- | --- |
+| One in a folder below the other's | the deeper one, with a warning |
+| A project file and a global file | the project's, with a warning |
+| Side by side, or in unrelated folders | both: rules and issues combined, with a warning |
+| Identical definitions | one, without a warning |
+
+**When a tag is an assumption.** `not: {port: 22/tcp}` is only certain where
+some scan probed port 22 on that host - nmap names the ports each scan probed,
+and seek reads that. Where no scan did, or the host timed out, the tag is still
+given but marked `?`, and the record says what is missing (`22/tcp not
+scanned`), so you can scan exactly that. The same holds for a negated test of a
+page title or body where there is no capture. A negation without a port -
+`not: {service: ssh}` - cannot know about ports nobody scanned and counts as
+certain. A positive test without its data simply does not match; a body test on
+a capture made without bodies is reported as not evaluated. Bodies are read
+from the capture database only for ports that pass a rule's other tests, and
+only the first megabyte of each page is searched. Expressions run without a
+time limit, so avoid nesting quantifiers such as `(a+)+`.
+
+**Tagging by hand, and building a rule.** `t` tags the marked rows, or the
+selected one: pick a tag (picking one they all carry removes it), type a new
+name, give a tag a description and issues, or copy a tag's definition to the
+global `tags.yaml` - a copy never carries an address. Tags are saved in
+`seek-tags.yaml` in the first opened folder, so `explored` and `high-value`
+survive the session. `T` turns marked hosts into a rule: it lists what they all
+share, each with how many other hosts share it too, rarest first, and offers the
+common start or end of values that differ (` - READY`). Tick the facts; when
+they also match hosts you did not mark, it lists what those hosts have and yours
+do not - `not 22/tcp open, excludes 500/500` - and says when an exclusion is
+only an assumption for one of yours because port 22 was never scanned there.
+The preview counts the result before you save it to a tag. A tag marked `?`
+names what is missing: filter `tag:zebra-zd420`, mark the uncertain hosts and
+send them to a scan of exactly that port from the export dialog. `R` reads the
+tag files again; `tag:` filters, `b` groups by tag.
+
 **Running scans.** With nmap on the path (the status line says `⌁ nmap 7.94`, or
 `⌁ nmap not found`), `n` starts one: a scope editor — one target per line,
 addresses, `10.0.0.0/24`, `10.0.0.1-20`, hostnames or URLs — then a preset, then

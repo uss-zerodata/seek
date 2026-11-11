@@ -23,6 +23,7 @@ deviation into new code; migrate one only when you change that code anyway.
 | TC-4 | decided otherwise | `>=3.11`: the features used (`tomllib`, `StrEnum`) are there, and users run 3.11. |
 | TC-30 | decided otherwise | `SIM` is not selected. |
 | UI-30 | checker false positive | The `!` it finds is fzf's negation syntax inside the query parsers, not text for the user. |
+| LIB-1 | not met | No `stdkit`: it has no git source to declare (TC-42), so `nmap/recent.py` and `nmap/tagfiles.py` write atomically by hand. |
 
 ## Commands
 
@@ -145,6 +146,11 @@ src/seek/
     diff.py         what a scan added to what was already known
     cpe.py          CPE 2.2/2.3 bindings + the alias table (one product, every spelling, its CPE)
     inventory.py    software inventory: recognisers -> observations -> reconciled components
+    coverage.py     which ports each scan probed (`<scaninfo>`), per host: "not open" vs "never asked"
+    tagrules.py     the tag rule language: YAML (both dialects) -> immutable definitions, problems, order
+    tagfiles.py     owner of seek-rules.yaml / seek-tags.yaml: find, precedence, entries, locked writes
+    tagging.py      tag rules over the model -> TagSet (three-valued, clause by clause over sets)
+    tagbuild.py     the rule builder: shared facts, exclusions, preview, draft - counted by tagging
     filtering.py    the filter grammar: FilterSpec (fuzzy / ranges / field terms), prefer_firm, explain
     names.py        the names a host is known by, read from what the server gives away
     rawlog.py       which lines of a `.nmap` text are one host or one port - boundary search, no meaning
@@ -160,6 +166,7 @@ src/seek/
     scans.py        the Scans tab: run list + the three report modes
     scope.py        scope editor, editable command, the review before it runs
     builder.py      the chooser (build / recent / frequent / presets) and the builder screen
+    tagflows.py     TagFlows mixin: t (tag, edit, copy), T (rule builder), R (reload)
   gowitness/
     detect.py       docker or native, or neither - never raises
     capture.py      one argv for both backends, output layout, the CaptureRun
@@ -358,8 +365,10 @@ together. Do not `query_one(RowList)`: it matches both.
 **nmap viewer invariants.**
 
 - **Stateless.** The files named on the command line are the whole truth for a
-  run: no import, no database, nothing written but an explicit export. Parsing
-  1.4 MB takes ~11 ms, so there is no performance argument for caching.
+  run: no import, no database, nothing written but an explicit export - or an
+  explicit tag action, which writes `seek-tags.yaml` (see the tagging rule
+  below). Parsing 1.4 MB takes ~11 ms, so there is no performance argument for
+  caching.
 - **A scan's label is unique within a run; provenance is per file, never per
   file name.** `merge.naming(roots)` decides it once, from the command line:
   the bare file name for one directory or for files, the path below the
@@ -395,7 +404,11 @@ together. Do not `query_one(RowList)`: it matches both.
   `(port, protocol, state, name, product)`, cached by the records tuple's
   identity - a field term reads nothing else, and walking 20 000 pairs a
   keystroke was 200 ms. Add a field by teaching `Field.test` *and* that sample
-  key, or the samples will answer it wrongly. Port-state keys are
+  key, or the samples will answer it wrongly. `tag:` is such a field: a sample
+  is `(service, tag names)`, its key includes the names, and the sample cache
+  is keyed on the `TagSet` too, so a re-tag is never answered from old samples.
+  Front ends filter through `Session.filter_spec` / `row_matches`, which set
+  `tag:` terms aside (named, never emptying the list) while tags are not built. Port-state keys are
   `open:`/`closed:`, never `up:`/`down:` - "up" is the host rule.
 - **`line_no`-style split, again:** a host's *recorded* state (`state`/`reason`)
   and whether it is `up` are different things. `-Pn` makes nmap report `up`
@@ -735,6 +748,31 @@ together. Do not `query_one(RowList)`: it matches both.
   takes `--ink-3`, and a colour beats dim, because a dimmed colour falls under
   the contrast the colour is held to. Every dialog is `dialog(title, body,
   buttons, note)` in `actions.js`: one frame, one primary.
+- **Tags are a session projection, evaluated clause by clause.** `tagging.build`
+  turns the model, the captures and the loaded tag files into an immutable
+  `TagSet`; `Session.tags()` caches it on (model, capture generation, tag
+  generation) and `tags_ready()` builds inline below `INLINE_TAG_HOSTS`, else
+  the rows worker builds it - *before* the rows, which carry the Tags column.
+  Evaluation is set arithmetic over all hosts: services are numbered and
+  indexed by port, a text test runs once per distinct value, a clause is a set
+  and a rule an intersection. Host by host it was 13.6 s for 200 rules over the
+  24 200-host corpus; now about 1.4 s cold and 0.9 s with the prepared index
+  (`tagging.prepare`), which the session keeps per model and capture
+  generation. Rules: **only a negation assumes** - `not: {port: 22/tcp}` holds on
+  an assumption where no scan probed 22/tcp (`coverage.py`, from `<scaninfo>`;
+  a timed-out or down host was not probed); a positive test without its data
+  fails; a negated tag fails when the tag is held *or assumed*, so no host gets
+  a tag and its negation. **seek never writes a person's file** - `seek-rules.yaml`
+  and the global `rules.yaml` are read only; `seek-tags.yaml` / `tags.yaml` are
+  rewritten whole, under a `.lock`, by applying an operation to the file as it
+  is on disk (two writers keep both changes), and never when the file does not
+  parse. Precedence: a deeper folder beats a shallower one, a project file
+  beats the global one, unrelated files merge - each with a warning; identical
+  definitions are one. Page bodies are read in batches by
+  `gowitness.results.read_bodies`, only for ports passing a rule's other tests,
+  cut at 1 MiB, cached per database identity. A problem in a rule file disables
+  the smallest unit it concerns and is listed, with file and line; nothing in a
+  rule file can stop the viewer.
 - **The software inventory is a session projection, never a model attachment.**
   `nmap/inventory.py` turns every source into `Observation`s - nmap's probe and
   its `<cpe>`s, OS matches, the scripts that *state* this service's software

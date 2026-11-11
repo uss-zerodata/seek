@@ -60,6 +60,17 @@ more, against the test suite's feed fixtures built into a throwaway database:
 tab` 1187 ms. The lookup's cost grows with distinct versions, not with hosts;
 the tabs' with the places each product runs on.
 
+Host tagging (`openspec/changes/host-tagging/`) adds `tags (200 rules)`: 200
+generated rules - every fourth with an exclusion, every tenth testing a product
+on any port, every twentieth asking for another tag - over the same corpus, as
+the session's projection builds them: 1370 ms from cold, of which about half is
+the rule-independent index (services by port, field values, port coverage) that
+the session keeps per model and capture generation; a rebuild after a manual tag
+or a rule edit reuses it and takes about 900 ms. The corpus is a hard case for
+it: every host has most ports open, so each rule holds on about 40 % of hosts -
+150 000 host grants in all. Evaluating host by host, over the same rules, took
+13.6 s; clause by clause over sets of hosts is what brought it here.
+
 Note that "to the first screen" has no row any more, because there no longer is
 one: the viewer opens on the candidate files and reads them with the screen
 already up. What the user waits for is the first publication, not the last -
@@ -79,6 +90,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import random
 import statistics
 import sys
 import threading
@@ -86,7 +98,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from seek.nmap import bulk, inventory, timeline
+from seek.nmap import bulk, inventory, tagfiles, tagging, tagrules, timeline
 from seek.nmap import merge as merge_mod
 from seek.nmap.parse import NmapParseError, parse_file
 from seek.nmap.views import prepare
@@ -167,6 +179,34 @@ def _fixture_store():
     return Store(fx.database(Path(tempfile.mkdtemp(prefix="seek-bench-"))))
 
 
+RULES = 200
+_PORTS = (22, 25, 53, 80, 110, 139, 443, 445, 631, 3128, 3306, 3389, 5432, 6379, 8080, 8443,
+          9200, 27017)
+_PRODUCTS = ("OpenSSH", "nginx", "Apache", "MySQL", "PostgreSQL", "Redis", "Squid", "CUPS",
+             "Samba", "Elasticsearch", "MongoDB", "Postfix", "Dovecot", "BIND")
+
+
+def _generated_tags(count: int):
+    """`count` deterministic rules: positive ports with products, every fourth with
+    an exclusion, every tenth port-free (the slow kind), every twentieth asking
+    for the tag before it."""
+    rnd = random.Random(0)
+    lines = ["tags:"]
+    for n in range(count):
+        ports = rnd.sample(_PORTS, 2)
+        when = [f"{{port: {ports[0]}, product: {rnd.choice(_PRODUCTS)}}}", f"{{port: {ports[1]}}}"]
+        if n % 4 == 0:
+            when.append(f"{{not: {{port: {rnd.choice(_PORTS)}/tcp}}}}")
+        if n % 10 == 0:
+            when.append(f"{{product: {rnd.choice(_PRODUCTS)}}}")
+        if n % 20 == 0 and n:
+            when.append(f"{{tag: t{n - 1}}}")
+        lines.append(f"  t{n}:\n    rules: [{{when: [{', '.join(when)}]}}]")
+    _doc, defs = tagrules.load("\n".join(lines) + "\n", "generated")
+    order, disabled = tagrules.order(defs.tags)
+    return tagfiles.Loaded(tags=defs.tags, order=order, disabled=disabled)
+
+
 def pipeline(root: Path, policy: bool = True) -> None:
     """Every phase between "the directory" and "a tab full of rows"."""
     split = Split()
@@ -209,6 +249,11 @@ def pipeline(root: Path, policy: bool = True) -> None:
         split.time("vuln lookup", owner.lookup)
         split.time("inventory tab", lambda: vdefs.inventory_view(owner).rows(scans))
         split.time("findings tab", lambda: vdefs.findings_view(owner).rows(scans))
+        # Tagging: a session projection like the inventory, here over generated
+        # rules with exclusions, port-free tests and tag dependencies.
+        loaded = _generated_tags(RULES)
+        split.time(f"tags ({RULES} rules)",
+                   lambda: tagging.build(scans.hosts, scans.files, loaded, {}))
 
     size = sum(p.stat().st_size for p in paths)
     print(f"\n{len(paths)} files, {size / 1e6:.1f} MB, {len(scans.hosts)} hosts, "

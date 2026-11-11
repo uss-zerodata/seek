@@ -172,3 +172,208 @@ async def test_a_second_scan_in_the_same_second_gets_its_own_files(tmp_path):
     first.with_name(first.name + ".xml").write_text("")
     second = output_base(tmp_path, "Quick", when)
     assert second.name == first.name + "-2"
+
+
+# --- tags ----------------------------------------------------------------------------
+
+from seek.nmap import tagfiles  # noqa: E402
+
+WEB_NO_SSH = ("tags:\n  web-only:\n    issues: [{title: Exposed, severity: low}]\n"
+              "    rules: [{when: [{port: 80}, {not: {port: 22/tcp}}]}]\n")
+
+
+def _engagement(tmp_path, rules: str | None = WEB_NO_SSH) -> Session:
+    eng = tmp_path / "eng"
+    eng.mkdir(exist_ok=True)
+    scan = eng / "basic.xml"
+    scan.write_bytes((FIX / "basic.xml").read_bytes())
+    if rules is not None:
+        (eng / "seek-rules.yaml").write_text(rules)
+    return Session(Config(nmap_path="/nonexistent/nmap"), [eng], eng, databases=[],
+                   scans=prepare(load([scan])))
+
+
+async def test_tags_are_computed_from_the_session_s_files_and_cached(tmp_path):
+    session = _engagement(tmp_path)
+    tags = session.tags()
+    assert set(tags.hosts) == {"192.0.2.2"}, "192.0.2.1 has ssh open"
+    assert session.tags() is tags, "nothing changed, nothing rebuilt"
+    assert session.tags_ready() is tags
+
+
+async def test_tags_ready_leaves_a_large_model_to_the_worker(tmp_path, monkeypatch):
+    session = _engagement(tmp_path)
+    monkeypatch.setattr(Session, "INLINE_TAG_HOSTS", 1)
+    assert session.tags_ready() is None
+    built = session.tags()
+    assert session.tags_ready() is built
+
+
+async def test_a_tag_added_in_one_front_end_reaches_the_others(tmp_path):
+    session = _engagement(tmp_path)
+    seen: list[Event] = []
+    session.listen(seen.append)
+    host = next(h for h in session.scans.hosts if h.address == "192.0.2.1")
+    change = session.plan_tag([Record(host)], "explored", add=True)
+    result = await session.apply_tag_change(change, origin="web")
+    assert result.ok and result.saved == (tmp_path / "eng" / "seek-tags.yaml",)
+    assert [(e.type, e.origin) for e in seen] == [("tags", "web")]
+    assert "explored" in session.tags().of_host("192.0.2.1")
+
+
+async def test_memory_changes_only_after_a_successful_write(tmp_path):
+    session = _engagement(tmp_path)
+    (tmp_path / "eng" / "seek-tags.yaml").write_text("entries: [unclosed\n")
+    generation = session.tags_generation
+    host = session.scans.hosts[0]
+    result = await session.apply_tag_change(session.plan_tag([Record(host)], "x", True))
+    assert not result.ok and "Fix the file first" in result.errors[0]
+    assert (tmp_path / "eng" / "seek-tags.yaml").read_text() == "entries: [unclosed\n"
+    assert session.tags_generation == generation + 1, "the error is announced"
+    assert "x" not in session.tags().of_host(host.address)
+
+
+async def test_a_bad_tag_name_is_refused_before_anything_is_written(tmp_path):
+    session = _engagement(tmp_path)
+    with pytest.raises(ValueError, match="not a tag name"):
+        session.plan_tag([Record(session.scans.hosts[0])], "my tag", add=True)
+    assert not (tmp_path / "eng" / "seek-tags.yaml").exists()
+
+
+async def test_removal_reaches_a_subfolder_s_file_and_names_a_failure(tmp_path):
+    session = _engagement(tmp_path, rules=None)
+    eng = tmp_path / "eng"
+    for sub in ("alice", "bob"):
+        (eng / sub).mkdir()
+        (eng / sub / "seek-tags.yaml").write_text(
+            "entries:\n  - {tag: explored, host: 192.0.2.1}\n")
+    await session.reload_tags()
+    (eng / "bob" / "seek-tags.yaml.lock").write_text("1@elsewhere")
+    tagfiles.LOCK_WAIT, saved_wait = 0.1, tagfiles.LOCK_WAIT
+    try:
+        host = next(h for h in session.scans.hosts if h.address == "192.0.2.1")
+        result = await session.apply_tag_change(session.plan_tag([Record(host)], "explored",
+                                                                 add=False))
+    finally:
+        tagfiles.LOCK_WAIT = saved_wait
+    assert result.saved == (eng / "alice" / "seek-tags.yaml",)
+    (error,) = result.errors
+    assert "bob/seek-tags.yaml" in error and "being written by another seek" in error
+    assert "explored" not in (eng / "alice" / "seek-tags.yaml").read_text()
+
+
+async def test_a_copy_to_the_global_file_carries_no_address(tmp_path, monkeypatch):
+    config = tmp_path / "config"
+    session = _engagement(tmp_path)
+    monkeypatch.setattr(Session, "_config_dir", lambda self: config)
+    host = session.scans.hosts[0]
+    await session.apply_tag_change(session.plan_tag([Record(host)], "web-only", True))
+    result = await session.apply_tag_change(session.plan_copy_global("web-only"))
+    text = (config / "tags.yaml").read_text()
+    assert result.ok and "Exposed" in text and "192.0.2" not in text
+
+
+NEW_HOST = """<?xml version="1.0"?>
+<nmaprun scanner="nmap" args="nmap -p 22,80 192.0.2.77" start="1767225600">
+<scaninfo type="syn" protocol="tcp" numservices="2" services="22,80"/>
+<host><status state="up" reason="syn-ack"/><address addr="192.0.2.77" addrtype="ipv4"/>
+<ports><port protocol="tcp" portid="80"><state state="open" reason="syn-ack"/>
+<service name="http"/></port></ports></host>
+</nmaprun>
+"""
+
+
+async def test_a_new_model_with_a_matching_host_is_tagged(tmp_path):
+    session = _engagement(tmp_path)
+    before = session.tags()
+    (tmp_path / "eng" / "live.xml").write_text(NEW_HOST)
+    session.publish(prepare(load([tmp_path / "eng" / "basic.xml", tmp_path / "eng" / "live.xml"])))
+    after = session.tags()
+    assert set(after.hosts) == {"192.0.2.2", "192.0.2.77"}
+    assert not after.of_host("192.0.2.77")["web-only"].uncertain, "22/tcp was probed"
+    assert set(before.hosts) == {"192.0.2.2"}, "the old set is never changed"
+
+
+async def test_a_finished_capture_retags_without_a_re_read(tmp_path):
+    session = _engagement(tmp_path, rules=("tags:\n  login:\n"
+                                           "    rules: [{when: [{port: 80, title: Login}]}]\n"))
+    assert not session.tags().hosts
+    from seek.gowitness.results import Capture
+    session.shots.add([Capture("http://192.0.2.2", title="Login")])
+    assert set(session.tags().hosts) == {"192.0.2.2"}
+
+
+async def test_marks_survive_a_retag(tmp_path):
+    session = _engagement(tmp_path)
+    record = Record(session.scans.hosts[0])
+    session.toggle([record])
+    await session.reload_tags()
+    session.tags()
+    assert record.identity in session.marks
+
+
+async def test_an_edited_rule_file_is_read_on_the_next_publication(tmp_path):
+    session = _engagement(tmp_path)
+    assert set(session.tags().hosts) == {"192.0.2.2"}
+    import time
+    time.sleep(0.01)
+    (tmp_path / "eng" / "seek-rules.yaml").write_text(
+        "tags:\n  any-web:\n    rules: [{when: [{port: 80}]}]\n")
+    session.publish(session.scans)
+    assert set(session.tags().hosts) == {"192.0.2.1", "192.0.2.2"}
+
+
+async def test_a_row_s_tags_are_words_of_it_until_removed(tmp_path):
+    from seek.tui.nmap import views as vdefs
+
+    session = _engagement(tmp_path, rules=None)
+    host = next(h for h in session.scans.hosts if h.address == "192.0.2.1")
+    await session.apply_tag_change(session.plan_tag([Record(host)], "zebra-zd420", True))
+    rows = vdefs.hosts_view().rows(session.scans)
+    spec = session.filter_spec("zebra")
+    assert [r.cells[0] for r in rows if session.row_matches(spec, r)] == ["192.0.2.1"]
+    await session.apply_tag_change(session.plan_tag([Record(host)], "zebra-zd420", False))
+    assert not [r for r in rows if session.row_matches(session.filter_spec("zebra"), r)]
+
+
+async def test_the_filter_says_when_tags_are_not_ready(tmp_path, monkeypatch):
+    session = _engagement(tmp_path)
+    monkeypatch.setattr(Session, "INLINE_TAG_HOSTS", 0)
+    spec = session.filter_spec("tag:web-only")
+    assert spec.is_empty and any("tags not ready" in i for i in spec.ignored)
+    session.tags()
+    assert not session.filter_spec("tag:web-only").is_empty
+
+
+async def test_the_rule_builder_counts_with_the_session_s_model(tmp_path):
+    from seek.nmap import tagbuild
+
+    session = _engagement(tmp_path)
+    host = next(h for h in session.scans.hosts if h.address == "192.0.2.2")
+    b = session.rule_builder([Record(host)])
+    shared = tagbuild.shared(b)
+    open80 = next(p for p in shared.facts if p.fact.label == "80/tcp open")
+    assert (open80.selected, open80.others) == (1, 1), "192.0.2.1 has 80 open too"
+    assert any(p.fact.kind is tagbuild.Kind.TAG and p.fact.value == "web-only"
+               for p in shared.facts), "the session's tags are facts"
+
+
+async def test_the_host_list_shows_tags_worst_first_and_follows_a_retag(tmp_path):
+    from seek.tui.nmap import views as vdefs
+
+    session = _engagement(tmp_path, rules=(
+        "tags:\n  web-only:\n    issues: [{title: Exposed, severity: medium}]\n"
+        "    rules: [{when: [{port: 80}, {not: {port: 8080/tcp}}]}]\n"
+        "  aaa:\n    rules: [{when: [{port: 80}]}]\n"
+        "  bbb:\n    rules: [{when: [{port: 80}]}]\n"))
+    view = vdefs.hosts_view(session=session)
+    assert view.columns[-1] == "Tags"
+    rows = {r.cells[0]: r for r in view.rows(session.scans)}
+    row = rows["192.0.2.2"]
+    # 8080/tcp was never probed in basic.xml: an assumption, worst issue first.
+    assert row.cells[-1] == "web-only? aaa +1" and row.tones[-1] == "warn"
+    assert rows["192.0.2.3"].cells[-1] == "", "untagged"
+    host = session.scans.hosts[2]
+    await session.apply_tag_change(session.plan_tag([Record(host)], "explored", True))
+    again = {r.cells[0]: r for r in view.rows(session.scans)}
+    assert again["192.0.2.3"].cells[-1] == "explored", "a re-tag rebuilds the rows"

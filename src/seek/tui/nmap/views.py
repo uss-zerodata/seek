@@ -253,7 +253,12 @@ def _reach(host: Host) -> str:
     return _fmt(host.state)
 
 
-HOST_COLUMNS = ("Address", "Hostname", "OS", "State", "Svcs", "Scans")
+HOST_COLUMNS = ("Address", "Hostname", "OS", "State", "Svcs", "Scans", "Tags")
+# How a tag cell reads by its tags' worst issue: the row tones every front end
+# colours ("bad", "warn"); a tag without issues is ordinary text.
+_TAG_TONE = {"critical": "bad", "high": "bad", "medium": "warn"}
+# Tag names shown in the cell before `+N` says how many more.
+_TAG_CELL_NAMES = 2
 
 
 def name_cell(host: Host) -> str:
@@ -275,36 +280,70 @@ def _name_key(host: Host) -> str:
     return known[0] if known else ""
 
 
-def _host_row(h: Host) -> Row:
+def tag_cell(h: Host, tags) -> tuple[str, str]:
+    """A host's tags as one ASCII cell - the worst issue first, `?` after an
+    uncertain one, `+N` for the rest - and the tone of its worst issue."""
+    if tags is None:
+        return "", ""
+    grants = dict(tags.of_host(h.address))
+    for svc in h.services:
+        for name, g in tags.of_service(h.address, svc.protocol, svc.port).items():
+            grants[name] = grants[name].join(g) if name in grants else g
+    if not grants:
+        return "", ""
+
+    def worst(name: str) -> int:
+        d = tags.defs.get(name)
+        top = d.highest if d is not None else None
+        return top.rank if top is not None else -1
+
+    names = sorted(grants, key=lambda n: (-worst(n), n))
+    shown = [f"{n}?" if grants[n].uncertain else n for n in names[:_TAG_CELL_NAMES]]
+    more = len(names) - len(shown)
+    top = names[0]
+    d = tags.defs.get(top)
+    tone = _TAG_TONE.get(d.highest.value, "") if d is not None and d.highest else ""
+    return " ".join(shown) + (f" +{more}" if more else ""), tone
+
+
+def _host_row(h: Host, tags=None) -> Row:
+    cell, tone = tag_cell(h, tags)
     return Row(
         cells=(h.address, name_cell(h), _fmt(h.os), _reach(h),
-               str(len(h.open_services)), str(len(h.sources))),
+               str(len(h.open_services)), str(len(h.sources)), cell),
         text=proj.host_search_text(h) + " " + _reach(h),
         target=h,
         records=(Record(h),),
         addresses=(h.address,),
         sort_key=(_addr(h.address), _name_key(h), h.os or "",
-                  _reach(h), len(h.open_services), len(h.sources)),
+                  _reach(h), len(h.open_services), len(h.sources), cell),
+        tones=("", "", "", "", "", "", tone) if tone else (),
     )
 
 
-def hosts_view(only_up: bool = False, only_ports: bool = False) -> View:
+def hosts_view(only_up: bool = False, only_ports: bool = False, session=None) -> View:
     """The host list, narrowed by `u` (up), `r` (an open port), or both.
 
     Every host with an open port is up, so both together are `r` alone; they
-    stay two flags so that turning one off leaves the other where it was.
+    stay two flags so that turning one off leaves the other where it was. With
+    the session, the Tags column is filled - and the rows are rebuilt when the
+    tags change, which the model does not.
     """
     def build(scans: ScanSet, report: Report | None = None) -> list[Row]:
         hosts = scans.up if only_up else scans.hosts
         if only_ports:
             hosts = [h for h in hosts if h.open_services]
-        return [_host_row(h) for h in counted(hosts, report, HOSTS)]
+        tags = (session.tags(report) if session is not None and scans is session.scans
+                else None)
+        return [_host_row(h, tags) for h in counted(hosts, report, HOSTS)]
 
     narrowed = [label for on, label in ((only_up, "up"), (only_ports, "open ports")) if on]
     return View(
         title="Hosts" + (f" ({', '.join(narrowed)})" if narrowed else ""),
         columns=HOST_COLUMNS, build=build, kind="hosts", tab="hosts",
         reports=True,
+        stamp=((lambda: (session.tags_generation, session.shots.generation))
+               if session is not None else None),
     )
 
 
@@ -410,10 +449,12 @@ def service_detail(group: proj.ServiceGroup) -> View:
     )
 
 
-def grouping_view(key: str) -> View:
+def grouping_view(key: str, session=None) -> View:
+    """By service, product or port - or by tag, which needs the session's tags."""
     def build(scans: ScanSet, report: Report | None = None) -> list[Row]:
         out = []
-        for label, members in proj.group_by(scans.hosts, key, report):
+        tags = session.tags(report) if key == "tag" and session is not None else None
+        for label, members in proj.group_by(scans.hosts, key, report, tags):
             group = Grouping(key=key, label=label, members=list(members))
             addresses = tuple(h.address for h in group.hosts)
             ports = group.ports
@@ -435,6 +476,9 @@ def grouping_view(key: str) -> View:
         title=f"Grouped by {key}",
         columns=(key.capitalize(), "Occurrences", "Hosts", "Ports"),
         build=build, kind="grouping", tab=f"group-{key}", reports=True,
+        # Tags change without the model changing: a tag or a rule edit rebuilds.
+        stamp=((lambda: (session.tags_generation, session.shots.generation))
+               if key == "tag" and session is not None else None),
     )
 
 

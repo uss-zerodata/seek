@@ -33,7 +33,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from seek import notify
 from seek.config import Config
@@ -49,6 +49,9 @@ from seek.nmap import options as options_mod
 from seek.nmap import presets as presets_mod
 from seek.nmap import rawlog, remote, timeline
 from seek.nmap import recent as recent_mod
+from seek.nmap import tagfiles as tagfiles_mod
+from seek.nmap import tagging as tagging_mod
+from seek.nmap import tagrules as tagrules_mod
 from seek.nmap import timing as timing_mod
 from seek.nmap.diff import ScanDiff, diff_from, snapshot
 from seek.nmap.export import Record, export_ports, export_urls, records_for, service_urls
@@ -56,6 +59,10 @@ from seek.nmap.models import Host, ScanSet, Service
 from seek.nmap.runner import ScanRun, count_argv, counted
 from seek.runner import LINE_LIMIT, Run, Runner
 from seek.vulndb import match as vulndb_match
+
+if TYPE_CHECKING:                     # imported where used: neither is needed to start
+    from seek.nmap.filtering import FilterSpec
+    from seek.nmap.tagbuild import Builder
 from seek.vulndb import store as vulndb_store
 
 # How many events a slow listener may fall behind before `line` events are
@@ -78,7 +85,8 @@ class Event:
 
     `type` is one of `model` (a new model was published), `run` (a run started
     or ended - `run.state` says which), `line` (a run wrote a line), `marks`,
-    `vulndb` (the vulnerability database was updated; `text` summarises it).
+    `vulndb` (the vulnerability database was updated; `text` summarises it),
+    `tags` (tag files were reloaded or changed; `text` says what was saved).
     `origin` is who caused it, so a front end can tell its own actions from
     another's - the viewer switches to the Scans tab for a run *it* started,
     never for one started in a browser.
@@ -201,6 +209,28 @@ def _by_host_and_port(url: str, by_name: dict) -> tuple[str, str, int] | None:
     return (host.address, svc.protocol, svc.port)
 
 
+@dataclass(frozen=True, slots=True)
+class TagChange:
+    """A change to tag files, planned on the loop and written off it: each file
+    with the operation applied to it, and what to say once it is done."""
+    ops: tuple[tuple[Path, Callable[[dict], dict]], ...]
+    summary: str
+
+
+@dataclass(frozen=True, slots=True)
+class TagChangeResult:
+    saved: tuple[Path, ...] = ()
+    errors: tuple[str, ...] = ()          # one per file that could not be written
+
+    @property
+    def ok(self) -> bool:
+        return not self.errors
+
+
+def _now_utc() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
 class Session:
     def __init__(self, config: Config | None = None, sources: list[Path] | None = None,
                  scan_dir: Path | None = None, naming: merge_mod.Naming | None = None,
@@ -259,6 +289,17 @@ class Session:
         self._listeners: list[Callable[[Event], None]] = []
         self._tasks: set[asyncio.Task] = set()
         self._outbox: queue.Queue | None = None          # notifications, for one sender
+        # Tags: the tag files as read, the projection over the model, and the
+        # parts of it that only change with the model and the captures.
+        self.tag_home: Path | None = tagfiles_mod.home(self.sources)
+        self.tag_files: tagfiles_mod.Loaded | None = None
+        self.tags_generation = 0
+        self._tags: tagging_mod.TagSet | None = None
+        self._tags_for: tuple = (None, None, None)
+        self._tag_prepared = None
+        self._tag_prepared_for: tuple = (None, None)
+        self._tag_bodies = tagging_mod.BodySource()
+        self._tag_lock = threading.Lock()
 
     # --- events -------------------------------------------------------------------
 
@@ -279,9 +320,11 @@ class Session:
     # --- the model ----------------------------------------------------------------
 
     def publish(self, scans: ScanSet, origin: str = "") -> None:
-        """Replace the model. Marks are re-found in it by what they are."""
+        """Replace the model. Marks are re-found in it by what they are, and the
+        tag files are looked at again - a stat each, not a walk."""
         self.scans = scans
         self.resolve_marks()
+        self._recheck_tag_files()
         self.emit(Event("model", origin))
 
     def scan_history(self, report=None) -> list[timeline.Scan]:
@@ -497,6 +540,22 @@ class Session:
             return self.inventory()
         return None
 
+    def filter_spec(self, text: str) -> FilterSpec:
+        """The filter as every front end applies it: parsed, and - while the tags
+        are not built yet - with its `tag:` terms set aside rather than tested."""
+        from seek.nmap import filtering
+        text = text.strip()
+        spec = filtering.parse_filter(text) if text else filtering.FilterSpec()
+        if filtering.uses_tags(spec) and self.tags_ready() is None:
+            spec = filtering.without_tags(spec)
+        return spec
+
+    def row_matches(self, spec, row) -> bool:
+        """Does a row pass `spec` - its text, its addresses, its ports and tags."""
+        from seek.nmap import filtering
+        return filtering.matches(spec, self.row_text(row), row.addresses, row.records,
+                                 self.tags_ready() if filtering.uses_tags(spec) else None)
+
     def row_text(self, row) -> str:
         """A row's text to filter on: what the list shows, and what its
         screenshots say - page titles, URLs, technologies, HTTP status.
@@ -506,12 +565,23 @@ class Session:
         model, and this is asked on every keystroke.
         """
         index = self.captures_by_service()
-        if not index or not row.records:
+        tags = self.tags_ready()
+        if (not index and tags is None) or not row.records:
             return row.text
         hit = self._row_texts.get(id(row))
         if hit is not None and hit[0] is row:
             return hit[1]
         words: list[str] = []
+        if tags is not None:
+            # A row's tags are words of it too: `zebra` finds the hosts tagged
+            # zebra-zd420. Once per name - a bucket row stands for thousands of
+            # records - and the cache is dropped whenever the tags change.
+            names: set[str] = set()
+            for record in row.records:
+                svc = record.service
+                names |= tags.names(record.host.address, svc.protocol if svc else None,
+                                    svc.port if svc else None)
+            words += sorted(names)
         seen: set[int] = set()
         for record in row.records:
             services = ([record.service] if record.service is not None
@@ -563,6 +633,184 @@ class Session:
             return
         self.captures.runs.append(
             gw_capture.from_disk(paths, urls, captured=len(urls), where=where))
+
+    # --- tags ---------------------------------------------------------------------
+
+    # Like the inventory: tags for a model this small are built where they are
+    # first asked for; above it the rows worker builds them, off the loop.
+    INLINE_TAG_HOSTS = 2000
+
+    def _config_dir(self) -> Path:
+        from seek.paths import config_dir
+        return config_dir()
+
+    def load_tag_files(self) -> tagfiles_mod.Loaded:
+        """Find and read every tag file - a walk of the sources. Blocking: call it
+        off the loop for a large tree, then `adopt_tag_files`."""
+        return tagfiles_mod.load(tagfiles_mod.find(self.sources, self._config_dir()))
+
+    def adopt_tag_files(self, loaded: tagfiles_mod.Loaded, origin: str = "",
+                        text: str = "") -> None:
+        """Make `loaded` the session's tag files: every front end hears of it."""
+        self.tag_files = loaded
+        self.tags_generation += 1
+        self._row_texts = {}
+        self.emit(Event("tags", origin, text=text))
+
+    async def reload_tags(self, origin: str = "") -> tagfiles_mod.Loaded:
+        """Read every tag file again, new ones included (`R`)."""
+        loaded = await asyncio.to_thread(self.load_tag_files)
+        self.adopt_tag_files(loaded, origin, "tag rules reloaded")
+        return loaded
+
+    def _tag_files_now(self) -> tagfiles_mod.Loaded:
+        if self.tag_files is None:
+            self.tag_files = self.load_tag_files()
+        return self.tag_files
+
+    def _recheck_tag_files(self) -> None:
+        """On a publication: read the tag files again if one changed or vanished.
+        A stat per known file; a new file is found by an explicit reload."""
+        loaded = self.tag_files
+        if loaded is None:
+            return
+        present = tuple(f for f in loaded.files if f.path.exists())
+        if tagfiles_mod.changed(loaded, present):
+            self.tag_files = tagfiles_mod.load(present)
+            self.tags_generation += 1
+            self._row_texts = {}
+
+    def _tag_index(self):
+        key = (id(self.scans), self.shots.generation)
+        if self._tag_prepared is None or self._tag_prepared_for != key:
+            self._tag_prepared = tagging_mod.prepare(self.scans.hosts, self.scans.files,
+                                                     self.captures_by_service())
+            self._tag_prepared_for = key
+        return self._tag_prepared
+
+    def tags(self, report=None) -> tagging_mod.TagSet:
+        """The tags of the model, the captures and the tag files as they stand.
+
+        A projection, rebuilt only when one of the three changes. Never
+        half-built: a reader gets the old set until the new one is complete.
+        """
+        with self._tag_lock:
+            loaded = self._tag_files_now()
+            key = (self.scans, self.shots.generation, self.tags_generation)
+            current = self._tags
+            if current is not None and self._tags_for[0] is key[0] \
+                    and self._tags_for[1:] == key[1:]:
+                return current
+            built = tagging_mod.build(self.scans.hosts, self.scans.files, loaded,
+                                      self.captures_by_service(), self._tag_bodies, report,
+                                      prepared=self._tag_index())
+            self._tags, self._tags_for = built, key
+            self._row_texts = {}            # row texts carry the tag names
+            return built
+
+    def tags_ready(self) -> tagging_mod.TagSet | None:
+        """The tags if they are current - or cheap enough to make now. For a
+        record or a filter, which must never be the thing that tags 24 000 hosts."""
+        key = (self.scans, self.shots.generation, self.tags_generation)
+        if self._tags is not None and self._tags_for[0] is key[0] \
+                and self._tags_for[1:] == key[1:] and self.tag_files is not None:
+            return self._tags
+        if len(self.scans.hosts) <= self.INLINE_TAG_HOSTS:
+            return self.tags()
+        return None
+
+    def rule_builder(self, records) -> Builder:
+        """A rule builder over these records, counting with the session's own
+        prepared index and tags. Blocking on a large model: call it off the loop."""
+        from seek.nmap import tagbuild
+        tags = self.tags()
+        return tagbuild.start(self._tag_index(), self.scans.files, tags, records)
+
+    # Changing tags: planned here, on the loop, from what the front end holds;
+    # written off the loop by `apply_tag_change`; adopted back on the loop.
+
+    def _home_file(self) -> Path:
+        if self.tag_home is None:
+            raise ValueError("there is no folder to save tags in - open a folder or a file")
+        return self.tag_home / tagfiles_mod.TAGS_NAME
+
+    @staticmethod
+    def _entry_for(record: Record, tag: str, added: str = "") -> tagfiles_mod.Entry:
+        address = tagfiles_mod.canonical_address(record.host.address)
+        if record.service is None:
+            return tagfiles_mod.Entry(tag, address, added=added)
+        return tagfiles_mod.Entry(tag, address, record.service.protocol,
+                                  record.service.port, added)
+
+    def plan_tag(self, records, name: str, add: bool) -> TagChange:
+        """Add `name` to these records, or take a manual `name` off them. Raises
+        ValueError with the reason when the name is not a tag name."""
+        try:
+            tag = tagrules_mod.tag_name(name)
+        except tagrules_mod.RuleError as exc:
+            raise ValueError(str(exc)) from None
+        records = list(records)
+        if not records:
+            raise ValueError("nothing selected to tag")
+        if add:
+            entries = [self._entry_for(r, tag, _now_utc()) for r in records]
+            return TagChange(((self._home_file(), tagfiles_mod.add_entries(entries)),),
+                             f"tagged {len(records)} as {tag}")
+        keys = {self._entry_for(r, tag).key for r in records}
+        loaded = self._tag_files_now()
+        # Every file of seek's that holds one of them - a subfolder's included.
+        paths = [path for path, entries in loaded.entries.items()
+                 if any(e.key in keys for e in entries)]
+        ops = tuple((path, tagfiles_mod.remove_entries(keys)) for path in paths)
+        return TagChange(ops, f"took {tag} off {len(records)}")
+
+    def plan_definition(self, name: str, description: str,
+                        issues: list[tagrules_mod.Issue]) -> TagChange:
+        tag = tagrules_mod.tag_name(name)
+        return TagChange(((self._home_file(),
+                           tagfiles_mod.update_definition(tag, description, issues)),),
+                         f"saved the definition of {tag}")
+
+    def plan_rule(self, name: str, raw: dict) -> TagChange:
+        tag = tagrules_mod.tag_name(name)
+        tagrules_mod.condition(raw.get("when") if isinstance(raw.get("when"), dict)
+                               else {"all": raw.get("when")})   # refuses a broken rule
+        return TagChange(((self._home_file(), tagfiles_mod.add_rule(tag, raw)),),
+                         f"saved a rule for {tag}")
+
+    def plan_copy_global(self, name: str) -> TagChange:
+        """The definition only - never a manual entry, so no address leaves the
+        engagement folder."""
+        tag = tagrules_mod.tag_name(name)
+        d = self._tag_files_now().tags.get(tag)
+        if d is None:
+            raise ValueError(f"{tag} has no definition to copy - give it a description, "
+                             "an issue or a rule first")
+        target = self._config_dir() / tagfiles_mod.GLOBAL_TAGS
+        return TagChange(((target, tagfiles_mod.set_definition(tag, tagfiles_mod.body_of(d))),),
+                         f"copied {tag} to {target}")
+
+    def write_tag_change(self, change: TagChange) -> tuple[TagChangeResult, tagfiles_mod.Loaded]:
+        """Blocking: write every file of the change, then read the tag files again.
+        A file that fails does not stop the others; each failure is named."""
+        saved: list[Path] = []
+        errors: list[str] = []
+        for path, op in change.ops:
+            try:
+                if tagfiles_mod.apply(path, op):
+                    saved.append(path)
+            except tagfiles_mod.TagWriteError as exc:
+                errors.append(str(exc))
+        files = tagfiles_mod.find(self.sources, self._config_dir())
+        return TagChangeResult(tuple(saved), tuple(errors)), tagfiles_mod.load(files)
+
+    async def apply_tag_change(self, change: TagChange, origin: str = "") -> TagChangeResult:
+        """Write off the loop, adopt on it. Memory changes only after the write."""
+        result, loaded = await asyncio.to_thread(self.write_tag_change, change)
+        if result.saved or result.errors:
+            text = change.summary if result.ok else "; ".join(result.errors)
+            self.adopt_tag_files(loaded, origin, text)
+        return result
 
     # --- marks --------------------------------------------------------------------
 

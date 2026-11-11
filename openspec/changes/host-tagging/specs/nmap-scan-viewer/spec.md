@@ -191,6 +191,10 @@ and version detail. Groups SHALL be ordered by size by default.
 - **WHEN** the user groups by tag
 - **THEN** each tag lists the hosts and ports that carry it, a host with several tags appears under each, and untagged services are omitted
 
+#### Scenario: A tagged host with no open port
+- **WHEN** a host with no open port is tagged `explored` and the user groups by tag
+- **THEN** the host is not in the grouping, which lists open ports as the other groupings do, and `tag:explored` finds it in the host list
+
 #### Scenario: A tag group shows its issues
 - **WHEN** a tag with issues is shown as a group
 - **THEN** the group's record lists the tag's issues and how many of its hosts are uncertain

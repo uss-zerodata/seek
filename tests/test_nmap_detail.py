@@ -146,3 +146,63 @@ def test_an_entry_says_when_the_scan_left_no_output_file():
     host = scans.hosts[0]
     lines = detail_pane.render(host, scanned=rawlog.Scanned(scans.files))
     assert "no output file" in _text_of(lines)
+
+
+# --- tags in the record -------------------------------------------------------------
+
+
+def _tagged():
+    from seek.nmap import tagfiles, tagging, tagrules
+
+    scans = prepare(load([FIX / "basic.xml"]))
+    _d, defs = tagrules.load(
+        "tags:\n  web-only:\n    description: A web page and nothing else\n"
+        "    issues: [{title: Exposed admin page, severity: medium}]\n"
+        "    rules: [{when: [{port: 80}, {not: {port: 8080/tcp}}]}]\n", "eng/seek-rules.yaml")
+    order, _ = tagrules.order(defs.tags)
+    entries = (tagfiles.Entry("explored", "192.0.2.2"),
+               tagfiles.Entry("web-ui", "192.0.2.2", "tcp", 80))
+    loaded = tagfiles.Loaded(tags=defs.tags, order=order,
+                             entries={Path("eng/seek-tags.yaml"): entries})
+    host = next(h for h in scans.hosts if h.address == "192.0.2.2")
+    return scans, host, tagging.build(scans.hosts, scans.files, loaded)
+
+
+def _text(lines) -> str:
+    console = Console(width=120, color_system=None)
+    with console.capture() as cap:
+        console.print(detail_pane.as_group(lines))
+    return cap.get()
+
+
+def test_a_host_record_lists_its_tags_sources_assumptions_and_issues():
+    _scans, host, tags = _tagged()
+    text = _text(detail_pane.render(host, tags=tags))
+    assert "Tags (3)" in text
+    assert "explored  manual (eng/seek-tags.yaml)" in text
+    assert "web-only ?" in text and "assumes   8080/tcp not scanned" in text
+    assert "medium   Exposed admin page" in text
+    assert "web-ui  on 80/tcp" in text
+
+
+def test_a_service_record_lists_its_own_tags_and_its_host_s():
+    _scans, host, tags = _tagged()
+    svc = next(s for s in host.services if s.port == 80)
+    text = _text(detail_pane.render(svc, host, tags=tags))
+    assert "web-ui  manual" in text and "explored  from the host" in text
+
+
+def test_a_record_without_tags_has_no_tags_block():
+    _scans, host, _tags = _tagged()
+    assert "Tags" not in _text(detail_pane.render(host))
+
+
+def test_a_tag_bucket_says_what_the_tag_is_costs_and_assumes():
+    from seek.nmap import views as proj
+    from seek.tui.nmap.views import Grouping
+
+    scans, _host, tags = _tagged()
+    members = dict(proj.group_by(scans.hosts, "tag", tags=tags))["web-only"]
+    text = _text(detail_pane.render(Grouping("tag", "web-only", list(members)), tags=tags))
+    assert "A web page and nothing else" in text
+    assert "uncertain" in text and "Issues (1)" in text and "Exposed admin page" in text

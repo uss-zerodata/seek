@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<nmaprun scanner="nmap" args="nmap -sS -p 8443 192.0.2.60" start="1767229200" version="7.94" xmloutputversion="1.05">
+<scaninfo type="syn" protocol="tcp" numservices="1" services="8443"/>
+<host><status state="up" reason="echo-reply" reason_ttl="64"/>
+<address addr="192.0.2.60" addrtype="ipv4"/>
+<ports><port protocol="tcp" portid="8443"><state state="open" reason="syn-ack" reason_ttl="64"/><service name="https-alt" method="table" conf="3"/></port></ports>
+</host>
+<runstats><finished time="1767229210" timestr="" elapsed="10" exit="success"/><hosts up="1" down="0" total="1"/></runstats>
+</nmaprun>

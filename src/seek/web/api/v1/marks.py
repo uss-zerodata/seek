@@ -115,6 +115,8 @@ def export(which: str, fmt: str = "text", fields: list[str] = Query(default=[]),
     if not records:
         raise HTTPException(422, "nothing to export")
     wanted = which == "inventory"
+    if exporter.TAG_FIELDS & set(fields):
+        records = exporter.tagged(records, sess.tags())   # a threadpool route
     text, used = exporter.produce(records, which, fmt, fields,
                                   inventory=sess.inventory() if wanted else None,
                                   lookup=sess.lookup() if wanted else None)
