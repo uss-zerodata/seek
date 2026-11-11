@@ -220,5 +220,7 @@ def test_the_scan_settings_are_configurable(tmp_path):
 def test_the_example_config_documents_the_presets():
     text = example_toml()
     assert "[nmap_presets]" in text
-    assert "01 · Discovery" in text and "02 · Services" in text
+    from seek.nmap.presets import DEFAULT_PRESETS
+    missing = [name for name in DEFAULT_PRESETS if name not in text]
+    assert not missing, f"presets the example does not document: {missing}"
     assert "worked out from" in text, "and says privilege is derived, not declared"
