@@ -302,3 +302,18 @@ def test_the_interface_can_be_stopped_from_the_page_and_says_so():
     closing = events.split('addEventListener("closing"')[1].split("});")[0]
     assert "source.close()" in closing, "no reconnecting into a closed port"
     assert "was stopped" in closing
+
+
+def test_every_script_loads_as_a_module(tmp_path):
+    """The scripts are ES modules: one that does not parse - a name declared twice
+    is enough - stops the whole viewer, keys and lists included."""
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    for script in sorted((WEB / "static/js").glob("*.js")):
+        copy = tmp_path / f"{script.stem}.mjs"
+        copy.write_text(script.read_text())
+        done = subprocess.run([node, "--check", str(copy)], capture_output=True, text=True)
+        assert done.returncode == 0, f"{script.name}: {done.stderr}"

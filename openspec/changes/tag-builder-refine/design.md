@@ -229,10 +229,61 @@ check. The workbench is one large `<dialog>` with the same panes and keys
 shown. The old `/builder`, `/builder/exclusions` and `/builder/preview` are
 removed together with the old flow; the browser is the only caller.
 
+**D11. One tag editor: `nmap/tagedit.py` (pure) and `Session.plan_tag_edit`.**
+A `TagEdit` holds the tag's name, description, issues (with references) and its
+rules as `RuleItem(raw, origin, deleted)`. `origin` is the loaded `Rule`, so
+`plan_tag_edit` knows each rule's file.
+
+The plan is one `TagChange` with these operations, in this order:
+1. a `rename_tag` in every project file that says the old name;
+2. the definition, written where it already is, or to the project's tag file;
+3. `add_rule` for each new rule, into the project's tag file;
+4. `replace_rule` or `delete_rule` for each changed or deleted rule, in its own
+   file. Both refuse, and write nothing, when the rule changed on disk.
+
+Rules in the colleague's format are refused for change and delete, with their
+file and line.
+
+The terminal's `TagEditScreen` and the browser's editor dialog only change a
+`TagEdit`. The rule builder no longer writes: `s` hands its rule to the editor,
+as a new `RuleItem`, or as the changed rule it was opened for.
+
+*Alternative:* keep the definition dialog apart from the builder. Rejected
+after manual tests: a rule is built for a reason, and the reason belongs in the
+same place.
+
+**D12. A person's rule file is written after a confirmation.** This was the
+user's decision; it overrides host-tagging's "read only" for `seek-rules.yaml`.
+`TagChange.overwrites` lists the person's files a change writes. The terminal
+asks before applying. The browser gets a 409 naming them until it sends
+`confirm_overwrite`. The file is written in seek's layout, so its comments are
+lost, and the question says so.
+
+**D13. Ports or hosts: `Builder.limited(limit)`.** A builder started from
+services can switch to whole hosts (`h`) and back. `limited` returns the same
+builder with another limit and shares its caches: counts do not depend on the
+limit, and proposals are cached per selection and limit. The draft is kept. The
+save dialog offers the services grant while the builder is limited.
+
+**D14. Browser endpoints, replacing D10's rule endpoints.**
+- `POST /builder/rule` turns a draft into a rule, and writes nothing.
+- `POST /builder/open` opens any rule of the editor, saved or not, in the
+  builder.
+- `GET /tags/edit?name=` loads a tag for the editor.
+- `POST /tags/edit` saves it.
+
+The rule list, open, save and replace endpoints of D10 were never released and
+are gone.
+
 ## Risks / Trade-offs
 
 - **[Removing the old endpoints breaks a script that used them]** → They were
   never documented as an interface, and the changelog names them.
+- **[Rewriting a hand-written rule file loses its comments]** → It is asked
+  first, naming the file, in both front ends (D12).
+- **[A rename across files fails halfway]** → Each file is written atomically
+  on its own; a failure is reported per file, and the files already renamed
+  stay renamed. `R` shows the state, and a second rename finishes it.
 - **[A regex on any port scans every service on each change]** → It runs off
   the loop and is debounced, and the existing "nothing narrows it" note is
   shown. The benchmark gains an assess step with a 0.3 s target.

@@ -1,5 +1,9 @@
-"""Tagging from the viewer: `t` tags the marks (or the row), `T` opens the rule
-builder on them (or on the rows in view), `R` reads the tag files again.
+"""Tagging from the viewer: `t` tags the marks (or the row) and opens the tag
+editor, `T` opens the rule builder on them (or on the rows in view), `R` reads
+the tag files again.
+
+Everything about one tag - name, description, issues, rules - is edited in one
+place, the tag editor (`tageditor.py`); the rule builder hands its rule to it.
 
 Translation only (ARC-4): the dialogs collect choices, the session plans and
 writes the change, the rule builder (`nmap/tagbuild.py`) proposes the facts.
@@ -16,14 +20,14 @@ from textual.widgets import Input
 from seek.nmap import tagbuild as tb
 from seek.nmap import tagrules as tr
 from seek.nmap.export import Record
+from seek.nmap.tagedit import RuleItem, TagEdit
 from seek.tui.menu import ChoiceScreen, PromptScreen
 from seek.tui.nmap.rulebench import RuleBenchScreen
+from seek.tui.nmap.tageditor import TagEditScreen
 
 NEW = "\x00new"
 EDIT = "\x00edit"
 COPY = "\x00copy"
-DONE = "\x00done"
-RULES = "\x00rules"
 VIEW = "\x00view"
 ROW = "\x00row"
 # The rows in view a rule is built from, at most.
@@ -59,37 +63,36 @@ class TagFlows:
     @work(exclusive=True, group="modal")
     async def _tag_flow(self) -> None:
         records = self._tag_targets()
-        if not records:
-            self.notify("nothing to tag - select a row or mark some", severity="warning")
-            return
         loaded = await asyncio.to_thread(self.session._tag_files_now)
         keys = {r.identity for r in records}
         manual: dict[str, int] = {}
         for entry in loaded.all_entries:
             if entry.subject in keys:
                 manual[entry.tag] = manual.get(entry.tag, 0) + 1
-        names = sorted(set(loaded.tags) | set(manual))
+        names = sorted(set(loaded.tags) | set(manual)
+                       | {e.tag for e in loaded.all_entries})
         n = len(records)
         choices = []
-        for name in names:
-            have = manual.get(name, 0)
-            verb = "remove" if have == n else "add"
-            choices.append((name, f"{verb:<7}{name:<26}{have}/{n} carry it"))
-        choices += [(NEW, "add a new tag…"), (EDIT, "edit a tag's description and issues…"),
-                    (RULES, "edit a tag's rules in the builder…"),
+        if records:
+            for name in names:
+                have = manual.get(name, 0)
+                verb = "remove" if have == n else "add"
+                choices.append((name, f"{verb:<7}{name:<26}{have}/{n} carry it"))
+            choices.append((NEW, "add a new tag…"))
+        choices += [(EDIT, "edit a tag: name, description, issues, rules…"),
                     (COPY, "copy a tag to the global file…")]
-        picked = await self.push_screen_wait(ChoiceScreen(
-            f"Tag {n} {'record' if n == 1 else 'records'}:", choices))
+        prompt = (f"Tag {n} {'record' if n == 1 else 'records'}:" if records
+                  else "Tags:")
+        picked = await self.push_screen_wait(ChoiceScreen(prompt, choices))
         if picked is None:
             return
         if picked == EDIT:
-            await self._edit_definition(names)
+            name = await self._pick_tag(names, "Edit which tag?", [(NEW, "a new tag…")])
+            if name is not None:
+                await self._edit_tag(None if name == NEW else name)
             return
         if picked == COPY:
             await self._copy_global(names)
-            return
-        if picked == RULES:
-            await self._edit_rules(names)
             return
         add = True
         if picked == NEW:
@@ -140,50 +143,56 @@ class TagFlows:
         self._tag_saved(await self.session.apply_tag_change(change, origin="tui"),
                         change.summary)
 
-    async def _edit_definition(self, names: list[str]) -> None:
-        name = await self._pick_tag(names, "Edit which tag?", [(NEW, "a new tag…")])
-        if name is None:
-            return
-        if name == NEW:
-            name = await self._ask_tag_name("Tag:")
-            if name is None:
-                return
-        current = (await asyncio.to_thread(self.session._tag_files_now)).tags.get(name)
-        description = await self.push_screen_wait(PromptScreen(
-            f"Description of {name}:", current.description if current else ""))
-        if description is None:
-            return
-        issues = list(current.issues) if current else []
-        while True:
-            choices = [(str(k), f"remove  {i.severity.value:<9}{i.title}")
-                       for k, i in enumerate(issues)]
-            choices += [(NEW, "add an issue…"), (DONE, "save")]
-            picked = await self.push_screen_wait(ChoiceScreen(
-                f"Issues of {name}:", choices))
-            if picked is None:
-                return
-            if picked == DONE:
-                break
-            if picked == NEW:
-                issue = await self._ask_issue()
-                if issue is not None:
-                    issues.append(issue)
-                continue
-            issues.pop(int(picked))
-        change = self.session.plan_definition(name, description.strip(), issues)
-        self._tag_saved(await self.session.apply_tag_change(change, origin="tui"),
-                        change.summary)
+    # --- the tag editor --------------------------------------------------------------
 
-    async def _ask_issue(self) -> tr.Issue | None:
-        title = await self.push_screen_wait(PromptScreen("Issue title:"))
-        if not title or not title.strip():
+    async def _edit_tag(self, name: str | None, edit: TagEdit | None = None) -> None:
+        """The tag editor, until it is saved or left. A change that cannot be
+        saved opens it again with the reason and everything typed."""
+        if edit is None:
+            edit = await asyncio.to_thread(self.session.tag_edit, name)
+        error = ""
+        while True:
+            got = await self.push_screen_wait(TagEditScreen(edit, self._open_rule, error))
+            if got is None:
+                return
+            edit = got
+            try:
+                change = self.session.plan_tag_edit(edit)
+            except ValueError as exc:
+                error = str(exc)
+                continue
+            if change.overwrites:
+                files = ", ".join(str(p) for p in change.overwrites)
+                answer = await self.push_screen_wait(ChoiceScreen(
+                    f"This rewrites {files} in seek's layout - its comments and order are "
+                    "lost. Save anyway?",
+                    [("no", "no, back to the editor"), ("yes", "yes, rewrite it")]))
+                if answer != "yes":
+                    error = ""
+                    continue
+            result = await self.session.apply_tag_change(change, origin="tui")
+            self._tag_saved(result, change.summary)
+            if result.ok:
+                return
+            error = "; ".join(result.errors)
+            if "changed on disk" in error:
+                return                     # the editor's rules are stale: start again
+
+    async def _open_rule(self, edit: TagEdit, item: RuleItem) -> RuleItem | None:
+        """A rule of the editor in the builder; the rule as saved there, or None."""
+        tag = edit.original or edit.name
+        rule = (item.origin if item.origin is not None and not item.changed
+                else tr._native_rule(tag, item.raw, item.where, None, 1))
+        opened = await asyncio.to_thread(self.session.open_rule, rule)
+        if isinstance(opened, str):
+            self.notify(opened, severity="warning", timeout=10)
             return None
-        severity = await self.push_screen_wait(ChoiceScreen(
-            "Severity:", [(s.value, s.value) for s in tr.Severity]))
-        if severity is None:
+        builder, draft = opened
+        names = sorted(self.session._tag_files_now().tags)
+        got = await self.push_screen_wait(RuleBenchScreen(builder, draft, names, rule=rule))
+        if got is None:
             return None
-        description = await self.push_screen_wait(PromptScreen("Description (optional):"))
-        return tr.Issue(title.strip(), tr.Severity(severity), (description or "").strip())
+        return RuleItem(tb.draft_rule(got.draft, got.name, got.grant), item.origin)
 
     # --- R -------------------------------------------------------------------------
 
@@ -229,39 +238,15 @@ class TagFlows:
             self.notify("mark the hosts a rule should find, then press T", severity="warning")
             return
         builder = await asyncio.to_thread(self.session.rule_builder, records)
-        await self._bench(builder, builder.draft())
-
-    async def _bench(self, builder, draft, rule: tr.Rule | None = None) -> None:
         names = sorted(self.session._tag_files_now().tags)
-        got = await self.push_screen_wait(RuleBenchScreen(builder, draft, names, rule=rule))
+        got = await self.push_screen_wait(RuleBenchScreen(builder, builder.draft(), names))
         if got is None:
             return
-        raw = tb.draft_rule(got.draft, got.name, got.grant)
-        try:
-            change = (self.session.plan_rule_replace(rule, raw) if rule is not None
-                      else self.session.plan_rule(got.tag, raw))
-        except ValueError as exc:
-            self.notify(str(exc), severity="error")
-            return
-        self._tag_saved(await self.session.apply_tag_change(change, origin="tui"),
-                        change.summary)
-
-    async def _edit_rules(self, names: list[str]) -> None:
-        name = await self._pick_tag(names, "Edit the rules of which tag?")
-        if name is None:
-            return
-        rules = self.session.rules_of(name)
-        if not rules:
-            self.notify(f"{name} has no rules - build one with T", severity="warning")
-            return
-        picked = await self.push_screen_wait(ChoiceScreen(
-            f"Which rule of {name}?",
-            [(str(k), f"{r.name}  ({r.source})") for k, r in enumerate(rules)]))
-        if picked is None:
-            return
-        rule = rules[int(picked)]
-        opened = await asyncio.to_thread(self.session.open_rule, rule)
-        if isinstance(opened, str):
-            self.notify(opened, severity="warning", timeout=10)
-            return
-        await self._bench(*opened, rule=rule)
+        # The rule goes to the tag editor, where the tag gets its description and
+        # issues; nothing is written before the editor is saved.
+        edit = await asyncio.to_thread(self.session.tag_edit, got.tag)
+        if edit.original is None:
+            edit = TagEdit(None, got.tag, manual_hosts=edit.manual_hosts,
+                           manual_services=edit.manual_services)
+        item = RuleItem(tb.draft_rule(got.draft, got.name, got.grant))
+        await self._edit_tag(got.tag, edit.with_rule(item))

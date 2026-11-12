@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from textual.widgets import Button, Input, OptionList, Select, Static
+from textual.widgets import Button, Input, Label, OptionList, Select, Static
 
 from seek.config import Config
 from seek.nmap import tagbuild as tb
@@ -14,6 +14,7 @@ from seek.nmap.views import prepare
 from seek.tui.menu import ChoiceScreen, PromptScreen
 from seek.tui.nmap.app import NmapApp
 from seek.tui.nmap.rulebench import FactEditScreen, RuleBenchScreen, RuleSaveScreen
+from seek.tui.nmap.tageditor import IssueScreen, TagEditScreen
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.slow]
 FIX = Path(__file__).parent / "fixtures" / "nmap"
@@ -132,6 +133,24 @@ async def test_a_name_that_is_not_allowed_says_why_and_saves_nothing(tmp_path):
         assert not (eng / "seek-tags.yaml").exists()
 
 
+async def _fill_issue(pilot, app, title, severity="high", description="", refs=""):
+    assert isinstance(app.screen, IssueScreen)
+    app.screen.query_one("#title", Input).value = title
+    app.screen.query_one("#severity", Select).value = severity
+    app.screen.query_one("#description", Input).value = description
+    app.screen.query_one("#references", Input).value = refs
+    app.screen.action_take()
+    await _settle(pilot, 0.4)
+
+
+async def _add_issue(pilot, editor):
+    issues = editor.query_one("#issues", OptionList)
+    issues.focus()
+    issues.highlighted = issues.get_option_index("\x00add")
+    await pilot.press("enter")
+    await _settle(pilot, 0.4)
+
+
 async def test_an_issue_added_in_the_editor_reaches_the_record(tmp_path):
     app, eng = _app(tmp_path)
     async with app.run_test(size=(140, 40)) as pilot:
@@ -140,17 +159,20 @@ async def test_an_issue_added_in_the_editor_reaches_the_record(tmp_path):
         await _settle(pilot, 0.4)
         await _choose(pilot, app, "\x00edit")
         await _choose(pilot, app, "\x00new")
-        await _answer(pilot, app, "camera-x")
-        await _answer(pilot, app, "Camera model X")
-        await _choose(pilot, app, "\x00new")            # add an issue
-        await _answer(pilot, app, "Default credentials")
-        await _choose(pilot, app, "high")
-        await _answer(pilot, app, "")
-        await _choose(pilot, app, "\x00done")
+        editor = app.screen
+        assert isinstance(editor, TagEditScreen)
+        editor.query_one("#name", Input).value = "camera-x"
+        editor.query_one("#description", Input).value = "Camera model X"
+        await _add_issue(pilot, editor)
+        await _fill_issue(pilot, app, "Default credentials", description="admin/admin",
+                          refs="https://example.test/advisory")
+        assert "Default credentials" in str(editor.query_one("#issues", OptionList)
+                                            .get_option("i0").prompt)
+        editor.action_save()
         await _settle(pilot, 1.0)
         text = (eng / "seek-tags.yaml").read_text()
-        assert "Default credentials" in text and "high" in text
-        # Tag the selected host with it: its record lists the issue.
+        assert "Default credentials" in text and "https://example.test/advisory" in text
+        # Tag the selected host with it: its record lists the issue and its description.
         await pilot.press("t")
         await _settle(pilot, 0.4)
         await _choose(pilot, app, "camera-x")
@@ -158,6 +180,7 @@ async def test_an_issue_added_in_the_editor_reaches_the_record(tmp_path):
         lines, _title = app._detail_content(_row(app, "192.0.2.1"))
         rendered = _plain(lines)
         assert "camera-x" in rendered and "Default credentials" in rendered
+        assert "admin/admin" in rendered and "Camera model X" in rendered
 
 
 def _facts_of(screen) -> dict[str, str]:
@@ -205,9 +228,18 @@ async def test_T_builds_the_five_printer_rule_end_to_end(tmp_path):
         assert isinstance(app.screen, RuleSaveScreen)
         app.screen.query_one("#tag", Input).value = "zebra"
         app.screen.action_save()
+        await _settle(pilot, 1.0)
+        editor = app.screen
+        assert isinstance(editor, TagEditScreen), "the rule goes to the tag editor"
+        assert not (eng / "seek-tags.yaml").exists(), "nothing written before it is saved"
+        editor.query_one("#description", Input).value = "Zebra label printers"
+        await _add_issue(pilot, editor)
+        await _fill_issue(pilot, app, "Admin PIN of 4 digits", "medium")
+        editor.action_save()
         await _settle(pilot, 1.2)
         text = (eng / "seek-tags.yaml").read_text()
-        assert "built from 5 host(s)" in text and "zebra" in text
+        assert "built from 5 host(s)" in text and "Zebra label printers" in text
+        assert "Admin PIN of 4 digits" in text
         tagged = sorted(r.cells[0] for r in app._rows if r.cells[-1])
         assert tagged == [f"192.0.2.{n}" for n in range(1, 6)]
 
@@ -289,18 +321,23 @@ async def test_T_on_a_filtered_view_offers_the_rows_in_view(tmp_path):
 async def test_a_saved_rule_is_edited_in_the_builder_and_replaced(tmp_path):
     app, eng = _app(tmp_path)
     (eng / "seek-rules.yaml").write_text(
-        "tags:\n  web:\n    rules:\n      - {name: plain web, when: [{port: 80}]}\n")
+        "# my rules\ntags:\n  web:\n    rules:\n      - {name: plain web, when: [{port: 80}]}\n")
     async with app.run_test(size=(160, 50)) as pilot:
         await _settle(pilot, 0.6)
         await pilot.press("t")
         await _settle(pilot, 0.4)
-        await _choose(pilot, app, "\x00rules")
+        await _choose(pilot, app, "\x00edit")
         await _choose(pilot, app, "web")
-        await _choose(pilot, app, "0")
+        editor = app.screen
+        assert isinstance(editor, TagEditScreen)
+        rules = editor.query_one("#rules", OptionList)
+        rules.focus()
+        rules.highlighted = 0
+        await pilot.press("enter")
         await _settle(pilot, 1.0)
         bench = app.screen
-        assert isinstance(bench, RuleBenchScreen) and "plain web" in _screen_text(
-            bench.query_one("#title"))
+        assert isinstance(bench, RuleBenchScreen) and "plain web" in str(
+            bench.query_one("#title", Label).content)
         await _on_fact(pilot, bench, "80 open", "e")
         app.screen.query_one("#ports", Input).value = "80,8080"
         await _settle(pilot, 0.4)
@@ -310,7 +347,15 @@ async def test_a_saved_rule_is_edited_in_the_builder_and_replaced(tmp_path):
         await _settle(pilot, 0.8)
         assert app.screen.query_one("#tag", Input).disabled, "the rule keeps its tag"
         app.screen.action_save()
-        await _settle(pilot, 1.2)
+        await _settle(pilot, 0.8)
+        assert app.screen is editor and "~ plain web" in str(rules.get_option("r0").prompt)
+        assert "8080" not in (eng / "seek-rules.yaml").read_text(), "not yet written"
+        editor.action_save()
+        await _settle(pilot, 0.6)
+        assert isinstance(app.screen, ChoiceScreen), "the person's file: asked first"
+        assert "seek-rules.yaml" in str(app.screen._prompt)
+        await _choose(pilot, app, "yes")
+        await _settle(pilot, 1.0)
         text = (eng / "seek-rules.yaml").read_text()
         assert "80,8080" in text and text.count("plain web") == 1
 

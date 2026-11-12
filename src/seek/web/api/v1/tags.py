@@ -249,34 +249,40 @@ def refine(body: s.RefineIn, sess=Depends(session)) -> s.RefineOut:
                        dropped=list(got.dropped))
 
 
-@router.get("/{name}/rules", response_model=s.RulesOut)
-def list_rules(name: str, sess=Depends(session)) -> s.RulesOut:
-    out = []
-    for k, rule in enumerate(sess.rules_of(name)):
-        opened = tb.from_rule(rule)
-        out.append(s.RuleRefOut(index=k, name=rule.name, source=str(rule.source),
-                                editable=not isinstance(opened, str),
-                                reason=opened if isinstance(opened, str) else ""))
-    return s.RulesOut(rules=out)
+@router.post("/builder/rule", response_model=s.RuleRawOut,
+             responses={422: {"model": s.ErrorOut}})
+def draft_rule(body: s.RuleIn) -> s.RuleRawOut:
+    """The draft as a rule, for the tag editor - nothing is written."""
+    draft = _draft_in(body.draft)
+    if not tb.draft_when(draft):
+        raise HTTPException(422, "a rule needs at least one required or excluded fact")
+    if not body.rule_name.strip():
+        raise HTTPException(422, "give the rule a name")
+    return s.RuleRawOut(raw=tb.draft_rule(draft, body.rule_name.strip(), _grant(body.grant)))
 
 
-def _rule_at(sess, name: str, index: int):
-    rules = sess.rules_of(name)
-    if not 0 <= index < len(rules):
-        raise HTTPException(404, f"{name} has no rule {index}")
-    return rules[index]
+def _rule_of(sess, tag: str, raw: dict, origin: int | None) -> tr.Rule:
+    """The loaded rule when it is unchanged, else the rule as written in `raw`."""
+    if origin is not None:
+        rules = sess.rules_of(tag)
+        if 0 <= origin < len(rules) and dict(rules[origin].raw) == raw:
+            return rules[origin]
+    try:
+        return tr._native_rule(tag, raw, "new", None, 1)
+    except tr.RuleError as exc:
+        raise HTTPException(422, str(exc)) from None
 
 
-@router.post("/{name}/rules/{index}/open", response_model=s.BenchOut,
-             responses={404: {"model": s.ErrorOut}, 422: {"model": s.ErrorOut}})
-def open_rule(name: str, index: int, sess=Depends(session)) -> s.BenchOut:
-    rule = _rule_at(sess, name, index)
+@router.post("/builder/open", response_model=s.BenchOut,
+             responses={422: {"model": s.ErrorOut}})
+def open_rule(body: s.RuleOpenIn, sess=Depends(session)) -> s.BenchOut:
+    """A rule of the tag editor in the builder: the hosts it matches, its facts."""
+    rule = _rule_of(sess, body.tag, body.raw, body.origin)
     opened = sess.open_rule(rule)
     if isinstance(opened, str):
         raise HTTPException(422, opened)
     started, draft = opened
-    b = sess.bench_builder(None)
-    out = _assess_out(tb.assess(b, draft))
+    out = _assess_out(tb.assess(sess.bench_builder(None), draft))
     out.notes = [*started.notes, *out.notes]
     return s.BenchOut(draft=_draft_out(draft, None), assessment=out, rule_name=rule.name,
                       grant=rule.grant.value, replaces=dict(rule.raw))
@@ -289,41 +295,70 @@ def _grant(text: str) -> tr.Grant:
         raise HTTPException(422, f"grant {text!r} is not host, service or both") from None
 
 
-def _rule_raw(body: s.RuleIn) -> dict:
-    draft = _draft_in(body.draft)
-    if not tb.draft_when(draft):
-        raise HTTPException(422, "a rule needs at least one required or excluded fact")
-    if not body.rule_name.strip():
-        raise HTTPException(422, "give the rule a name")
-    return tb.draft_rule(draft, body.rule_name.strip(), _grant(body.grant))
+# --- the tag editor ------------------------------------------------------------------
 
 
-@router.post("/{name}/rules", response_model=s.TagChangeOut,
-             responses={422: {"model": s.ErrorOut}})
-async def save_rule(name: str, body: s.RuleIn, request: Request) -> s.TagChangeOut:
-    sess = session(request)
-    raw = _rule_raw(body)
+def _edit_out(edit) -> s.TagEditIO:
+    loaded_rules = [r.origin for r in edit.rules if r.origin is not None]
+    rules = []
+    for item in edit.rules:
+        opened = tb.from_rule(item.origin) if item.origin is not None else None
+        rules.append(s.EditRuleIO(
+            raw=item.raw, origin=loaded_rules.index(item.origin) if item.origin else None,
+            deleted=item.deleted, name=item.name, where=item.where, changed=item.changed,
+            editable=not isinstance(opened, str), reason=opened if isinstance(opened, str) else ""))
+    return s.TagEditIO(
+        original=edit.original, name=edit.name, description=edit.description,
+        issues=[s.IssueIn(title=i.title, severity=i.severity.value, description=i.description,
+                          references=list(i.references)) for i in edit.issues],
+        rules=rules, manual_hosts=edit.manual_hosts, manual_services=edit.manual_services)
+
+
+@router.get("/edit", response_model=s.TagEditIO)
+def get_edit(name: str = "", sess=Depends(session)) -> s.TagEditIO:
+    """A tag as the editor holds it - a new one when `name` is empty or unknown."""
+    return _edit_out(sess.tag_edit(name or None))
+
+
+def _edit_in(sess, body: s.TagEditIO):
+    from dataclasses import replace
+
+    from seek.nmap.tagedit import RuleItem
+    base = sess.tag_edit(body.original) if body.original else sess.tag_edit(None)
+    loaded = [r.origin for r in base.rules]
+    items = []
+    for r in body.rules:
+        origin = None
+        if r.origin is not None:
+            if not 0 <= r.origin < len(loaded):
+                raise HTTPException(409, "the tag's rules changed - reload and edit again")
+            origin = loaded[r.origin]
+        items.append(RuleItem(r.raw, origin, r.deleted))
+    kept = {id(i.origin) for i in items if i.origin is not None}
+    if any(id(o) not in kept for o in loaded):
+        raise HTTPException(422, "every loaded rule must be sent back - delete one with "
+                                 "`deleted: true`")
     try:
-        change = sess.plan_rule(name, raw)
+        issues = tuple(_issues(body.issues))
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from None
-    return _change_out(await sess.apply_tag_change(change, origin="web"), change.summary)
+    return replace(base, name=body.name, description=body.description, issues=issues,
+                   rules=tuple(items))
 
 
-@router.put("/{name}/rules/{index}", response_model=s.TagChangeOut,
-            responses={404: {"model": s.ErrorOut}, 409: {"model": s.ErrorOut},
-                       422: {"model": s.ErrorOut}})
-async def replace_rule(name: str, index: int, body: s.RuleReplaceIn,
-                       request: Request) -> s.TagChangeOut:
-    """Replace the rule the builder opened - refused when it is no longer the rule
-    that was opened."""
+@router.post("/edit", response_model=s.TagChangeOut,
+             responses={409: {"model": s.ErrorOut}, 422: {"model": s.ErrorOut}})
+async def save_edit(body: s.TagEditIO, request: Request) -> s.TagChangeOut:
+    """Save everything the editor changed. A change that rewrites a person's rule
+    file is refused with a 409 naming it, until `confirm_overwrite` is set."""
     sess = session(request)
-    raw = _rule_raw(body)
-    rule = _rule_at(sess, name, index)
-    if dict(rule.raw) != body.replaces:
-        raise HTTPException(409, "the rule changed - reload and open it again")
+    edit = await run_in_threadpool(_edit_in, sess, body)
     try:
-        change = sess.plan_rule_replace(rule, raw)
+        change = sess.plan_tag_edit(edit)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from None
+    if change.overwrites and not body.confirm_overwrite:
+        files = ", ".join(str(p) for p in change.overwrites)
+        raise HTTPException(409, f"this rewrites {files} in seek's layout - its comments and "
+                                 "order are lost")
     return _change_out(await sess.apply_tag_change(change, origin="web"), change.summary)

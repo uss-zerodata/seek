@@ -430,3 +430,15 @@ def test_each_change_is_quick_at_engagement_scale():
         t = time.perf_counter()
         step()
         assert time.perf_counter() - t < 0.3
+
+
+def test_the_selected_ports_widen_to_their_hosts():
+    hosts, files, index = _world(others=3)
+    records = [Record(h, next(s for s in h.services if s.port == 515)) for h in hosts[:5]]
+    b = tb.start(index, files, None, records)
+    ports = {p.fact.ports for p in tb.proposals(b, list(range(5))) if p.fact.has_ports}
+    assert ports == {((515, 515),)} and b.limit_text == "ports 515/tcp"
+    whole = b.limited(None)
+    ports = {p.fact.ports for p in tb.proposals(whole, list(range(5))) if p.fact.has_ports}
+    assert ((80, 80),) in ports and whole.limit_text == "whole hosts"
+    assert whole._holders is b._holders, "the counts are shared"

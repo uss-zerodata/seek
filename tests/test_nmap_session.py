@@ -408,3 +408,64 @@ async def test_the_host_list_shows_tags_worst_first_and_follows_a_retag(tmp_path
     await session.apply_tag_change(session.plan_tag([Record(host)], "explored", True))
     again = {r.cells[0]: r for r in view.rows(session.scans)}
     assert again["192.0.2.3"].cells[-1] == "explored", "a re-tag rebuilds the rows"
+
+
+async def test_one_edit_saves_the_definition_and_a_new_rule_together(tmp_path):
+    from seek.nmap import tagrules
+    from seek.nmap.tagedit import RuleItem
+
+    session = _engagement(tmp_path, rules=None)
+    edit = session.tag_edit("printer")
+    assert edit.original is None
+    edit = edit.with_rule(RuleItem({"name": "r", "grant": "host", "when": [{"port": 80}]}))
+    edit = edit.__class__(**{**{f: getattr(edit, f) for f in edit.__dataclass_fields__},
+                             "description": "Printers",
+                             "issues": (tagrules.Issue("Default PIN", tagrules.Severity.HIGH,
+                                                       "1234 works", ("CVE-0000-0001",)),)})
+    change = session.plan_tag_edit(edit)
+    assert change.overwrites == ()
+    result = await session.apply_tag_change(change)
+    assert result.ok
+    d = session._tag_files_now().tags["printer"]
+    assert d.description == "Printers" and d.issues[0].references == ("CVE-0000-0001",)
+    assert [r.name for r in d.rules] == ["r"]
+
+
+async def test_a_rename_reaches_every_file_that_says_the_tag(tmp_path):
+    session = _engagement(tmp_path, rules=(
+        "tags:\n  web-only:\n    rules: [{when: [{port: 80}]}]\n"
+        "  inner:\n    rules: [{when: [{tag: web-only}]}]\n"))
+    eng = tmp_path / "eng"
+    (eng / "seek-tags.yaml").write_text(
+        "seek: 1\nentries:\n  - {tag: web-only, host: 192.0.2.1}\n")
+    session._tag_files_now()
+    edit = session.tag_edit("web-only")
+    from dataclasses import replace
+    change = session.plan_tag_edit(replace(edit, name="web"))
+    assert change.overwrites == (eng / "seek-rules.yaml",), "the person's file is named"
+    assert (await session.apply_tag_change(change)).ok
+    loaded = session._tag_files_now()
+    assert "web" in loaded.tags and "web-only" not in loaded.tags
+    assert loaded.tags["inner"].rules[0].raw["when"] == [{"tag": "web"}]
+    assert {e.tag for e in loaded.all_entries} == {"web"}
+    assert set(session.tags().hosts) >= {"192.0.2.1", "192.0.2.2"}
+
+
+async def test_a_rename_onto_an_existing_tag_is_refused(tmp_path):
+    from dataclasses import replace
+
+    session = _engagement(tmp_path, rules=(
+        "tags:\n  a:\n    rules: [{when: [{port: 80}]}]\n"
+        "  b:\n    rules: [{when: [{port: 22}]}]\n"))
+    import pytest
+    with pytest.raises(ValueError, match="exists already"):
+        session.plan_tag_edit(replace(session.tag_edit("a"), name="b"))
+
+
+async def test_a_rule_deleted_in_the_editor_leaves_its_file(tmp_path):
+    session = _engagement(tmp_path, rules=(
+        "tags:\n  web:\n    rules:\n      - {name: one, when: [{port: 80}]}\n"
+        "      - {name: two, when: [{port: 22}]}\n"))
+    edit = session.tag_edit("web").toggle_delete(0)
+    assert (await session.apply_tag_change(session.plan_tag_edit(edit))).ok
+    assert [r.name for r in session.rules_of("web")] == ["two"]

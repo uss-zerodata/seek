@@ -350,6 +350,19 @@ class Builder:
     def draft(self) -> Draft:
         return Draft(self.initial)
 
+    def limited(self, limit: frozenset[tuple[str, int]] | None) -> Builder:
+        """The same builder with other ports - the selected ports, or None for
+        whole hosts. The counts made so far are shared: they do not depend on it."""
+        return replace(self, limit=limit)
+
+    @property
+    def limit_text(self) -> str:
+        if self.limit is None:
+            return "whole hosts"
+        ports = sorted(self.limit, key=lambda k: (k[1], k[0]))
+        return "ports " + ", ".join(f"{n}/{p}" for p, n in ports[:4]) + (
+            f" +{len(ports) - 4}" if len(ports) > 4 else "")
+
 
 def _address_key(address: str):
     try:
@@ -463,7 +476,7 @@ def _threshold(n: int) -> int:
 def proposals(b: Builder, selected: list[int]) -> tuple[Proposal, ...]:
     """What the selection shares - every host first, rarest first, then what most
     of it shares, then broader facts - cached per selection."""
-    key = tuple(sorted(selected))
+    key = (tuple(sorted(selected)), b.limit)
     cached = b._proposals.get(key)
     if cached is not None:
         return cached

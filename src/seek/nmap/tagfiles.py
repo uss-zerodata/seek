@@ -450,6 +450,63 @@ def replace_rule(name: str, old: dict, new: dict) -> Op:
     return op
 
 
+def delete_rule(name: str, old: dict) -> Op:
+    """Remove a rule of a tag. Raises TagWriteError, and writes nothing, when the
+    rule is no longer in the file as it was read."""
+    def op(doc: dict) -> dict:
+        tags = dict(doc.get("tags") or {})
+        body = dict(tags.get(name) or {})
+        rules = list(body.get("rules") or [])
+        for n, entry in enumerate(rules):
+            if _same_rule(entry, old):
+                del rules[n]
+                break
+        else:
+            raise TagWriteError("the rule changed on disk - press R and open it again")
+        if rules:
+            body["rules"] = rules
+        else:
+            body.pop("rules", None)
+        tags[name] = body
+        return {**doc, "tags": tags}
+    return op
+
+
+def rename_tag(old: str, new: str) -> Op:
+    """Rename a tag everywhere a file says it: its definition, the `tag:` and
+    `has_tag:` conditions that ask for it, manual entries, and the colleague's
+    `host_tags`/`service_tags`. Raises TagWriteError when the file defines both."""
+    def swap(value: object) -> object:
+        if isinstance(value, dict):
+            return {k: (new if k == "tag" and v == old else swap(v)) for k, v in value.items()}
+        if isinstance(value, list):
+            return [swap(v) for v in value]
+        return value
+
+    def op(doc: dict) -> dict:
+        out = dict(doc)
+        tags = doc.get("tags") or {}
+        if old in tags and new in tags:
+            raise TagWriteError(f"a file defines both {old} and {new} - merge them by hand")
+        if tags:
+            out["tags"] = {(new if k == old else k): swap(body) for k, body in tags.items()}
+        if doc.get("entries"):
+            out["entries"] = [{**e, "tag": new} if isinstance(e, dict) and e.get("tag") == old
+                              else e for e in doc["entries"]]
+        if doc.get("rules"):
+            rules = []
+            for rule in doc["rules"]:
+                if isinstance(rule, dict):
+                    rule = swap(rule)
+                    for key in ("host_tags", "service_tags"):
+                        if isinstance(rule.get(key), list):
+                            rule[key] = [new if x == old else x for x in rule[key]]
+                rules.append(rule)
+            out["rules"] = rules
+        return out
+    return op
+
+
 def delete_definition(name: str) -> Op:
     def op(doc: dict) -> dict:
         tags = doc.get("tags") or {}

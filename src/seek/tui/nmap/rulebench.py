@@ -38,8 +38,8 @@ _MODES = [("equals", tb.Mode.EQUALS), ("contains", tb.Mode.CONTAINS),
           ("regex", tb.Mode.REGEX)]
 _GRANTS = [("the host", tr.Grant.HOST), ("the matched services", tr.Grant.SERVICE),
            ("both", tr.Grant.BOTH)]
-KEYS = ("space cycle · + require · - exclude · e edit · p same port · tab hosts · "
-        "a add · d drop · x exclude host · s save · Esc leave")
+KEYS = ("space cycle · + require · - exclude · e edit · p same port · h ports/host · "
+        "tab hosts · a add · d drop · x exclude host · s save · Esc leave")
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +71,7 @@ class RuleBenchScreen(ModalScreen[SaveRequest | None]):
         Binding("minus", "set('exclude')", "Exclude", show=False),
         Binding("e", "edit", "Edit", show=False),
         Binding("p", "same_port", "Same port", show=False),
+        Binding("h", "whole_host", "Ports or host", show=False),
         Binding("a", "add_host", "Add", show=False),
         Binding("d", "drop_host", "Drop", show=False),
         Binding("x", "exclude_host", "Exclude host", show=False),
@@ -92,6 +93,7 @@ class RuleBenchScreen(ModalScreen[SaveRequest | None]):
                  rule: tr.Rule | None = None) -> None:
         super().__init__()
         self.builder = builder
+        self._ports = builder.limit             # the ports it was started on, if any
         self.draft = draft
         self._start = draft
         self._tags = tags
@@ -121,8 +123,9 @@ class RuleBenchScreen(ModalScreen[SaveRequest | None]):
         what = (f"Rule builder · {self._rule.tag} · {self._rule.name}" if self._rule
                 else "Rule builder")
         port = "on" if self.draft.same_port else "off"
+        scope = (f" · {self.builder.limit_text} (h)" if self._ports is not None else "")
         self.query_one("#title", Label).update(
-            f"{what} · {len(self.draft.selection)} selected · same port: {port} (p)")
+            f"{what} · {len(self.draft.selection)} selected{scope} · same port: {port} (p)")
 
     def _change(self, draft: tb.Draft) -> None:
         self.draft = draft
@@ -258,6 +261,14 @@ class RuleBenchScreen(ModalScreen[SaveRequest | None]):
         self._change(tb.Draft(self.draft.selection, self.draft.facts,
                               not self.draft.same_port))
 
+    def action_whole_host(self) -> None:
+        """Facts of the selected ports only, or of the hosts they belong to."""
+        if self._ports is None:
+            self.notify("the rule is built from whole hosts already")
+            return
+        self.builder = self.builder.limited(None if self.builder.limit else self._ports)
+        self._change(self.draft)
+
     def action_edit(self) -> None:
         fact = self._fact()
         if fact is None:
@@ -329,7 +340,8 @@ class RuleBenchScreen(ModalScreen[SaveRequest | None]):
         rule = self._rule
         got = await self.app.push_screen_wait(RuleSaveScreen(
             self._tags, rule.name if rule else f"built from {a.of_selection} host(s)",
-            rule.grant if rule else tr.Grant.HOST, tag=rule.tag if rule else None))
+            rule.grant if rule else (tr.Grant.SERVICE if self.builder.limit else tr.Grant.HOST),
+            tag=rule.tag if rule else None))
         if got is not None:
             tag, name, grant = got
             self.dismiss(SaveRequest(self.draft, tag, name, grant))

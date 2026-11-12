@@ -806,22 +806,40 @@ class RefineOut(BaseModel):
 
 
 class RuleIn(BaseModel):
+    """A draft as a rule, to hand to the tag editor."""
     draft: DraftIO
     rule_name: str
     grant: str = "host"
 
 
-class RuleReplaceIn(RuleIn):
-    replaces: dict
+class RuleRawOut(BaseModel):
+    raw: dict
 
 
-class RuleRefOut(BaseModel):
-    index: int
-    name: str
-    source: str
-    editable: bool
+class RuleOpenIn(BaseModel):
+    """A rule of the tag editor, opened in the builder."""
+    tag: str
+    raw: dict
+    origin: int | None = None          # the loaded rule it came from, by index
+
+
+class EditRuleIO(BaseModel):
+    raw: dict
+    origin: int | None = None          # index among the tag's rules as loaded
+    deleted: bool = False
+    name: str = ""
+    where: str = ""
+    changed: bool = False
+    editable: bool = True
     reason: str = ""
 
 
-class RulesOut(BaseModel):
-    rules: list[RuleRefOut]
+class TagEditIO(BaseModel):
+    original: str | None = None
+    name: str
+    description: str = ""
+    issues: list[IssueIn] = []
+    rules: list[EditRuleIO] = []
+    manual_hosts: int = 0
+    manual_services: int = 0
+    confirm_overwrite: bool = False

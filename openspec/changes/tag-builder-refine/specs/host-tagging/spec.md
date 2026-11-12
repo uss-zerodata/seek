@@ -248,30 +248,102 @@ follow the toggle.
 ### Requirement: The builder saves into a chosen tag
 Saving SHALL let the user pick an existing tag or enter a new valid name, name
 the rule, and choose whether the rule tags the host, the matched services, or
-both. The rule SHALL be saved by the same change as every other tag edit.
+both. The rule SHALL then go to the tag editor, and SHALL be written when the
+editor is saved. A builder started from services SHALL offer the services grant.
 
 #### Scenario: An existing tag
-- **WHEN** the user saves the draft and picks the existing tag `zebra`
+- **WHEN** the user saves the draft, picks the existing tag `zebra`, and saves the tag editor
 - **THEN** the rule is added to `zebra` in the project's tag file, under the name the user gave
+
+#### Scenario: Nothing written before the editor
+- **WHEN** the user saves the draft and then leaves the tag editor without saving
+- **THEN** no file is changed
 
 #### Scenario: A service rule
 - **WHEN** the user saves a rule with the services grant
 - **THEN** only the ports that satisfied its port conditions carry the tag
 
+### Requirement: The builder switches between ports and their hosts
+A builder started from services SHALL propose facts of those ports only, and
+SHALL let the user switch to the whole hosts the services belong to, and back.
+The selection and the chosen facts SHALL be kept.
+
+#### Scenario: From a port to its host
+- **WHEN** the user starts the builder on 515/tcp of five printers and switches to the hosts
+- **THEN** facts of every port of the five printers are proposed, and the chosen facts stay chosen
+
+### Requirement: One editor holds everything about a tag
+The tag editor SHALL show and change a tag's name, description, issues and rules,
+and SHALL show how many hosts and services carry it by hand. It SHALL open after
+the builder saves a rule, and for any tag from the tag menu. Nothing SHALL be
+written until it is saved, and then everything SHALL be written as one change.
+
+#### Scenario: A rule, a description and an issue at once
+- **WHEN** the user builds a rule, saves it to the new tag `zebra`, types a description and adds an issue in the editor, and saves
+- **THEN** the project's tag file holds the rule, the description and the issue
+
+#### Scenario: Leaving with changes
+- **WHEN** the user presses Esc after changing the tag
+- **THEN** the editor asks before it discards the changes
+
+### Requirement: Issues carry descriptions and references
+An issue SHALL have a title, a severity, an optional description and optional
+references. The editor SHALL edit all of them, and a record SHALL show the tag's
+description and each issue's description and references under the tag.
+
+#### Scenario: An issue in a record
+- **WHEN** a host carries `zebra`, whose issue `Admin PIN` has the description `4 digits` and the reference `https://example.test/a`
+- **THEN** the host's record shows the issue with its description and reference
+
+### Requirement: The editor edits and deletes rules in their files
+A rule opened from the editor SHALL be edited in the builder and come back to the
+editor. Saving SHALL replace each changed rule and remove each deleted rule in
+the file it was read from, and refuse when that rule changed on disk.
+
+#### Scenario: Deleting a rule
+- **WHEN** the user deletes the rule `one` of `web` in the editor and saves
+- **THEN** `one` is gone from its file, and the other rules of the file are unchanged
+
+#### Scenario: A rule in the colleague's format
+- **WHEN** the user changes or deletes a rule written in categorize_systems' format
+- **THEN** saving is refused with the file and line, and nothing is written
+
+### Requirement: A rename reaches every project file
+Renaming a tag SHALL rename it in every project file that says it: its
+definition, `tag:` and `has_tag:` conditions, manual tags, and the colleague's
+`host_tags` and `service_tags`. A name another tag has SHALL be refused.
+
+#### Scenario: Renaming a tag that others use
+- **WHEN** the tag `web-only` is used by the rule of `inner` and by a manual tag, and the user renames it to `web`
+- **THEN** `inner` asks for `web`, the manual tag is `web`, and `web-only` is gone
+
+#### Scenario: Onto an existing name
+- **WHEN** the user renames `a` to `b` and `b` exists
+- **THEN** saving is refused, saying that `b` exists already
+
+### Requirement: Rewriting a person's rule file is confirmed
+A change that writes a `seek-rules.yaml` SHALL name the file and say that it is
+written in seek's layout, without its comments, and SHALL be written only when
+the user confirms.
+
+#### Scenario: Editing a rule of a hand-written file
+- **WHEN** the user changes a rule read from `seek-rules.yaml` and saves the editor
+- **THEN** the editor names `seek-rules.yaml` and asks, and the file is unchanged until the user confirms
+
 ### Requirement: The builder starts from marks, a row, the view or a rule
 The builder SHALL start from the marked rows, or else from the row under the
 cursor. When nothing is marked and the view is filtered, it SHALL offer the rows
-in the view. It SHALL also open an existing rule, and saving SHALL then replace
-that rule in place. A rule the builder cannot represent SHALL say why and
-SHALL not open.
+in the view. It SHALL also open an existing rule from the tag editor, and hand
+the changed rule back to it. A rule the builder cannot represent SHALL say why
+and SHALL not open.
 
 #### Scenario: From the filtered view
 - **WHEN** nothing is marked, the view is filtered to 23 hosts, and the user presses `T` and picks the rows in view
 - **THEN** the builder starts with those 23 hosts
 
 #### Scenario: Editing a saved rule
-- **WHEN** the user opens the rule `built from 5 host(s)` of tag `zebra` and widens one fact
-- **THEN** saving replaces that rule in its file, and the other rules of the file are unchanged
+- **WHEN** the user opens the rule `built from 5 host(s)` of tag `zebra` from the tag editor, widens one fact, and saves the editor
+- **THEN** that rule is replaced in its file, and the other rules of the file are unchanged
 
 #### Scenario: The rule changed on disk
 - **WHEN** the rule was changed in its file after the builder opened it, and the user saves

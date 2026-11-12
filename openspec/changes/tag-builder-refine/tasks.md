@@ -28,6 +28,15 @@
 - [x] 4.1 Schemas and endpoints for assess, refine, save, replace and the rule list (D10); remove the old builder endpoints. Verify with `test_web_tags` cases, including the 422 for an invalid draft and the refusal of another origin.
 - [ ] 4.2 The workbench dialog in `actions.js`, with its keys in `keys.js`, aborting stale requests. Verify with "the same rule from both" (the terminal and the browser save equal raw rules), the parity test, and a manual run of `seek nmap serve`.
 
+## 6. After the first manual tests
+
+- [x] 6.1 Fix the browser not loading: `MODES` was declared twice in `actions.js`, which stopped every key and list. Verify with `test_every_script_loads_as_a_module`, which fails with the duplicate.
+- [x] 6.2 Show the tag's description and each issue's description and references in the record's Tags block. Verify with `test_a_definition_set_in_the_browser_reaches_every_record` and the terminal issue test.
+- [x] 6.3 Add `Builder.limited` and the `h` key in both front ends, with the services grant offered while limited (D13). Verify with `test_the_selected_ports_widen_to_their_hosts`.
+- [x] 6.4 Add `TagEdit`, `tagfiles.delete_rule` and `rename_tag`, `Session.tag_edit` and `plan_tag_edit` with `overwrites` (D11, D12). Verify with the session tests for "one edit", "a rename reaches every file", "onto an existing name" and "a rule deleted".
+- [x] 6.5 Add the terminal `TagEditScreen` and `IssueScreen`; `T` hands its rule to the editor, and the `t` menu opens it (D11). Verify with the pilot tests for the five printers, the issue, and a saved rule edited in a person's file.
+- [x] 6.6 Add the browser editor dialog, the issue dialog, and the D14 endpoints. Verify with the `test_web_tags` cases for the editor, the 409 for a person's file, the rename, and another origin.
+
 ## 5. Integration
 
 - [ ] 5.1 Run ruff, the full suite and the checker. Raise the minor version and note the removed endpoints in the changelog. Run `seek nmap` by hand: build, edit, save and reopen a rule on a fixture. Verify that everything is green and that the run matches the specs.

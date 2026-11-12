@@ -86,10 +86,13 @@ def test_a_definition_set_in_the_browser_reaches_every_record(tmp_path):
     client, _sess, _eng = _client(tmp_path)
     r = client.put("/api/v1/tags/web-only",
                    json={"description": "Only a web page",
-                         "issues": [{"title": "Default credentials", "severity": "high"}]})
+                         "issues": [{"title": "Default credentials", "severity": "high",
+                                     "description": "admin/admin works"}]})
     assert r.status_code == 200 and r.json()["summary"]
     record = client.get("/api/v1/records/hosts", params={"step": "h:192.0.2.2"}).json()
-    assert "Default credentials" in record["text"]
+    assert "Default credentials" in record["text"], "the issue"
+    assert "admin/admin works" in record["text"], "the issue's description"
+    assert "Only a web page" in record["text"], "the tag's description"
 
 
 def test_a_global_copy_carries_no_address(tmp_path, monkeypatch):
@@ -121,6 +124,17 @@ def _with(draft: dict, fact: dict, state: str) -> dict:
     return {**draft, "facts": facts}
 
 
+def _save_rule(client, draft, tag, name="r", **edit):
+    """What the browser does: the draft as a rule, then the tag editor saves it."""
+    raw = client.post("/api/v1/tags/builder/rule",
+                      json={"draft": draft, "rule_name": name}).json()["raw"]
+    current = client.get("/api/v1/tags/edit", params={"name": tag}).json()
+    current["name"] = tag
+    current["rules"] = [{"raw": raw}, *current["rules"]]
+    current.update(edit)
+    return client.post("/api/v1/tags/edit", json=current)
+
+
 def test_the_builder_assesses_and_saves_like_the_terminal(tmp_path):
     client, sess, eng = _client(tmp_path, rules=None)
     started = client.post("/api/v1/tags/builder", json={"rows": [_row("192.0.2.2")]}).json()
@@ -135,9 +149,12 @@ def test_the_builder_assesses_and_saves_like_the_terminal(tmp_path):
     a = client.post("/api/v1/tags/builder/assess", json={"draft": draft}).json()
     assert [m["address"] for m in a["selection"] if m["matched"]] == ["192.0.2.2"]
     assert a["other_count"] == 0
-    saved = client.post("/api/v1/tags/web-only/rules",
-                        json={"draft": draft, "rule_name": "web, no ssh"})
-    assert saved.status_code == 200 and "web, no ssh" in (eng / "seek-tags.yaml").read_text()
+    saved = _save_rule(client, draft, "web-only", "web, no ssh", description="Only a web page",
+                       issues=[{"title": "Exposed", "severity": "medium",
+                                "references": ["https://example.test/a"]}])
+    assert saved.status_code == 200
+    text = (eng / "seek-tags.yaml").read_text()
+    assert "web, no ssh" in text and "Only a web page" in text and "example.test/a" in text
     assert set(sess.tags().hosts) == {"192.0.2.2"}
 
 
@@ -153,7 +170,7 @@ def test_an_edit_is_counted_and_an_invalid_one_is_a_422(tmp_path):
                       json={"draft": draft, "fact": {**fact, "value": "htt(", "mode": "regex"}})
     assert bad.status_code == 422 and "not a valid expression" in bad.json()["detail"]
     broken = _with(draft, {**fact, "value": "htt(", "mode": "regex"}, "require")
-    r = client.post("/api/v1/tags/web/rules", json={"draft": broken, "rule_name": "x"})
+    r = client.post("/api/v1/tags/builder/rule", json={"draft": broken, "rule_name": "x"})
     assert r.status_code == 422 and not (eng / "seek-tags.yaml").exists()
 
 
@@ -165,8 +182,7 @@ def test_the_same_edit_saves_the_same_rule_as_the_terminal(tmp_path):
                         json={"rows": [_row("192.0.2.2")]}).json()["draft"]
     fact = {"kind": "product", "protocol": "tcp", "ports": "80,8080", "value": "zebra",
             "mode": "contains"}
-    client.post("/api/v1/tags/web/rules",
-                json={"draft": _with(draft, fact, "require"), "rule_name": "r"})
+    assert _save_rule(client, _with(draft, fact, "require"), "web").status_code == 200
     terminal = tb.fact_from("product", protocol="tcp", ports="80,8080", value="zebra",
                             mode="contains")
     expected = tb.draft_rule(tb.Draft(("192.0.2.2",), ((terminal, tb.State.REQUIRE),)), "r")
@@ -182,42 +198,57 @@ def test_the_rows_in_view_start_the_builder(tmp_path):
     assert len(out["draft"]["selection"]) == 3
 
 
-def test_a_saved_rule_is_opened_and_replaced_from_the_browser(tmp_path):
+def test_a_rule_is_edited_in_the_builder_and_saved_by_the_editor(tmp_path):
     client, _sess, eng = _client(tmp_path)
-    (listed,) = client.get("/api/v1/tags/web-only/rules").json()["rules"]
-    assert listed["editable"]
-    opened = client.post("/api/v1/tags/web-only/rules/0/open").json()
-    assert opened["draft"]["selection"] == ["192.0.2.2"] and opened["replaces"]
+    edit = client.get("/api/v1/tags/edit", params={"name": "web-only"}).json()
+    (rule,) = edit["rules"]
+    assert rule["editable"] and rule["origin"] == 0
+    opened = client.post("/api/v1/tags/builder/open",
+                         json={"tag": "web-only", "raw": rule["raw"], "origin": 0}).json()
+    assert opened["draft"]["selection"] == ["192.0.2.2"]
     draft = opened["draft"]
     draft["facts"] = [f for f in draft["facts"] if f["state"] == "require"]
-    r = client.put("/api/v1/tags/web-only/rules/0",
-                   json={"draft": draft, "rule_name": opened["rule_name"],
-                         "replaces": opened["replaces"]})
+    raw = client.post("/api/v1/tags/builder/rule",
+                      json={"draft": draft, "rule_name": opened["rule_name"]}).json()["raw"]
+    edit["rules"][0]["raw"] = raw
+    first = client.post("/api/v1/tags/edit", json=edit)
+    assert first.status_code == 409 and "seek-rules.yaml" in first.json()["detail"], \
+        "a person's file is named before it is rewritten"
+    assert "22/tcp" in (eng / "seek-rules.yaml").read_text()
+    r = client.post("/api/v1/tags/edit", json={**edit, "confirm_overwrite": True})
     assert r.status_code == 200
     text = (eng / "seek-rules.yaml").read_text()
     assert "22/tcp" not in text and "Exposed" in text
-    stale = client.put("/api/v1/tags/web-only/rules/0",
-                       json={"draft": draft, "rule_name": "x", "replaces": opened["replaces"]})
-    assert stale.status_code == 409
 
 
-def test_another_site_cannot_replace_a_rule(tmp_path):
+def test_a_rename_from_the_browser_reaches_the_manual_tags(tmp_path):
+    client, sess, eng = _client(tmp_path, rules=None)
+    client.post("/api/v1/tags/entries", json={"tag": "explored", "rows": [_row("192.0.2.1")]})
+    edit = client.get("/api/v1/tags/edit", params={"name": "explored"}).json()
+    assert edit["original"] == "explored" and edit["manual_hosts"] == 1
+    r = client.post("/api/v1/tags/edit", json={**edit, "name": "done"})
+    assert r.status_code == 200
+    assert {e.tag for e in sess._tag_files_now().all_entries} == {"done"}
+
+
+def test_another_site_cannot_save_a_tag(tmp_path):
     client, _sess, eng = _client(tmp_path)
-    opened = client.post("/api/v1/tags/web-only/rules/0/open").json()
+    edit = client.get("/api/v1/tags/edit", params={"name": "web-only"}).json()
     before = (eng / "seek-rules.yaml").read_text()
-    r = client.put("/api/v1/tags/web-only/rules/0",
-                   json={"draft": opened["draft"], "rule_name": "x",
-                         "replaces": opened["replaces"]},
-                   headers={"Origin": "http://evil.example"})
+    r = client.post("/api/v1/tags/edit", json={**edit, "description": "x",
+                                                "confirm_overwrite": True},
+                    headers={"Origin": "http://evil.example"})
     assert r.status_code == 403 and (eng / "seek-rules.yaml").read_text() == before
 
 
-def test_a_rule_beyond_the_builder_is_listed_with_why(tmp_path):
+def test_a_rule_beyond_the_builder_says_why(tmp_path):
     client, _sess, _eng = _client(
         tmp_path, rules="tags:\n  x:\n    rules: [{when: {any: [{port: 80}, {port: 22}]}}]\n")
-    (listed,) = client.get("/api/v1/tags/x/rules").json()["rules"]
-    assert not listed["editable"] and "any:" in listed["reason"]
-    assert client.post("/api/v1/tags/x/rules/0/open").status_code == 422
+    (rule,) = client.get("/api/v1/tags/edit", params={"name": "x"}).json()["rules"]
+    assert not rule["editable"] and "any:" in rule["reason"]
+    r = client.post("/api/v1/tags/builder/open", json={"tag": "x", "raw": rule["raw"],
+                                                        "origin": 0})
+    assert r.status_code == 422
 
 
 def test_a_tag_made_in_the_browser_is_announced_to_the_terminal(tmp_path):

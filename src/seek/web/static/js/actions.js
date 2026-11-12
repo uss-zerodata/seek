@@ -586,8 +586,7 @@ async function tag() {
       <datalist id="tag-names">${known.tags.map((x) => `<option value="${esc(x.name)}">`).join("")}</datalist></p>
       <p class="dim small">lowercase letters, digits, . _ - · Remove takes off a tag given by hand</p>`,
     `<button value="add" class="primary">Add</button> <button value="remove">Remove</button>
-         <button value="edit">Edit its description and issues…</button>
-         <button value="rules">Edit its rules in the builder…</button>
+         <button value="edit">Edit the tag: description, issues, rules…</button>
          <button value="global">Copy to the global file</button>
          <button value="cancel">Cancel</button>`);
   const form = d.querySelector("form");
@@ -595,40 +594,13 @@ async function tag() {
   d.addEventListener("close", async () => {
     const choice = d.returnValue;
     const name = form.tag.value.trim();
-    if (!["add", "remove", "edit", "global", "rules"].includes(choice)) return;
+    if (!["add", "remove", "edit", "global"].includes(choice)) return;
+    if (choice === "edit") { openTagEditor(name.toLowerCase()); return; }
     if (!name) { say("no tag name given"); return; }
-    if (choice === "rules") { editRules(name.toLowerCase()); return; }
-    if (choice === "edit") { editTag(name, known.tags.find((x) => x.name === name.toLowerCase())); return; }
     try {
       reportChange(choice === "global"
         ? await send("POST", `/api/v1/tags/${encodeURIComponent(name)}/global`)
         : await send("POST", "/api/v1/tags/entries", { tag: name, add: choice === "add", rows: t.rows }));
-    } catch (e) { say(e.message); }
-  });
-}
-
-function editTag(name, current) {
-  const issue = (i = { title: "", severity: "medium", description: "" }) => `
-      <p class="issue"><input name="title" value="${esc(i.title)}" placeholder="issue title">
-        <select name="severity">${SEVERITIES.map((s) => `<option${s === i.severity ? " selected" : ""}>${s}</option>`).join("")}</select>
-        <input name="idesc" value="${esc(i.description || "")}" placeholder="description"></p>`;
-  const d = dialog(`Edit ${name}`, `
-      <p><label>description <input name="description" value="${esc(current?.description || "")}"></label></p>
-      <div class="issues">${(current?.issues || []).map(issue).join("")}${issue()}</div>
-      <p class="dim small">clear an issue's title to remove it; the blank row adds one</p>`,
-    `<button value="save" class="primary">Save</button> <button value="cancel">Cancel</button>`);
-  const form = d.querySelector("form");
-  d.addEventListener("close", async () => {
-    if (d.returnValue !== "save") return;
-    const titles = [...form.querySelectorAll("input[name=title]")];
-    const sevs = [...form.querySelectorAll("select[name=severity]")];
-    const descs = [...form.querySelectorAll("input[name=idesc]")];
-    const issues = titles.map((x, k) => ({ title: x.value.trim(), severity: sevs[k].value,
-                                           description: descs[k].value.trim() }))
-                         .filter((i) => i.title);
-    try {
-      reportChange(await send("PUT", `/api/v1/tags/${encodeURIComponent(name)}`,
-                              { description: form.description.value.trim(), issues }));
     } catch (e) { say(e.message); }
   });
 }
@@ -648,7 +620,7 @@ async function reloadTags() {
 // a newer change aborts the request of an older one, so the last change shows.
 const MARK = { ignore: "·", require: "+", exclude: "−" };
 const CYCLE = { ignore: "require", require: "exclude", exclude: "ignore" };
-const MODES = [["equals", "equals"], ["contains", "contains"], ["start", "starts with"],
+const FACT_MODES = [["equals", "equals"], ["contains", "contains"], ["start", "starts with"],
                ["end", "ends with"], ["regex", "regex"]];
 const GRANTS = [["host", "the host"], ["service", "the matched services"], ["both", "both"]];
 const factKey = (f) => JSON.stringify([f.kind, f.protocol || null, f.ports || "", f.value || "",
@@ -692,29 +664,9 @@ async function buildRule() {
   bench(out, null);
 }
 
-async function editRules(name) {
-  let listed;
-  try { listed = await send("GET", `/api/v1/tags/${encodeURIComponent(name)}/rules`); }
-  catch (e) { say(e.message); return; }
-  if (!listed.rules.length) { say(`${name} has no rules - build one with T`); return; }
-  const first = listed.rules.find((r) => r.editable)?.index;
-  const d = dialog(`Which rule of ${name}?`, listed.rules.map((r) =>
-      `<p><button value="${r.index}"${r.editable ? "" : " disabled"}${r.index === first ? ' class="primary"' : ""}>${esc(r.name)}</button>
-       <span class="dim small">${esc(r.editable ? r.source : r.reason)}</span></p>`).join(""),
-    `<button value="cancel">Cancel</button>`);
-  d.addEventListener("close", async () => {
-    const index = Number(d.returnValue);
-    if (d.returnValue === "cancel" || Number.isNaN(index)) return;
-    let out;
-    try { out = await send("POST", `/api/v1/tags/${encodeURIComponent(name)}/rules/${index}/open`); }
-    catch (e) { say(e.message); return; }
-    bench(out, { tag: name, index, name: out.rule_name, grant: out.grant, replaces: out.replaces });
-  });
-}
-
 function bench(started, rule) {
   const st = { draft: started.draft, start: JSON.stringify(started.draft), a: started.assessment,
-               ids: {}, combo: [], pending: null };
+               ids: {}, combo: [], pending: null, ports: started.draft.limit };
   const title = rule ? `Rule builder · ${rule.tag} · ${rule.name}` : "Rule builder";
   const d = dialog(title, `
       <p class="bench-head"><span class="sel"></span>
@@ -726,7 +678,7 @@ function bench(started, rule) {
       <p class="why notes"></p>
       <p class="total"></p>
       <p class="dim small">space cycles · + require · - exclude · e edit · p same port ·
-        a add · d drop · x exclude host · s save</p>`,
+        h ports or host · a add · d drop · x exclude host · s save</p>`,
     `<button value="save" class="primary">Save…</button> <button value="cancel">Cancel</button>`);
   d.classList.add("wide");
   const form = d.querySelector("form");
@@ -791,7 +743,8 @@ function bench(started, rule) {
       a.others.forEach((m) => { hosts += li(`o:${m.address}`, esc(m.address), ` <span class="dim">${esc(m.ports)} ${esc(m.title)}</span>`); });
     }
     hostsEl.innerHTML = hosts;
-    d.querySelector(".sel").textContent = `${st.draft.selection.length} selected`;
+    d.querySelector(".sel").textContent = `${st.draft.selection.length} selected` + (st.ports
+      ? ` · ${st.draft.limit ? `ports ${st.draft.limit.join(", ")}` : "whole hosts"} (h)` : "");
     d.querySelector(".notes").textContent = [...a.notes, ...(a.confirm ? [a.confirm] : [])].join(" · ");
     d.querySelector(".total").textContent = a.rule.length
       ? `matches ${a.matched} · ${a.selected_matched}/${a.of_selection} selected · ${a.other_count} others · ${a.assumed.length} assumed`
@@ -845,6 +798,8 @@ function bench(started, rule) {
       d: () => id?.startsWith("s:") && change({ ...st.draft, selection: st.draft.selection.filter((x) => x !== id.slice(2)) }),
       x: () => id?.startsWith("o:") && change(withState(st.draft, { kind: "address", value: id.slice(2) }, "exclude")),
       s: () => save(),
+      h: () => st.ports ? change({ ...st.draft, limit: st.draft.limit ? null : st.ports })
+                        : say("the rule is built from whole hosts already"),
       ArrowDown: () => move(1), j: () => move(1), ArrowUp: () => move(-1), k: () => move(-1),
     }[key];
     if (act) { event.preventDefault(); act(); }
@@ -861,21 +816,133 @@ function bench(started, rule) {
   async function save() {
     if (!st.a.rule.length) { say("require or exclude a fact first"); return; }
     if (st.a.confirm && !window.confirm(`${st.a.confirm} - save it anyway?`)) return;
-    const got = await saveDialog(rule, st.a.of_selection);
+    const got = await saveDialog(rule, st.a.of_selection, st.draft.limit ? "service" : "host");
     if (!got) return;
+    let out;
     try {
-      const out = rule
-        ? await send("PUT", `/api/v1/tags/${encodeURIComponent(rule.tag)}/rules/${rule.index}`,
-                     { draft: st.draft, rule_name: got.name, grant: got.grant, replaces: rule.replaces })
-        : await send("POST", `/api/v1/tags/${encodeURIComponent(got.tag)}/rules`,
-                     { draft: st.draft, rule_name: got.name, grant: got.grant });
-      d.close("saved");
-      reportChange(out);
-    } catch (e) { say(e.message); }
+      out = await send("POST", "/api/v1/tags/builder/rule",
+                       { draft: st.draft, rule_name: got.name, grant: got.grant });
+    } catch (e) { say(e.message); return; }
+    st.start = JSON.stringify(st.draft);
+    d.close("saved");
+    // The rule goes to the tag editor; nothing is written before it is saved there.
+    if (rule) rule.done(out.raw);
+    else openTagEditor(got.tag, out.raw);
   }
 
   render();
   factsEl.querySelector("li[data-id]")?.focus();
+}
+
+// The tag editor: everything about one tag - name, description, issues, rules -
+// as the terminal's. Nothing is written until "Save all"; a change that rewrites a
+// person's rule file is confirmed first.
+async function openTagEditor(name, newRule = null) {
+  let edit;
+  try { edit = await send("GET", `/api/v1/tags/edit?name=${encodeURIComponent(name || "")}`); }
+  catch (e) { say(e.message); return; }
+  if (!edit.original) edit.name = name || "";
+  if (newRule) edit.rules.unshift({ raw: newRule, origin: null, deleted: false, name: newRule.name,
+                                    where: "new", changed: false, editable: true, reason: "" });
+  const start = JSON.stringify(edit);
+  const d = dialog(`Tag · ${edit.original || "new"}`, `
+      <p><label>name <input name="tname" value="${esc(edit.name)}" autocomplete="off"></label></p>
+      <p><label>description <input name="tdesc" value="${esc(edit.description)}" autocomplete="off"></label></p>
+      <h3 class="small">Issues <button type="button" data-act="add-issue">add an issue…</button></h3>
+      <ul class="bench-list issues-list"></ul>
+      <h3 class="small">Rules <span class="dim">open one in the builder, or build a new one with T</span></h3>
+      <ul class="bench-list rules-list"></ul>
+      <p class="dim small manual"></p>
+      <p class="why error"></p>`,
+    `<button value="save" class="primary">Save all</button> <button value="cancel">Cancel</button>`);
+  d.classList.add("wide");
+  const form = d.querySelector("form");
+  const typed = () => { edit.name = form.tname.value.trim(); edit.description = form.tdesc.value; };
+  function render() {
+    d.querySelector(".issues-list").innerHTML = edit.issues.map((i, k) => `
+      <li data-k="${k}"><b class="sev-${esc(i.severity)}">${esc(i.severity)}</b> ${esc(i.title)}
+        <button type="button" data-act="edit-issue" data-k="${k}">edit</button>
+        <button type="button" data-act="del-issue" data-k="${k}">delete</button>
+        ${i.description ? `<br><span class="dim">${esc(i.description)}</span>` : ""}
+        ${i.references.length ? `<br><span class="dim">${esc(i.references.join(", "))}</span>` : ""}</li>`).join("")
+      || `<li class="dim">no issues</li>`;
+    d.querySelector(".rules-list").innerHTML = edit.rules.map((r, k) => {
+      const mark = r.origin === null ? "+" : r.deleted ? "−" : r.changed ? "~" : " ";
+      return `<li data-k="${k}">${mark} <span class="${r.deleted ? "dim" : ""}">${esc(r.name || "(unnamed)")}</span>
+        <span class="dim">${esc(r.where)}</span>
+        <button type="button" data-act="open-rule" data-k="${k}"${r.deleted || !r.editable ? " disabled" : ""}>open in the builder</button>
+        <button type="button" data-act="del-rule" data-k="${k}">${r.deleted ? "keep" : "delete"}</button>
+        ${r.editable ? "" : `<br><span class="dim">${esc(r.reason)}</span>`}</li>`;
+    }).join("") || `<li class="dim">no rules - build one with T</li>`;
+    d.querySelector(".manual").textContent = edit.manual_hosts || edit.manual_services
+      ? `manual tags: ${edit.manual_hosts} host(s), ${edit.manual_services} service(s)` : "manual tags: none";
+  }
+  d.addEventListener("click", async (event) => {
+    const b = event.target.closest("button[data-act]");
+    if (!b) return;
+    typed();
+    const k = Number(b.dataset.k);
+    if (b.dataset.act === "add-issue") { const i = await issueDialog(null); if (i && i !== "delete") edit.issues.push(i); }
+    if (b.dataset.act === "edit-issue") {
+      const i = await issueDialog(edit.issues[k]);
+      if (i === "delete") edit.issues.splice(k, 1); else if (i) edit.issues[k] = i;
+    }
+    if (b.dataset.act === "del-issue") edit.issues.splice(k, 1);
+    if (b.dataset.act === "del-rule") {
+      if (edit.rules[k].origin === null) edit.rules.splice(k, 1); else edit.rules[k].deleted = !edit.rules[k].deleted;
+    }
+    if (b.dataset.act === "open-rule") {
+      const r = edit.rules[k];
+      let out;
+      try {
+        out = await send("POST", "/api/v1/tags/builder/open", { tag: edit.original || edit.name, raw: r.raw, origin: r.origin });
+      } catch (e) { say(e.message); return; }
+      bench(out, { tag: edit.original || edit.name, name: out.rule_name, grant: out.grant,
+                   done: (raw) => { r.raw = raw; r.name = raw.name; r.changed = r.origin !== null; render(); } });
+    }
+    render();
+  });
+  async function saveAll(confirmOverwrite) {
+    typed();
+    try {
+      reportChange(await send("POST", "/api/v1/tags/edit", { ...edit, confirm_overwrite: confirmOverwrite }));
+      d.close("saved");
+    } catch (e) {
+      if (/rewrites/.test(e.message) && !confirmOverwrite && window.confirm(`${e.message}. Save anyway?`)) { saveAll(true); return; }
+      d.querySelector(".error").textContent = e.message;
+    }
+  }
+  form.addEventListener("submit", (event) => {
+    typed();
+    if (event.submitter?.value === "save") { event.preventDefault(); saveAll(false); return; }
+    if (JSON.stringify(edit) !== start && !window.confirm("Leave the tag editor? Nothing is saved.")) event.preventDefault();
+  });
+  d.addEventListener("cancel", (event) => {
+    typed();
+    if (JSON.stringify(edit) !== start && !window.confirm("Leave the tag editor? Nothing is saved.")) event.preventDefault();
+  });
+  render();
+  (edit.original ? form.tdesc : form.tname).focus();
+}
+
+function issueDialog(issue) {
+  return new Promise((resolve) => {
+    const i = issue || { title: "", severity: "medium", description: "", references: [] };
+    const d = dialog(issue ? "Issue" : "New issue", `
+        <p><label>title <input name="title" value="${esc(i.title)}" autocomplete="off"></label>
+          <select name="severity">${SEVERITIES.map((s) => `<option${s === i.severity ? " selected" : ""}>${s}</option>`).join("")}</select></p>
+        <p><label>description <input name="idesc" value="${esc(i.description || "")}" autocomplete="off"></label></p>
+        <p><label>references <input name="refs" value="${esc((i.references || []).join(", "))}" placeholder="URLs, CVE ids, comma separated" autocomplete="off"></label></p>`,
+      `<button value="take" class="primary">Take</button>${issue ? ' <button value="delete">Delete</button>' : ""} <button value="cancel">Cancel</button>`);
+    const form = d.querySelector("form");
+    form.title.focus();
+    d.addEventListener("close", () => {
+      if (d.returnValue === "delete") { resolve("delete"); return; }
+      if (d.returnValue !== "take" || !form.title.value.trim()) { resolve(null); return; }
+      resolve({ title: form.title.value.trim(), severity: form.severity.value, description: form.idesc.value.trim(),
+                references: form.refs.value.split(",").map((r) => r.trim()).filter(Boolean) });
+    });
+  });
 }
 
 function editFact(draft, fact) {
@@ -884,7 +951,7 @@ function editFact(draft, fact) {
     const ports = !["os", "tag", "address", "fixed"].includes(fact.kind);
     const d = dialog(`Edit: ${fact.label}`, `
         ${text ? `<p><label>value <input name="value" value="${esc(fact.value)}" autocomplete="off"></label>
-          <select name="mode">${MODES.map(([v, l]) => `<option value="${v}"${v === fact.mode ? " selected" : ""}>${l}</option>`).join("")}</select>
+          <select name="mode">${FACT_MODES.map(([v, l]) => `<option value="${v}"${v === fact.mode ? " selected" : ""}>${l}</option>`).join("")}</select>
           <label><input type="checkbox" name="case"${fact.case ? " checked" : ""}> match case</label></p>` : ""}
         ${ports ? `<p><label>ports <input name="ports" value="${esc(fact.ports ? fact.ports : "")}" placeholder="any port" autocomplete="off"></label>
           <span class="dim small">one, a list such as 80,8000-8999, or empty for any</span></p>` : ""}
@@ -928,7 +995,7 @@ function editFact(draft, fact) {
   });
 }
 
-function saveDialog(rule, count) {
+function saveDialog(rule, count, grant = "host") {
   return new Promise(async (resolve) => {
     let known = { tags: [] };
     try { known = await send("GET", "/api/v1/tags"); } catch { /* names are a convenience */ }
@@ -936,7 +1003,7 @@ function saveDialog(rule, count) {
         <p><label>tag <input name="tag" list="bench-tags" autocomplete="off" value="${esc(rule?.tag || "")}"${rule ? " disabled" : ""}></label>
         <datalist id="bench-tags">${known.tags.map((x) => `<option value="${esc(x.name)}">`).join("")}</datalist></p>
         <p><label>rule name <input name="name" value="${esc(rule?.name || `built from ${count} host(s)`)}" autocomplete="off"></label></p>
-        <p><label>it tags <select name="grant">${GRANTS.map(([v, l]) => `<option value="${v}"${v === (rule?.grant || "host") ? " selected" : ""}>${l}</option>`).join("")}</select></label></p>`,
+        <p><label>it tags <select name="grant">${GRANTS.map(([v, l]) => `<option value="${v}"${v === (rule?.grant || grant) ? " selected" : ""}>${l}</option>`).join("")}</select></label></p>`,
       `<button value="save" class="primary">Save</button> <button value="cancel">Cancel</button>`);
     const form = d.querySelector("form");
     (rule ? form.name : form.tag).focus();

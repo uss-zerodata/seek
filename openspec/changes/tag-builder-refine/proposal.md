@@ -47,6 +47,18 @@ the easy path.
   scope must hold on one port, and are saved as one condition.
 - **A save dialog.** The user picks an existing tag or types a new one, names the
   rule, and chooses whether it tags the host, the matched services or both.
+- **One tag editor.** Name, description, issues (with description and
+  references) and rules are on one screen, and saved together. It opens after
+  the builder saves a rule, and from `t` for any tag.
+  - A rule in it opens in the builder and comes back.
+  - A rule can be deleted.
+  - A rename reaches every project file.
+  - Rewriting a hand-written `seek-rules.yaml` is confirmed first, because its
+    comments are lost.
+- **Ports or hosts.** A builder started from ports can switch to their whole
+  hosts, and back.
+- **Records show the tag's description**, and each issue's description and
+  references.
 - **More ways to open the builder.**
   - The marks, or the row under the cursor, as today.
   - The rows in the filtered view, when nothing is marked.

@@ -427,12 +427,18 @@ def _tag_block(grants: list[tuple[str, object, str]], tags) -> list[Text]:
         d = tags.defs.get(name)
         if d is None:
             continue
+        if d.description:
+            out.append(Text(" " * 6 + d.description, style=_KEY))
         for issue in sorted(d.issues, key=lambda i: -i.severity.rank):
             issue_line = Text(" " * 8)
             issue_line.append(f"{issue.severity.value:<9}",
                               style=_SEVERITY_STYLE.get(issue.severity.value.upper(), _KEY))
             issue_line.append(issue.title)
             out.append(issue_line)
+            if issue.description:
+                out.append(Text(" " * 17 + issue.description))
+            for ref in issue.references:
+                out.append(Text(" " * 17 + ref, style=_KEY))
     return out
 
 

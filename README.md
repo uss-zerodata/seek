@@ -283,19 +283,35 @@ time limit, so avoid nesting quantifiers such as `(a+)+`.
 
 **Tagging by hand, and building a rule.** `t` tags the marked rows, or the
 selected one: pick a tag (picking one they all carry removes it), type a new
-name, give a tag a description and issues, or copy a tag's definition to the
-global `tags.yaml` - a copy never carries an address. Tags are saved in
-`seek-tags.yaml` in the first opened folder, so `explored` and `high-value`
-survive the session. `T` turns marked hosts into a rule: it lists what they all
-share, each with how many other hosts share it too, rarest first, and offers the
-common start or end of values that differ (` - READY`). Tick the facts; when
-they also match hosts you did not mark, it lists what those hosts have and yours
-do not - `not 22/tcp open, excludes 500/500` - and says when an exclusion is
-only an assumption for one of yours because port 22 was never scanned there.
-The preview counts the result before you save it to a tag. A tag marked `?`
-names what is missing: filter `tag:zebra-zd420`, mark the uncertain hosts and
-send them to a scan of exactly that port from the export dialog. `R` reads the
-tag files again; `tag:` filters, `b` groups by tag.
+name, open the tag editor, or copy a tag's definition to the global `tags.yaml`
+- a copy never carries an address. Tags are saved in `seek-tags.yaml` in the
+first opened folder, so `explored` and `high-value` survive the session.
+
+The **tag editor** holds everything about one tag: its name (a rename reaches
+every project file that says it - rules, `tag:` conditions, manual tags), its
+description, its issues with severity, description and references, and its
+rules. `↵` on a rule opens it in the rule builder, `del` deletes it, and nothing
+is written until you save all of it. When that rewrites a hand-written
+`seek-rules.yaml`, seek says so first: the file is written in seek's layout, so
+its comments are lost.
+
+`T` opens the **rule builder** on the marked hosts - or, with nothing marked and
+a filter on, the rows in view. One screen lists the facts most of them share,
+grouped by port, each with how many selected and other hosts have it, rarest
+first, with broader ones next to them: a value found on different ports, a
+common start or end (` - READY`), a word every value contains (`Zebra`).
+`space` sets a fact to require or exclude, `e` edits it - equals, contains,
+starts with, ends with or regex, case, and the ports (one, a list such as
+`80,8000-8999`, or any) - with live counts. When the draft also matches hosts
+you did not mark, it lists them with their ports and title, proposes what
+excludes them (`22/tcp open, excludes 500/500`), and says when an exclusion is
+only an assumption because port 22 was never scanned there. `a` adds a match to
+the selection, `x` excludes one host, `p` joins facts of one port into one
+condition, and `h` switches between the selected ports and their hosts. `s`
+hands the rule to the tag editor. A tag marked `?` names what is missing: filter
+`tag:zebra-zd420`, mark the uncertain hosts and send them to a scan of exactly
+that port from the export dialog. `R` reads the tag files again; `tag:` filters,
+`b` groups by tag.
 
 **Running scans.** With nmap on the path (the status line says `⌁ nmap 7.94`, or
 `⌁ nmap not found`), `n` starts one: a scope editor — one target per line,

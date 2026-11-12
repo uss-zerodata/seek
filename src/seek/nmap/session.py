@@ -63,6 +63,7 @@ from seek.vulndb import match as vulndb_match
 if TYPE_CHECKING:                     # imported where used: neither is needed to start
     from seek.nmap.filtering import FilterSpec
     from seek.nmap.tagbuild import Builder
+    from seek.nmap.tagedit import TagEdit
 from seek.vulndb import store as vulndb_store
 
 # How many events a slow listener may fall behind before `line` events are
@@ -219,6 +220,9 @@ class TagChange:
     with the operation applied to it, and what to say once it is done."""
     ops: tuple[tuple[Path, Callable[[dict], dict]], ...]
     summary: str
+    # A person's rule files the change rewrites - in seek's layout, without
+    # their comments - so a front end asks first.
+    overwrites: tuple[Path, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -734,17 +738,15 @@ class Session:
 
     def bench_builder(self, limit: frozenset[tuple[str, int]] | None = None) -> Builder:
         """A rule builder without a selection - each browser request names its own
-        draft - kept while the model, the tags and the port limit stay, so its
-        counts are not made again per request. Blocking: call it off the loop."""
+        draft - kept while the model and the tags stay, so its counts are not made
+        again per request; each port limit shares them. Blocking: call it off the loop."""
         from seek.nmap import tagbuild
         tags, index = self.tags(), self._tag_index()
         kept = self._bench
-        if kept is None or kept[0][0] is not index or kept[0][1] is not tags \
-                or kept[0][2] != limit:
-            b = tagbuild.start(index, self.scans.files, tags, [])
-            b.limit = limit
-            kept = self._bench = ((index, tags, limit), b)
-        return kept[1]
+        if kept is None or kept[0][0] is not index or kept[0][1] is not tags:
+            kept = self._bench = ((index, tags), tagbuild.start(index, self.scans.files,
+                                                                tags, []))
+        return kept[1].limited(limit)
 
     def open_rule(self, rule) -> tuple[Builder, object] | str:
         """A builder and its draft for a saved rule, selecting the hosts it matches
@@ -822,14 +824,84 @@ class Session:
     def plan_rule_replace(self, rule, raw: dict) -> TagChange:
         """Replace a rule the builder opened, in the file it came from."""
         tagrules_mod.condition({"all": raw.get("when")})       # refuses a broken rule
-        return TagChange(((Path(rule.source.path),
-                           tagfiles_mod.replace_rule(rule.tag, dict(rule.raw), raw)),),
-                         f"changed a rule of {rule.tag}")
+        path = Path(rule.source.path)
+        person = any(f.path == path and f.kind is tagfiles_mod.Kind.RULES
+                     for f in self._tag_files_now().files)
+        return TagChange(((path, tagfiles_mod.replace_rule(rule.tag, dict(rule.raw), raw)),),
+                         f"changed a rule of {rule.tag}", (path,) if person else ())
 
     def rules_of(self, tag: str) -> list:
         """The rules of a tag as loaded, in their files' order."""
         found = self._tag_files_now().tags.get(tag)
         return list(found.rules) if found else []
+
+    def tag_edit(self, name: str | None) -> TagEdit:
+        """A tag as the editor holds it, from the files as read."""
+        from seek.nmap import tagedit
+        loaded = self._tag_files_now()
+        return tagedit.from_loaded(name, loaded, loaded.all_entries)
+
+    def plan_tag_edit(self, edit) -> TagChange:
+        """Everything the editor changed, as one change: a rename in every project
+        file that says the tag, the definition where it is written, and each rule
+        added, changed or deleted in its own file. Raises ValueError with the reason."""
+        from seek.nmap import tagbuild
+        try:
+            name = tagrules_mod.tag_name(edit.name)
+        except tagrules_mod.RuleError as exc:
+            raise ValueError(str(exc)) from None
+        loaded = self._tag_files_now()
+        kinds = {f.path: f for f in loaded.files}
+        project = {p for p, f in kinds.items() if f.scope is not None}
+        old = edit.original
+        if edit.renamed and (name in loaded.tags
+                             or any(e.tag == name for e in loaded.all_entries)):
+            raise ValueError(f"a tag called {name} exists already")
+        if old is None and name in loaded.tags:
+            raise ValueError(f"a tag called {name} exists already - edit it instead")
+        ops: list[tuple[Path, Callable[[dict], dict]]] = []
+        if edit.renamed:
+            mentions: set[Path] = set()
+            for d in loaded.tags.values():
+                for r in d.rules:
+                    if r.tag == old or old in tagrules_mod.tags_used(r.when):
+                        mentions.add(Path(r.source.path))
+                if d.name == old:
+                    mentions.update(Path(s.path) for s in d.sources)
+            mentions.update(path for path, es in loaded.entries.items()
+                            if any(e.tag == old for e in es))
+            ops += [(path, tagfiles_mod.rename_tag(old, name))
+                    for path in sorted(mentions & project)]
+        if edit.definition_changed:
+            d = loaded.tags.get(old) if old else None
+            where = next((Path(s.path) for s in (d.sources if d else ())
+                          if Path(s.path) in project), None) or self._home_file()
+            ops.append((where, tagfiles_mod.update_definition(name, edit.description.strip(),
+                                                              list(edit.issues))))
+        for item in edit.rules:
+            when = item.raw.get("when")
+            if not item.deleted:
+                try:
+                    tagrules_mod.condition(when if isinstance(when, dict) else {"all": when})
+                except tagrules_mod.RuleError as exc:
+                    raise ValueError(f"rule {item.name!r}: {exc}") from None
+            if item.is_new:
+                ops.append((self._home_file(), tagfiles_mod.add_rule(name, item.raw)))
+                continue
+            if not (item.changed or item.deleted):
+                continue
+            rule = item.origin
+            if tagbuild._has_legacy(rule.raw.get("when")):
+                raise ValueError(f"{rule.source}: the rule is written in categorize_systems' "
+                                 "format - change or delete it in the file")
+            path = Path(rule.source.path)
+            ops.append((path, tagfiles_mod.delete_rule(name, dict(rule.raw)) if item.deleted
+                        else tagfiles_mod.replace_rule(name, dict(rule.raw), item.raw)))
+        overwrites = tuple(sorted({path for path, _ in ops
+                                   if path in kinds and kinds[path].kind
+                                   is tagfiles_mod.Kind.RULES}))
+        what = f"renamed {old} to {name}" if edit.renamed else f"saved {name}"
+        return TagChange(tuple(ops), what, overwrites)
 
     def plan_copy_global(self, name: str) -> TagChange:
         """The definition only - never a manual entry, so no address leaves the
