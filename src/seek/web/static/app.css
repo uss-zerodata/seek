@@ -229,8 +229,8 @@ dialog h3 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: .02em;
 .field { display: grid; gap: 4px; margin: 0; border: 0; padding: 0; min-width: 0; }
 .field > span, .field > legend { color: var(--ink-2); font-size: 12px; font-weight: 600; padding: 0; }
 .field input[type="text"], .field input:not([type]), .field textarea { width: 100%; font: inherit; }
-.field input:not([type]), .field textarea { border: 1px solid var(--rule-strong); border-radius: 6px;
-  background: var(--pane); color: var(--ink); padding: 4px 8px; }
+.field input:not([type]), .field textarea { border: 1px solid var(--rule); border-radius: 6px;
+  background: var(--inset); color: var(--ink); padding: 4px 8px; font: 13px var(--sans); }
 .field input:not([type]) { height: var(--control); }
 .field input:disabled { background: var(--inset); color: var(--ink-3); }
 .field small { color: var(--ink-3); font-size: 11.5px; }
@@ -473,3 +473,73 @@ dialog pre.command { white-space: pre-wrap; word-break: break-word; font: 12px v
 dialog details { margin: 0 0 8px; }
 dialog .row { margin: 2px 0 2px 16px; }
 dialog .row .error { display: block; margin-left: 16px; }
+
+/* --- motion: one hover, press and focus layer ------------------------------------ */
+/* Every control answers the pointer the same way, quickly and without overshoot:
+   a colour step, a 1px lift, a press that sinks. Grouped buttons (segments, the
+   rule builder's Ignore/Require/Exclude) only change colour - a lifted segment
+   would break its group's outline. Nothing moves by itself. */
+:root { --m-in: 140ms; --m-out: 200ms; --m-press: 90ms; --m-panel: 200ms; --m-image: 600ms;
+        --m-ease: cubic-bezier(.2, .8, .2, 1); }
+button, .button, .chip, select, a, .fact, .host, table.rows td, .card, .thumb img, .cover .meter i {
+  transition: color var(--m-out) var(--m-ease), background-color var(--m-out) var(--m-ease),
+              border-color var(--m-out) var(--m-ease), text-decoration-color var(--m-out) var(--m-ease),
+              transform var(--m-out) var(--m-ease), box-shadow var(--m-out) var(--m-ease); }
+.cover .meter i { transition: width var(--m-panel) var(--m-ease); }
+.thumb { overflow: hidden; }
+.thumb img { transition: transform var(--m-image) var(--m-ease); }
+a { text-decoration-line: underline; text-decoration-color: transparent;
+    text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:hover { text-decoration-color: currentColor; }
+.chip, .chip:hover, nav#tabs a, .brand, a.thumb, a.hit { text-decoration-color: transparent; }
+button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--key) 86%, var(--ink));
+  border-color: color-mix(in srgb, var(--key) 86%, var(--ink)); color: var(--on-key); }
+@media (hover: hover) and (pointer: fine) {
+  button:not(:disabled):hover, .button:hover, .chip:hover { transform: translateY(-1px);
+    transition-duration: var(--m-in); }
+  .seg button:hover, .tri button:hover, button.icon:hover, button.linkish:hover,
+  .stepper button:hover, .variants button:hover { transform: none; }
+  .grid .card:has(a.thumb):hover { transform: translateY(-2px); border-color: var(--rule-strong);
+    box-shadow: 0 6px 24px rgb(0 0 0 / .08); }
+  .grid .card:has(a.thumb):hover .thumb img { transform: scale(1.03); }
+}
+button:not(:disabled):active, .button:active, .chip:active {
+  transform: translateY(1px) scale(.985); transition-duration: var(--m-press); }
+.seg button:active, .tri button:active, .stepper button:active, .variants button:active { transform: none; }
+:focus-visible { outline: 2px solid var(--key); outline-offset: 2px; animation: m-focus var(--m-panel) var(--m-ease); }
+@keyframes m-focus { from { outline-offset: 6px; } to { outline-offset: 2px; } }
+input:focus, textarea:focus, select:focus, .filter:focus {
+  outline: none; border-color: var(--key); box-shadow: 0 0 0 3px var(--key-tint);
+  transition: border-color var(--m-in) var(--m-ease), box-shadow var(--m-in) var(--m-ease); }
+dialog[open] { animation: m-drop var(--m-panel) var(--m-ease); }
+dialog[open]::backdrop { animation: m-fade var(--m-panel) var(--m-ease); }
+@keyframes m-drop { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes m-fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* The rule builder at phone width: a fact's control and words on one line, its
+   counts under them; a host's actions always shown, there is no hover. */
+@media (max-width: 600px) {
+  dialog { padding: 12px; }
+  .fact { grid-template-columns: max-content minmax(0, 1fr) max-content;
+          grid-template-areas: "what what edit" "tri cover others"; row-gap: 4px; padding: 6px 12px; }
+  .fact .tri { grid-area: tri; } .fact .what { grid-area: what; }
+  .fact .cover { grid-area: cover; } .fact .others { grid-area: others; text-align: left; }
+  .fact > button.icon { grid-area: edit; }
+  .fact.suggestion { grid-template-areas: none; grid-template-columns: max-content minmax(0, 1fr); }
+  .fact.suggestion .drops { grid-column: 2; }
+  .host { grid-template-columns: 14px minmax(0, 1fr) max-content; }
+  .host .ports, .host .title { grid-column: 2; }
+  .host .acts { opacity: 1; grid-column: 3; grid-row: 1; }
+  .tb-stats .stat { padding: 2px 8px; } .stat b { font-size: 15px; }
+  .card-row { grid-template-columns: max-content minmax(0, 1fr); }
+  .card-row .acts { grid-column: 1 / -1; }
+  .tb-keys { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important;
+    transition-property: color, background-color, border-color, text-decoration-color !important; }
+  button:active, .button:active, .chip:active, .grid .card:hover, .grid .card:hover .thumb img,
+  button:hover, .chip:hover { transform: none !important; }
+}
+
