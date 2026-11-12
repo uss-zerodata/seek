@@ -24,6 +24,7 @@ export const KEYS = [
   [["r"], "openPorts", "hosts with open ports only"],
   [["m"], "mark", "mark the row (a bucket marks everything in it)"],
   [["M"], "clearMarks", "clear every mark"],
+  [["H"], "markHost", "mark the host the row belongs to - from a port or a screenshot too"],
   [["x"], "export", "export the marks, else the filtered rows"],
   [["n"], "newScan", "new scan"],
   [["U"], "scanGaps", "scan the ports that have no version yet"],

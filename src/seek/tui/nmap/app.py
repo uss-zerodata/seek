@@ -458,6 +458,7 @@ class NmapApp(ScanFlows, TagFlows, App[int]):
         Binding("c", "cancel_scan", "Cancel the scan", show=False),
         Binding("m", "mark", "Mark", show=False),
         Binding("M", "clear_marks", "Clear marks", show=False),
+        Binding("H", "mark_host", "Mark the host", show=False),
         Binding("x", "export", "Export", show=False),
         Binding("i", "open_shot", "Open the screenshot", show=False),
         Binding("W", "report_server", "Web report", show=False),
@@ -1753,6 +1754,18 @@ class NmapApp(ScanFlows, TagFlows, App[int]):
             return
         self.session.toggle(row.records, origin="tui")
         self._reload_rows(preserve=True)
+
+    def action_mark_host(self) -> None:
+        """Mark the host the row belongs to - from a port, a screenshot or a
+        bucket, its hosts - or unmark it when it is marked."""
+        row = self._current_row()
+        hosts = exporter.hosts_of(row.records) if row is not None else []
+        if not hosts:
+            return
+        marked = self.session.toggle(hosts, origin="tui")
+        self._reload_rows(preserve=True)
+        what = hosts[0].host.address if len(hosts) == 1 else f"{len(hosts)} hosts"
+        self.notify(f"{'marked' if marked else 'unmarked'} {what} · {len(self._marked)} marked")
 
     def action_clear_marks(self) -> None:
         if not self._marked:

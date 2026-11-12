@@ -44,6 +44,17 @@ async function mark() {
   } catch (e) { say(e.message); }
 }
 
+// `H`: the host the row belongs to - from a port, a screenshot or a bucket.
+async function markHost() {
+  const tr = document.querySelector("table.rows tr.selected");
+  if (!tr) return;
+  try {
+    const out = await send("POST", "/api/v1/marks/hosts", { row: { ...view(), step: tr.dataset.step } });
+    say(`${out.marked ? "marked" : "unmarked"} the host · ${out.count} marked`);
+    refreshList();
+  } catch (e) { say(e.message); }
+}
+
 async function clearMarks() {
   try { await send("DELETE", "/api/v1/marks"); say("marks cleared"); refreshList(); }
   catch (e) { say(e.message); }
@@ -618,11 +629,15 @@ async function reloadTags() {
 // `T`: the rule builder - one dialog, as the terminal's workbench. The dialog
 // holds only the draft; every count, proposal and condition is the server's, and
 // a newer change aborts the request of an older one, so the last change shows.
-const MARK = { ignore: "·", require: "+", exclude: "−" };
 const CYCLE = { ignore: "require", require: "exclude", exclude: "ignore" };
 const FACT_MODES = [["equals", "equals"], ["contains", "contains"], ["start", "starts with"],
-               ["end", "ends with"], ["regex", "regex"]];
-const GRANTS = [["host", "the host"], ["service", "the matched services"], ["both", "both"]];
+                    ["end", "ends with"], ["regex", "regex"]];
+const MODE_WORD = { equals: "=", contains: "contains", start: "starts with", end: "ends with", regex: "matches" };
+const GRANTS = [["host", "The host", "every host the rule matches carries the tag"],
+                ["service", "The matched services", "only the ports that met the rule's port conditions"],
+                ["both", "Both", "the hosts and those ports"]];
+const KIND_WORD = { service: "service", product: "product", version: "version", title: "page title",
+                    cert_issuer: "certificate issuer", header: "header" };
 const factKey = (f) => JSON.stringify([f.kind, f.protocol || null, f.ports || "", f.value || "",
                                        f.mode || "equals", !!f.case]);
 
@@ -646,6 +661,28 @@ function choose(title, choices) {
   });
 }
 
+// A fact as words: what is tested, how, and the value - the port is its group's.
+function factText(f) {
+  if (f.kind === "open") return "open";
+  if (f.kind === "tag") return `carries the tag <code>${esc(f.value)}</code>`;
+  if (f.kind === "address") return `address <code>${esc(f.value)}</code>`;
+  if (f.kind === "fixed") return `as written: <code>${esc(f.value)}</code>`;
+  const what = f.kind === "os" ? "OS" : KIND_WORD[f.kind] || f.kind;
+  return `${esc(what)} <span class="op">${MODE_WORD[f.mode] || "="}</span> <code>${esc(f.value)}</code>` +
+         (f.case ? ' <span class="tagword">case</span>' : "");
+}
+
+function tri(state) {
+  const b = (value, text, title) => `<button type="button" data-set="${value}" title="${title}" aria-pressed="${state === value}">${text}</button>`;
+  return `<span class="tri" role="group" aria-label="use this fact">${b("ignore", "–", "ignore (space cycles)")}${b("require", "Require", "require (+)")}${b("exclude", "Exclude", "exclude (-)")}</span>`;
+}
+
+function countCell(selected, of, others) {
+  const pct = of ? Math.round((100 * selected) / of) : 0;
+  return `<span class="cover" title="${selected} of ${of} selected hosts have it"><span class="meter"><i style="width:${pct}%"></i></span>${selected}/${of}</span>` +
+         `<span class="others${others ? "" : " none"}" title="hosts you did not select that have it">${others} other${others === 1 ? "" : "s"}</span>`;
+}
+
 async function buildRule() {
   let marks;
   try { marks = await send("GET", "/api/v1/marks"); } catch (e) { say(e.message); return; }
@@ -658,7 +695,7 @@ async function buildRule() {
     if (!from) return;
     body = from === "view" ? { view: { tab: v.tab, path: v.path, q: v.q } } : row;
   }
-  if (!body) { say("mark the hosts a rule should find, then press T"); return; }
+  if (!body) { say("mark the hosts a rule should find (m, or H for a row's host), then press T"); return; }
   let out;
   try { out = await send("POST", "/api/v1/tags/builder", body); } catch (e) { say(e.message); return; }
   bench(out, null);
@@ -669,18 +706,24 @@ function bench(started, rule) {
                ids: {}, combo: [], pending: null, ports: started.draft.limit };
   const title = rule ? `Rule builder · ${rule.tag} · ${rule.name}` : "Rule builder";
   const d = dialog(title, `
-      <p class="bench-head"><span class="sel"></span>
-        <label><input type="checkbox" name="same"> same port (p)</label></p>
-      <div class="bench">
-        <ul class="bench-list facts-list" aria-label="facts"></ul>
-        <ul class="bench-list hosts-list" aria-label="hosts"></ul>
+      <div class="tb-bar">
+        <div class="tb-stats" aria-live="polite"></div>
+        <div class="tb-opts">
+          <label class="switch" title="facts on the same ports must hold on one port"><input type="checkbox" name="same"> same port <kbd>p</kbd></label>
+          ${st.ports ? `<span class="seg" role="group" aria-label="facts of">
+            <button type="button" data-scope="ports">${esc(st.ports.map((x) => x.split("/").reverse().join("/")).join(", "))} only</button><button type="button" data-scope="host">whole host</button></span> <kbd>h</kbd>` : ""}
+        </div>
       </div>
-      <p class="why notes"></p>
-      <p class="total"></p>
-      <p class="dim small">space cycles · + require · - exclude · e edit · p same port ·
-        h ports or host · a add · d drop · x exclude host · s save</p>`,
-    `<button value="save" class="primary">Save…</button> <button value="cancel">Cancel</button>`);
-  d.classList.add("wide");
+      <p class="tb-notes"></p>
+      <div class="tb-body">
+        <section class="tb-pane"><h3>Facts <span class="hint">require what your hosts share · exclude what the others have</span></h3>
+          <div class="tb-scroll facts-list"></div></section>
+        <section class="tb-pane"><h3>Hosts</h3><div class="tb-scroll hosts-list"></div></section>
+      </div>
+      <p class="tb-keys"><kbd>j</kbd><kbd>k</kbd> move · <kbd>space</kbd> cycle · <kbd>+</kbd> require · <kbd>-</kbd> exclude ·
+        <kbd>e</kbd> edit · <kbd>a</kbd> add · <kbd>d</kbd> drop · <kbd>x</kbd> exclude host · <kbd>s</kbd> continue</p>`,
+    `<button value="save" class="primary">Continue to the tag…</button> <button value="cancel">Cancel</button>`);
+  d.classList.add("wide", "tb");
   const form = d.querySelector("form");
   const factsEl = d.querySelector(".facts-list");
   const hostsEl = d.querySelector(".hosts-list");
@@ -690,6 +733,7 @@ function bench(started, rule) {
   async function recount() {
     st.pending?.abort();
     const ctl = st.pending = new AbortController();
+    d.classList.add("busy");
     await new Promise((r) => setTimeout(r, 120));
     if (ctl.signal.aborted) return;
     try {
@@ -697,63 +741,81 @@ function bench(started, rule) {
         headers: { "Content-Type": "application/json" }, body: JSON.stringify({ draft: st.draft }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || res.statusText);
-      if (ctl === st.pending) { st.a = data; render(); }
-    } catch (e) { if (e.name !== "AbortError") say(e.message); }
+      if (ctl === st.pending) { st.a = data; d.classList.remove("busy"); render(); }
+    } catch (e) { if (e.name !== "AbortError") { d.classList.remove("busy"); say(e.message); } }
   }
 
-  function li(id, text, extra = "", cls = "") {
-    return `<li tabindex="-1" data-id="${esc(id)}" class="${cls}">${text}${extra}</li>`;
+  function stats(a) {
+    if (!a.rule.length) return `<div class="stat lead"><b>No rule yet</b><span>require or exclude a fact to start one</span></div>`;
+    const all = a.selected_matched === a.of_selection;
+    return `<div class="stat lead"><b>${a.matched}</b><span>host${a.matched === 1 ? "" : "s"} match</span></div>
+      <div class="stat ${all ? "ok" : "bad"}"><b>${a.selected_matched}/${a.of_selection}</b><span>of your hosts</span></div>
+      <div class="stat ${a.other_count ? "warn" : "ok"}"><b>${a.other_count}</b><span>other${a.other_count === 1 ? "" : "s"}</span></div>
+      <div class="stat${a.assumed.length ? " warn" : ""}"><b>${a.assumed.length}</b><span>on an assumption</span></div>`;
   }
   function render() {
     const a = st.a, n = a.of_selection;
-    const keepF = factsEl.querySelector("li:focus")?.dataset.id;
-    const keepH = hostsEl.querySelector("li:focus")?.dataset.id;
+    const keep = d.querySelector("[data-id]:focus")?.dataset.id;
     st.ids = {};
     let html = "", group = null;
     a.rows.forEach((r, k) => {
-      if (r.fact.group !== group) { group = r.fact.group; html += `<li class="head">${esc(group)}</li>`; }
+      if (r.fact.group !== group) {
+        group = r.fact.group;
+        html += `<div class="group">${group === "host" ? "the host" : `<span class="port">${esc(group)}</span>`}</div>`;
+      }
       st.ids[`f${k}`] = r.fact;
       const state = stateOf(st.draft, r.fact);
-      const label = group !== "host" && r.fact.label.startsWith(group + " ") ? r.fact.label.slice(group.length + 1) : r.fact.label;
-      html += li(`f${k}`, `<b class="state-${state}">${MARK[state]}</b> ${esc(label)}`,
-                 ` <span class="dim">${r.selected}/${n} sel · ${r.others} others</span>`);
+      const editable = !["tag", "address", "fixed"].includes(r.fact.kind);
+      html += `<div class="fact" data-id="f${k}" data-state="${state}" tabindex="-1">${tri(state)}
+        <span class="what">${factText(r.fact)}</span>${countCell(r.selected, n, r.others)}
+        <button type="button" class="icon" data-edit="f${k}" title="edit (e)"${editable ? "" : " disabled"}>edit</button></div>`;
     });
+    if (!a.rows.length) html += `<p class="empty">the selected hosts share no fact</p>`;
     st.combo = [];
     if (a.other_count && (a.exclusions.length || a.combination)) {
-      html += `<li class="head">exclude to drop ${a.other_count}</li>`;
+      html += `<div class="group suggest">exclude to drop the ${a.other_count} other${a.other_count === 1 ? "" : "s"}</div>`;
       if (a.combination && a.combination.facts.length > 1) {
         st.combo = a.combination.facts;
-        html += li("combo", `− ${esc(a.combination.facts.map((f) => f.label).join(" and "))}`,
-                   ` <span class="dim">leaves ${a.combination.remaining}</span>`);
+        html += `<div class="fact suggestion" data-id="combo" tabindex="-1">
+          <button type="button" data-set="exclude" class="small">Exclude all</button>
+          <span class="what">${a.combination.facts.map((f) => esc(f.label)).join(" <span class=\"op\">and</span> ")}</span>
+          <span class="drops">leaves ${a.combination.remaining}</span></div>`;
       }
       a.exclusions.forEach((p, k) => {
         st.ids[`x${k}`] = p.fact;
-        html += li(`x${k}`, `− ${esc(p.fact.label)}`, ` <span class="dim">excludes ${p.excludes}/${a.other_count}` +
-                   (p.assumed_on.length ? `, assumed on ${p.assumed_on.length} selected` : "") + "</span>");
+        html += `<div class="fact suggestion" data-id="x${k}" tabindex="-1">
+          <button type="button" data-set="exclude" class="small">Exclude</button>
+          <span class="what">${esc(p.fact.label)}</span>
+          <span class="drops">drops ${p.excludes}/${a.other_count}${p.assumed_on.length ? ` · assumed on ${p.assumed_on.length} of yours` : ""}</span></div>`;
       });
     }
     factsEl.innerHTML = html;
-    let hosts = `<li class="head">selection (${a.selection.length})</li>`;
+    const host = (m, id, mark, acts) => `<div class="host" data-id="${esc(id)}" tabindex="-1">
+        <span class="hm ${mark[0]}" title="${mark[2]}">${mark[1]}</span><code>${esc(m.address)}</code>
+        <span class="ports">${esc(m.ports)}</span><span class="title">${esc(m.title)}</span>
+        <span class="acts">${acts}</span></div>`;
+    let hosts = `<div class="group">your hosts · ${a.selection.length}</div>`;
     a.selection.forEach((m) => {
-      hosts += li(`s:${m.address}`, `${m.matched ? (m.assumed ? "~" : "✓") : "✗"} ${esc(m.address)}`,
-                  ` <span class="dim">${esc(m.ports)} ${esc(m.title)}</span>`);
+      const mark = !a.rule.length ? ["", "", ""] : m.matched ? (m.assumed ? ["warn", "~", "matched on an assumption"] : ["ok", "✓", "matched"]) : ["bad", "✗", "not matched"];
+      hosts += host(m, `s:${m.address}`, mark, `<button type="button" class="small" data-host="drop" title="drop from the selection (d)">Drop</button>`);
     });
     if (a.other_count) {
-      hosts += `<li class="head">matches also (${a.other_count}${a.other_count > a.others.length ? `, first ${a.others.length}` : ""})</li>`;
-      a.others.forEach((m) => { hosts += li(`o:${m.address}`, esc(m.address), ` <span class="dim">${esc(m.ports)} ${esc(m.title)}</span>`); });
+      hosts += `<div class="group warn">also matching · ${a.other_count}${a.other_count > a.others.length ? `, first ${a.others.length}` : ""}</div>`;
+      a.others.forEach((m) => {
+        hosts += host(m, `o:${m.address}`, ["", "", ""],
+          `<button type="button" class="small" data-host="add" title="add to the selection (a)">Add</button><button type="button" class="small" data-host="exclude" title="exclude this host (x)">Exclude</button>`);
+      });
     }
     hostsEl.innerHTML = hosts;
-    d.querySelector(".sel").textContent = `${st.draft.selection.length} selected` + (st.ports
-      ? ` · ${st.draft.limit ? `ports ${st.draft.limit.join(", ")}` : "whole hosts"} (h)` : "");
-    d.querySelector(".notes").textContent = [...a.notes, ...(a.confirm ? [a.confirm] : [])].join(" · ");
-    d.querySelector(".total").textContent = a.rule.length
-      ? `matches ${a.matched} · ${a.selected_matched}/${a.of_selection} selected · ${a.other_count} others · ${a.assumed.length} assumed`
-      : "require (+) or exclude (-) a fact to start the rule";
-    (factsEl.querySelector(`li[data-id="${CSS.escape(keepF || "")}"]`)
-      || hostsEl.querySelector(`li[data-id="${CSS.escape(keepH || "")}"]`))?.focus();
+    d.querySelector(".tb-stats").innerHTML = stats(a);
+    d.querySelector(".tb-notes").textContent = [...a.notes, ...(a.confirm ? [a.confirm] : [])].join(" · ");
+    d.querySelector(".tb-notes").hidden = !a.notes.length && !a.confirm;
+    d.querySelectorAll("[data-scope]").forEach((b) => b.setAttribute("aria-pressed",
+      String((b.dataset.scope === "ports") === !!st.draft.limit)));
+    (d.querySelector(`[data-id="${CSS.escape(keep || "")}"]`) || null)?.focus();
   }
 
-  const focused = () => d.querySelector(".bench-list li:focus")?.dataset.id || null;
+  const focused = () => d.querySelector("[data-id]:focus")?.dataset.id || null;
   function setState(id, state) {
     if (id === "combo") { let draft = st.draft; st.combo.forEach((f) => { draft = withState(draft, f, "exclude"); }); change(draft); return; }
     const fact = st.ids[id];
@@ -776,46 +838,62 @@ function bench(started, rule) {
     const rest = st.draft.facts.filter((x) => ![factKey(fact), factKey(edited)].includes(factKey(x.fact)));
     change({ ...st.draft, facts: [{ fact: edited, state: old === "ignore" ? "require" : old }, ...rest] });
   }
+  function hostAct(id, act) {
+    const address = id.slice(2);
+    if (act === "add" && id.startsWith("o:")) change({ ...st.draft, selection: [...st.draft.selection, address] });
+    if (act === "drop" && id.startsWith("s:")) change({ ...st.draft, selection: st.draft.selection.filter((x) => x !== address) });
+    if (act === "exclude" && id.startsWith("o:")) change(withState(st.draft, { kind: "address", value: address }, "exclude"));
+  }
+  const scope = (to) => {
+    if (!st.ports) { say("the rule is built from whole hosts already"); return; }
+    const limit = to === undefined ? (st.draft.limit ? null : st.ports) : (to === "ports" ? st.ports : null);
+    change({ ...st.draft, limit });
+  };
   function move(step) {
-    const items = [...d.querySelectorAll(".bench-list li[data-id]")];
+    const pane = document.activeElement?.closest(".tb-scroll") || factsEl;
+    const items = [...pane.querySelectorAll("[data-id]")];
     const at = items.indexOf(document.activeElement);
     items[Math.max(0, Math.min(items.length - 1, at + step))]?.focus();
   }
 
   d.addEventListener("click", (event) => {
-    const item = event.target.closest(".bench-list li[data-id]");
-    if (item) { item.focus(); if (item.closest(".facts-list")) cycle(item.dataset.id); }
+    const item = event.target.closest("[data-id]");
+    const set = event.target.closest("[data-set]");
+    if (set && item) { item.focus(); setState(item.dataset.id, set.dataset.set); return; }
+    const ed = event.target.closest("[data-edit]");
+    if (ed) { edit(ed.dataset.edit); return; }
+    const act = event.target.closest("[data-host]");
+    if (act && item) { hostAct(item.dataset.id, act.dataset.host); return; }
+    const sc = event.target.closest("[data-scope]");
+    if (sc) { scope(sc.dataset.scope); return; }
+    if (item) item.focus();
   });
   d.addEventListener("keydown", (event) => {
-    if (event.target.matches("input, select") && event.target.name !== "same") return;
+    if (event.target.matches("input:not([type=checkbox]), select, textarea")) return;
     const id = focused();
-    const key = event.key;
     const act = {
       " ": () => id && cycle(id), "+": () => id && setState(id, "require"),
       "-": () => id && setState(id, "exclude"), e: () => id && edit(id),
       p: () => { form.same.checked = !form.same.checked; change({ ...st.draft, same_port: form.same.checked }); },
-      a: () => id?.startsWith("o:") && change({ ...st.draft, selection: [...st.draft.selection, id.slice(2)] }),
-      d: () => id?.startsWith("s:") && change({ ...st.draft, selection: st.draft.selection.filter((x) => x !== id.slice(2)) }),
-      x: () => id?.startsWith("o:") && change(withState(st.draft, { kind: "address", value: id.slice(2) }, "exclude")),
-      s: () => save(),
-      h: () => st.ports ? change({ ...st.draft, limit: st.draft.limit ? null : st.ports })
-                        : say("the rule is built from whole hosts already"),
+      a: () => id && hostAct(id, "add"), d: () => id && hostAct(id, "drop"), x: () => id && hostAct(id, "exclude"),
+      h: () => scope(), s: () => save(),
       ArrowDown: () => move(1), j: () => move(1), ArrowUp: () => move(-1), k: () => move(-1),
-    }[key];
+      Tab: () => ((document.activeElement?.closest(".hosts-list") ? factsEl : hostsEl).querySelector("[data-id]"))?.focus(),
+    }[event.key];
     if (act) { event.preventDefault(); act(); }
   });
   form.same.addEventListener("change", () => change({ ...st.draft, same_port: form.same.checked }));
-  d.addEventListener("cancel", (event) => {
+  const leaving = (event) => {
     if (JSON.stringify(st.draft) !== st.start && !window.confirm("Leave the rule builder? The draft is not saved.")) event.preventDefault();
-  });
+  };
+  d.addEventListener("cancel", leaving);
   form.addEventListener("submit", (event) => {
-    if (event.submitter?.value === "save") { event.preventDefault(); save(); }
-    else if (JSON.stringify(st.draft) !== st.start && !window.confirm("Leave the rule builder? The draft is not saved.")) event.preventDefault();
+    if (event.submitter?.value === "save") { event.preventDefault(); save(); } else leaving(event);
   });
 
   async function save() {
     if (!st.a.rule.length) { say("require or exclude a fact first"); return; }
-    if (st.a.confirm && !window.confirm(`${st.a.confirm} - save it anyway?`)) return;
+    if (st.a.confirm && !window.confirm(`${st.a.confirm} - continue anyway?`)) return;
     const got = await saveDialog(rule, st.a.of_selection, st.draft.limit ? "service" : "host");
     if (!got) return;
     let out;
@@ -831,12 +909,12 @@ function bench(started, rule) {
   }
 
   render();
-  factsEl.querySelector("li[data-id]")?.focus();
+  factsEl.querySelector("[data-id]")?.focus();
 }
 
 // The tag editor: everything about one tag - name, description, issues, rules -
-// as the terminal's. Nothing is written until "Save all"; a change that rewrites a
-// person's rule file is confirmed first.
+// as the terminal's. Nothing is written until "Save the tag"; a change that
+// rewrites a person's rule file is confirmed first.
 async function openTagEditor(name, newRule = null) {
   let edit;
   try { edit = await send("GET", `/api/v1/tags/edit?name=${encodeURIComponent(name || "")}`); }
@@ -845,37 +923,39 @@ async function openTagEditor(name, newRule = null) {
   if (newRule) edit.rules.unshift({ raw: newRule, origin: null, deleted: false, name: newRule.name,
                                     where: "new", changed: false, editable: true, reason: "" });
   const start = JSON.stringify(edit);
-  const d = dialog(`Tag · ${edit.original || "new"}`, `
-      <p><label>name <input name="tname" value="${esc(edit.name)}" autocomplete="off"></label></p>
-      <p><label>description <input name="tdesc" value="${esc(edit.description)}" autocomplete="off"></label></p>
-      <h3 class="small">Issues <button type="button" data-act="add-issue">add an issue…</button></h3>
-      <ul class="bench-list issues-list"></ul>
-      <h3 class="small">Rules <span class="dim">open one in the builder, or build a new one with T</span></h3>
-      <ul class="bench-list rules-list"></ul>
-      <p class="dim small manual"></p>
-      <p class="why error"></p>`,
-    `<button value="save" class="primary">Save all</button> <button value="cancel">Cancel</button>`);
-  d.classList.add("wide");
+  const d = dialog(edit.original ? `Tag ${edit.original}` : "New tag", `
+      <div class="form">
+        <label class="field"><span>Name</span><input name="tname" value="${esc(edit.name)}" autocomplete="off"
+          placeholder="lowercase letters, digits, . _ -"><small>renaming reaches every project file that uses the tag</small></label>
+        <label class="field"><span>Description</span><textarea name="tdesc" rows="2" placeholder="what kind of system this is">${esc(edit.description)}</textarea></label>
+      </div>
+      <section class="ed-sec"><header><h3>Known issues</h3><button type="button" data-act="add-issue">+ Add an issue</button></header>
+        <div class="cards issues-list"></div></section>
+      <section class="ed-sec"><header><h3>Rules</h3><span class="hint">build a new one with <kbd>T</kbd></span></header>
+        <div class="cards rules-list"></div></section>
+      <p class="manual hint"></p>
+      <p class="error-box" hidden></p>`,
+    `<button value="save" class="primary">Save the tag</button> <button value="cancel">Cancel</button>`);
+  d.classList.add("editor");
   const form = d.querySelector("form");
   const typed = () => { edit.name = form.tname.value.trim(); edit.description = form.tdesc.value; };
   function render() {
     d.querySelector(".issues-list").innerHTML = edit.issues.map((i, k) => `
-      <li data-k="${k}"><b class="sev-${esc(i.severity)}">${esc(i.severity)}</b> ${esc(i.title)}
-        <button type="button" data-act="edit-issue" data-k="${k}">edit</button>
-        <button type="button" data-act="del-issue" data-k="${k}">delete</button>
-        ${i.description ? `<br><span class="dim">${esc(i.description)}</span>` : ""}
-        ${i.references.length ? `<br><span class="dim">${esc(i.references.join(", "))}</span>` : ""}</li>`).join("")
-      || `<li class="dim">no issues</li>`;
+      <div class="card-row"><span class="sev sev-${esc(i.severity)}">${esc(i.severity)}</span>
+        <div class="body"><b>${esc(i.title)}</b>
+          ${i.description ? `<p>${esc(i.description)}</p>` : ""}
+          ${i.references.length ? `<p class="refs">${i.references.map((r) => /^https?:/.test(r) ? `<a href="${esc(r)}" target="_blank" rel="noopener noreferrer">${esc(r)}</a>` : esc(r)).join(" · ")}</p>` : ""}</div>
+        <span class="acts"><button type="button" class="small" data-act="edit-issue" data-k="${k}">Edit</button><button type="button" class="small" data-act="del-issue" data-k="${k}">Remove</button></span></div>`).join("")
+      || `<p class="empty">no known issues - add the weaknesses this kind of system has</p>`;
     d.querySelector(".rules-list").innerHTML = edit.rules.map((r, k) => {
-      const mark = r.origin === null ? "+" : r.deleted ? "−" : r.changed ? "~" : " ";
-      return `<li data-k="${k}">${mark} <span class="${r.deleted ? "dim" : ""}">${esc(r.name || "(unnamed)")}</span>
-        <span class="dim">${esc(r.where)}</span>
-        <button type="button" data-act="open-rule" data-k="${k}"${r.deleted || !r.editable ? " disabled" : ""}>open in the builder</button>
-        <button type="button" data-act="del-rule" data-k="${k}">${r.deleted ? "keep" : "delete"}</button>
-        ${r.editable ? "" : `<br><span class="dim">${esc(r.reason)}</span>`}</li>`;
-    }).join("") || `<li class="dim">no rules - build one with T</li>`;
+      const badge = r.origin === null ? ["new", "new"] : r.deleted ? ["del", "deleted"] : r.changed ? ["chg", "changed"] : null;
+      return `<div class="card-row${r.deleted ? " gone" : ""}">${badge ? `<span class="badge ${badge[0]}">${badge[1]}</span>` : '<span class="badge">rule</span>'}
+        <div class="body"><b>${esc(r.name || "(unnamed)")}</b><p class="hint">${esc(r.where)}</p>
+          ${r.editable ? "" : `<p class="hint">${esc(r.reason)}</p>`}</div>
+        <span class="acts"><button type="button" class="small" data-act="open-rule" data-k="${k}"${r.deleted || !r.editable ? " disabled" : ""}>Open in the builder</button><button type="button" class="small" data-act="del-rule" data-k="${k}">${r.deleted ? "Keep" : "Delete"}</button></span></div>`;
+    }).join("") || `<p class="empty">no rules - this tag is only given by hand</p>`;
     d.querySelector(".manual").textContent = edit.manual_hosts || edit.manual_services
-      ? `manual tags: ${edit.manual_hosts} host(s), ${edit.manual_services} service(s)` : "manual tags: none";
+      ? `Given by hand to ${edit.manual_hosts} host(s) and ${edit.manual_services} service(s).` : "";
   }
   d.addEventListener("click", async (event) => {
     const b = event.target.closest("button[data-act]");
@@ -902,6 +982,7 @@ async function openTagEditor(name, newRule = null) {
     }
     render();
   });
+  const fail = (text) => { const box = d.querySelector(".error-box"); box.textContent = text; box.hidden = !text; };
   async function saveAll(confirmOverwrite) {
     typed();
     try {
@@ -909,37 +990,48 @@ async function openTagEditor(name, newRule = null) {
       d.close("saved");
     } catch (e) {
       if (/rewrites/.test(e.message) && !confirmOverwrite && window.confirm(`${e.message}. Save anyway?`)) { saveAll(true); return; }
-      d.querySelector(".error").textContent = e.message;
+      fail(e.message);
     }
   }
+  const leaving = (event) => {
+    typed();
+    if (JSON.stringify(edit) !== start && !window.confirm("Leave the tag editor? Nothing is saved.")) event.preventDefault();
+  };
   form.addEventListener("submit", (event) => {
-    typed();
     if (event.submitter?.value === "save") { event.preventDefault(); saveAll(false); return; }
-    if (JSON.stringify(edit) !== start && !window.confirm("Leave the tag editor? Nothing is saved.")) event.preventDefault();
+    leaving(event);
   });
-  d.addEventListener("cancel", (event) => {
-    typed();
-    if (JSON.stringify(edit) !== start && !window.confirm("Leave the tag editor? Nothing is saved.")) event.preventDefault();
-  });
+  d.addEventListener("cancel", leaving);
   render();
   (edit.original ? form.tdesc : form.tname).focus();
+}
+
+function radios(name, options, current) {
+  return `<span class="seg" role="radiogroup">${options.map(([value, label]) =>
+    `<label><input type="radio" name="${name}" value="${esc(value)}"${value === current ? " checked" : ""}><span>${esc(label)}</span></label>`).join("")}</span>`;
 }
 
 function issueDialog(issue) {
   return new Promise((resolve) => {
     const i = issue || { title: "", severity: "medium", description: "", references: [] };
     const d = dialog(issue ? "Issue" : "New issue", `
-        <p><label>title <input name="title" value="${esc(i.title)}" autocomplete="off"></label>
-          <select name="severity">${SEVERITIES.map((s) => `<option${s === i.severity ? " selected" : ""}>${s}</option>`).join("")}</select></p>
-        <p><label>description <input name="idesc" value="${esc(i.description || "")}" autocomplete="off"></label></p>
-        <p><label>references <input name="refs" value="${esc((i.references || []).join(", "))}" placeholder="URLs, CVE ids, comma separated" autocomplete="off"></label></p>`,
-      `<button value="take" class="primary">Take</button>${issue ? ' <button value="delete">Delete</button>' : ""} <button value="cancel">Cancel</button>`);
+        <div class="form">
+          <label class="field"><span>Title</span><input name="ititle" value="${esc(i.title)}" autocomplete="off" placeholder="e.g. Admin PIN of four digits"></label>
+          <div class="field"><span>Severity</span>${radios("severity", SEVERITIES.map((s) => [s, s]), i.severity).replace(/class="seg"/, 'class="seg sevs"')}</div>
+          <label class="field"><span>Description</span><textarea name="idesc" rows="3" placeholder="what is wrong, and how to check it">${esc(i.description || "")}</textarea></label>
+          <label class="field"><span>References</span><input name="refs" value="${esc((i.references || []).join(", "))}" autocomplete="off"
+            placeholder="https://…, CVE-2024-…"><small>URLs or ids, separated by commas</small></label>
+        </div>`,
+      `<button value="take" class="primary">${issue ? "Keep the changes" : "Add the issue"}</button>${issue ? ' <button value="delete">Remove</button>' : ""} <button value="cancel">Cancel</button>`);
     const form = d.querySelector("form");
-    form.title.focus();
+    form.ititle.focus();
+    form.addEventListener("submit", (event) => {
+      if (event.submitter?.value === "take" && !form.ititle.value.trim()) { event.preventDefault(); form.ititle.focus(); }
+    });
     d.addEventListener("close", () => {
       if (d.returnValue === "delete") { resolve("delete"); return; }
-      if (d.returnValue !== "take" || !form.title.value.trim()) { resolve(null); return; }
-      resolve({ title: form.title.value.trim(), severity: form.severity.value, description: form.idesc.value.trim(),
+      if (d.returnValue !== "take" || !form.ititle.value.trim()) { resolve(null); return; }
+      resolve({ title: form.ititle.value.trim(), severity: form.severity.value, description: form.idesc.value.trim(),
                 references: form.refs.value.split(",").map((r) => r.trim()).filter(Boolean) });
     });
   });
@@ -949,16 +1041,21 @@ function editFact(draft, fact) {
   return new Promise((resolve) => {
     const text = fact.kind !== "open";
     const ports = !["os", "tag", "address", "fixed"].includes(fact.kind);
-    const d = dialog(`Edit: ${fact.label}`, `
-        ${text ? `<p><label>value <input name="value" value="${esc(fact.value)}" autocomplete="off"></label>
-          <select name="mode">${FACT_MODES.map(([v, l]) => `<option value="${v}"${v === fact.mode ? " selected" : ""}>${l}</option>`).join("")}</select>
-          <label><input type="checkbox" name="case"${fact.case ? " checked" : ""}> match case</label></p>` : ""}
-        ${ports ? `<p><label>ports <input name="ports" value="${esc(fact.ports ? fact.ports : "")}" placeholder="any port" autocomplete="off"></label>
-          <span class="dim small">one, a list such as 80,8000-8999, or empty for any</span></p>` : ""}
-        <p class="count"></p><p class="why warn"></p><p class="why error"></p>`,
-      `<button value="take" class="primary">Take</button> <button value="cancel">Cancel</button>`);
+    const what = fact.kind === "open" ? "Open port" : fact.kind === "os" ? "OS" : (KIND_WORD[fact.kind] || fact.kind);
+    const d = dialog(`Edit: ${what[0].toUpperCase()}${what.slice(1)}`, `
+        <div class="form">
+          ${text ? `<label class="field"><span>Value</span><input name="value" value="${esc(fact.value)}" autocomplete="off"></label>
+          <div class="field"><span>Match</span>${radios("mode", FACT_MODES, fact.mode || "equals")}
+            <label class="check"><input type="checkbox" name="case"${fact.case ? " checked" : ""}> match case</label></div>` : ""}
+          ${ports ? `<label class="field"><span>Ports</span><input name="ports" value="${esc(fact.ports || "")}" placeholder="any port" autocomplete="off">
+            <small>one port, a list such as 80,8000-8999, or empty for any port${fact.protocol ? ` (${esc(fact.protocol)})` : ""}</small></label>` : ""}
+          <div class="result" aria-live="polite"><span class="hint">counting…</span></div>
+          <p class="warn-box" hidden></p><p class="error-box" hidden></p>
+        </div>`,
+      `<button value="take" class="primary">Use this fact</button> <button value="cancel">Cancel</button>`);
     const form = d.querySelector("form");
     let current = null, pending = null;
+    const box = (cls, text) => { const b = d.querySelector(cls); b.textContent = text; b.hidden = !text; };
     const typed = () => ({ kind: fact.kind, protocol: fact.protocol, ports: ports ? form.ports.value : "",
                            value: text ? form.value.value : "", mode: text ? form.mode.value : "equals",
                            case: text ? form.case.checked : false });
@@ -974,14 +1071,17 @@ function editFact(draft, fact) {
         if (ctl !== pending) return;
         if (!res.ok) {
           current = null; form.querySelector("button[value=take]").disabled = true;
-          d.querySelector(".error").textContent = data.detail || res.statusText; return;
+          box(".error-box", data.detail || res.statusText); return;
         }
         current = data.fact;
         form.querySelector("button[value=take]").disabled = false;
-        d.querySelector(".error").textContent = "";
-        d.querySelector(".count").textContent = `${data.fact.label} · matches ${data.selected}/${data.of_selection} selected · ${data.others} others`;
-        d.querySelector(".warn").textContent = data.dropped.length
-          ? `drops ${data.dropped.length} selected host(s): ${data.dropped.slice(0, 5).join(", ")}${data.dropped.length > 5 ? " …" : ""}` : "";
+        box(".error-box", "");
+        const all = data.selected === data.of_selection;
+        d.querySelector(".result").innerHTML = `<code class="label">${esc(data.fact.label)}</code>
+          <span class="stat ${all ? "ok" : "bad"}"><b>${data.selected}/${data.of_selection}</b><span>of your hosts</span></span>
+          <span class="stat ${data.others ? "warn" : "ok"}"><b>${data.others}</b><span>others</span></span>`;
+        box(".warn-box", data.dropped.length
+          ? `No longer holds for ${data.dropped.length} of your hosts: ${data.dropped.slice(0, 5).join(", ")}${data.dropped.length > 5 ? " …" : ""}` : "");
       } catch (e) { if (e.name !== "AbortError") say(e.message); }
     }
     form.addEventListener("input", recount);
@@ -999,22 +1099,29 @@ function saveDialog(rule, count, grant = "host") {
   return new Promise(async (resolve) => {
     let known = { tags: [] };
     try { known = await send("GET", "/api/v1/tags"); } catch { /* names are a convenience */ }
-    const d = dialog("Save the rule", `
-        <p><label>tag <input name="tag" list="bench-tags" autocomplete="off" value="${esc(rule?.tag || "")}"${rule ? " disabled" : ""}></label>
-        <datalist id="bench-tags">${known.tags.map((x) => `<option value="${esc(x.name)}">`).join("")}</datalist></p>
-        <p><label>rule name <input name="name" value="${esc(rule?.name || `built from ${count} host(s)`)}" autocomplete="off"></label></p>
-        <p><label>it tags <select name="grant">${GRANTS.map(([v, l]) => `<option value="${v}"${v === (rule?.grant || grant) ? " selected" : ""}>${l}</option>`).join("")}</select></label></p>`,
-      `<button value="save" class="primary">Save</button> <button value="cancel">Cancel</button>`);
+    const d = dialog("Which tag does the rule give?", `
+        <div class="form">
+          <label class="field"><span>Tag</span><input name="tag" list="bench-tags" autocomplete="off" value="${esc(rule?.tag || "")}"${rule ? " disabled" : ""}
+            placeholder="an existing tag or a new name">
+            <small>${rule ? "the rule stays with its tag" : `${known.tags.length} existing tag(s) are suggested as you type; a new name makes a new tag`}</small></label>
+          <datalist id="bench-tags">${known.tags.map((x) => `<option value="${esc(x.name)}">`).join("")}</datalist>
+          <label class="field"><span>Rule name</span><input name="rname" value="${esc(rule?.name || `built from ${count} host(s)`)}" autocomplete="off"></label>
+          <fieldset class="field opt-cards"><legend>It tags</legend>
+            ${GRANTS.map(([v, label, why]) => `<label class="opt-card"><input type="radio" name="grant" value="${v}"${v === (rule?.grant || grant) ? " checked" : ""}>
+              <span><b>${label}</b><small>${why}</small></span></label>`).join("")}</fieldset>
+          <p class="hint">Next: the tag editor, for its description and known issues. Nothing is saved before that.</p>
+        </div>`,
+      `<button value="save" class="primary">Continue</button> <button value="cancel">Cancel</button>`);
     const form = d.querySelector("form");
-    (rule ? form.name : form.tag).focus();
+    (rule ? form.rname : form.tag).focus();
     d.addEventListener("close", () => {
       if (d.returnValue !== "save") { resolve(null); return; }
-      const tag = form.tag.value.trim(), name = form.name.value.trim();
+      const tag = form.tag.value.trim(), name = form.rname.value.trim();
       if (!tag || !name) { say("give a tag and a rule name"); resolve(null); return; }
       resolve({ tag, name, grant: form.grant.value });
     });
   });
 }
 
-export const handlers = { mark, clearMarks, export: exportDialog, newScan, scanGaps, updateVulndb, cancel, freeze, stopWeb, shots,
+export const handlers = { mark, markHost, clearMarks, export: exportDialog, newScan, scanGaps, updateVulndb, cancel, freeze, stopWeb, shots,
   tag, buildRule, reloadTags };

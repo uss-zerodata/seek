@@ -59,3 +59,32 @@ document.addEventListener("keydown", (event) => {
   event.preventDefault();
   window.location.href = links[(at + 1) % links.length].href;
 });
+
+// "mark host" on the screenshots: the session's marks, as `H` in the viewer - so
+// hosts found by their pictures can be tagged, built into a rule or exported.
+async function syncMarkButtons() {
+  const buttons = document.querySelectorAll("button.mark-host");
+  if (!buttons.length) return;
+  let marks;
+  try { marks = await (await fetch("/api/v1/marks")).json(); } catch (_) { return; }
+  const hosts = new Set(marks.marks.filter((m) => m.port == null).map((m) => m.address));
+  buttons.forEach((b) => {
+    const on = hosts.has(b.dataset.address);
+    b.setAttribute("aria-pressed", String(on));
+    b.textContent = on ? "● marked" : "mark host";
+  });
+}
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest("button.mark-host");
+  if (!button) return;
+  event.preventDefault();
+  try {
+    const res = await fetch("/api/v1/marks/hosts", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                       body: JSON.stringify({ address: button.dataset.address }) });
+    if (!res.ok) return;
+  } catch (_) { return; }
+  syncMarkButtons();
+});
+document.addEventListener("list:replaced", syncMarkButtons);
+syncMarkButtons();
+

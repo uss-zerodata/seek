@@ -290,6 +290,12 @@ class MarkOut(BaseModel):
     label: str
 
 
+class MarkHostsIn(BaseModel):
+    """The hosts to mark: those of a row, or one by its address."""
+    row: RowRef | None = None
+    address: str | None = None
+
+
 class MarksOut(BaseModel):
     count: int
     marked: bool | None = None       # the toggled row, after a toggle

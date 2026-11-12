@@ -37,9 +37,14 @@
 - [x] 6.5 Add the terminal `TagEditScreen` and `IssueScreen`; `T` hands its rule to the editor, and the `t` menu opens it (D11). Verify with the pilot tests for the five printers, the issue, and a saved rule edited in a person's file.
 - [x] 6.6 Add the browser editor dialog, the issue dialog, and the D14 endpoints. Verify with the `test_web_tags` cases for the editor, the 409 for a person's file, the rename, and another origin.
 
+## 7. After the second manual tests
+
+- [x] 7.1 Add `H`: mark the host of the row - from a port, a screenshot or a bucket row - in the terminal and the browser; add `POST /api/v1/marks/hosts`, and a "mark host" button on the gallery cards and the capture page. Verify with `test_H_on_a_port_marks_its_host`, `test_a_port_row_marks_its_host` and `test_screenshots_offer_to_mark_their_host`.
+- [x] 7.2 Redesign the browser builder, fact editor, save step, tag editor and issue dialog. Add a stat bar, a three-way control per fact, labelled forms, segmented choices and severity pills, and rename the classes that clashed with the scan builder. Verify with headless screenshots in light and dark mode, and the layout tests.
+
 ## 5. Integration
 
-- [ ] 5.1 Run ruff, the full suite and the checker. Raise the minor version and note the removed endpoints in the changelog. Run `seek nmap` by hand: build, edit, save and reopen a rule on a fixture. Verify that everything is green and that the run matches the specs.
+- [x] 5.1 Run ruff, the full suite and the checker. Raise the minor version and note the removed endpoints in the changelog. Run `seek nmap` by hand: build, edit, save and reopen a rule on a fixture. Verify that everything is green and that the run matches the specs.
 
 ## Workflow follow-up
 

@@ -63,6 +63,15 @@ class Record:
         return [self.service] if self.service is not None else self.host.open_services
 
 
+def hosts_of(records) -> list[Record]:
+    """The hosts these records belong to, once each, in order - what marking
+    "the host" means on a row that stands for ports or screenshots."""
+    out: dict[str, Record] = {}
+    for record in records:
+        out.setdefault(record.host.address, Record(record.host))
+    return list(out.values())
+
+
 def records_for(hosts: Iterable[Host], tags=None) -> list[Record]:
     """Whole hosts as records - what an export over a host list used to take.
     With the session's `TagSet`, each carries its tags and their issues."""

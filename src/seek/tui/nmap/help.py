@@ -81,6 +81,7 @@ _GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
     ("Collect and take away", [
         ("m", "mark the row (a bucket row marks every host in it)"),
+        ("H", "mark the host the row belongs to - from a port or a screenshot too"),
         ("M", "clear every mark; marks survive filtering, sorting and tabs"),
         ("x", "export the marked rows, or the rows on screen when none are"),
         ("", "hosts, ports, host:port, URLs, or your own fields"),

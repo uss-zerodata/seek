@@ -63,6 +63,30 @@ async def toggle_mark(ref: s.RowRef, request: Request) -> s.MarksOut:
     return _marks(sess, sess.toggle(records, origin="web"))
 
 
+@router.post("/marks/hosts", response_model=s.MarksOut,
+             responses={404: {"model": s.ErrorOut}, 422: {"model": s.ErrorOut}})
+async def toggle_hosts(body: s.MarkHostsIn, request: Request) -> s.MarksOut:
+    """Mark the hosts a row stands for - its ports' or its screenshots' hosts too -
+    or one host by its address; unmark them when every one is marked."""
+    sess, cache = session(request), places(request)
+    if body.row is not None:
+        try:
+            records = await run_in_threadpool(_row_records, sess, cache, body.row)
+        except views.Unresolved as exc:
+            raise HTTPException(404, str(exc)) from None
+    elif body.address:
+        host = next((h for h in sess.scans.hosts if h.address == body.address), None)
+        if host is None:
+            raise HTTPException(404, f"no host {body.address} in the scans")
+        records = [exporter.Record(host)]
+    else:
+        raise HTTPException(422, "name a row or an address")
+    hosts = exporter.hosts_of(records)
+    if not hosts:
+        raise HTTPException(422, "the row stands for no host")
+    return _marks(sess, sess.toggle(hosts, origin="web"))
+
+
 @router.delete("/marks", response_model=s.MarksOut)
 async def clear_marks(request: Request) -> s.MarksOut:
     sess = session(request)

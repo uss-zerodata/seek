@@ -380,3 +380,18 @@ async def test_a_broken_rule_file_is_named_on_the_status_line(tmp_path):
         app._refresh_status()
         await _settle(pilot, 0.2)
         assert "some tag rules have problems" in _screen_text(app.query_one("#status"))
+
+
+async def test_H_on_a_port_marks_its_host(tmp_path):
+    app, _eng = _app(tmp_path)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await _settle(pilot, 0.4)
+        await pilot.press("enter")                 # into 192.0.2.1: its ports
+        await _settle(pilot, 0.6)
+        assert app._current_row().records[0].service is not None
+        await pilot.press("H")
+        await _settle(pilot, 0.3)
+        assert list(app._marked) == [("192.0.2.1",)], "the host, not the port"
+        await pilot.press("H")
+        await _settle(pilot, 0.3)
+        assert not app._marked

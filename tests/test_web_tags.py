@@ -257,3 +257,16 @@ def test_a_tag_made_in_the_browser_is_announced_to_the_terminal(tmp_path):
     sess.listen(seen.append)
     client.post("/api/v1/tags/entries", json={"tag": "explored", "rows": [_row("192.0.2.1")]})
     assert [(e.type, e.origin) for e in seen] == [("tags", "web")]
+
+
+def test_a_port_row_marks_its_host(tmp_path):
+    client, sess, _eng = _client(tmp_path, rules=None)
+    port = {"tab": "hosts", "path": "h:192.0.2.1", "step": "p:192.0.2.1/tcp/80"}
+    out = client.post("/api/v1/marks/hosts", json={"row": port}).json()
+    assert out["marked"] and [(m["address"], m["port"]) for m in out["marks"]] == \
+        [("192.0.2.1", None)], "the host, not the port"
+    again = client.post("/api/v1/marks/hosts", json={"address": "192.0.2.1"}).json()
+    assert not again["marked"] and again["count"] == 0
+    assert client.post("/api/v1/marks/hosts", json={"address": "203.0.113.9"}).status_code \
+        == 404
+

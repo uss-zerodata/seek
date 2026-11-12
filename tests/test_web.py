@@ -272,6 +272,15 @@ def test_the_gallery_shows_every_capture_and_failures_say_why(world):
     assert "ERR_CONNECTION_REFUSED" in html
 
 
+def test_screenshots_offer_to_mark_their_host(world):
+    _scans_, shots, _source, client = world
+    html = client.get("/gallery").text
+    assert 'class="mark-host" data-address="192.0.2.30"' in html
+    capture = next(c for c in shots.all() if c.url == "https://192.0.2.30")
+    page = client.get(f"/captures/{capture_id(capture)}").text
+    assert 'data-address="192.0.2.30"' in page and "mark host" in page
+
+
 def test_the_gallery_filter_narrows_on_the_server(world):
     _scans_, _shots, _source, client = world
     html = client.get("/gallery?q='8080&fragment=1").text

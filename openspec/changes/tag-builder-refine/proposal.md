@@ -85,6 +85,7 @@ None.
 
   This depends on the `host-tagging` change, which must be archived first.
 - `nmap-web-frontend`: the browser rule builder is the same workbench.
+- `nmap-scan-viewer`: the host of any row, or of a screenshot, can be marked.
 
 ## Impact
 

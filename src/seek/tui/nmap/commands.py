@@ -55,6 +55,8 @@ _STATIC: list[tuple[str, str, str, object]] = [
     ("Freeze the log", "Stops the view, not the scan (p)", "action_freeze_log", None),
     ("Report view", "Overview, diff or raw output (o)", "action_report_mode", None),
     ("Mark selected row", "Collect it for export (m)", "action_mark", None),
+    ("Mark the row's host", "The host of a port or screenshot, for tags and export (H)",
+     "action_mark_host", None),
     ("Clear marks", "Drop every mark (M)", "action_clear_marks", None),
     ("Tag", "Tag the marks, or the row; edit or copy a tag (t)", "action_tag", None),
     ("Build a tag rule", "From the marked hosts or the rows in view: facts, live counts (T)",
