@@ -230,13 +230,15 @@ tags:
 A tag is granted when any of its rules matches, and its issues go to every host
 it is granted to - so keep issues on narrow tags, and a broad tag like `printer`
 without them. Keys in one condition describe one port: `{port: 80, product:
-nginx}` is nginx on port 80, not nginx somewhere. Without `state:` a port must
-be open. `not:` takes one condition and means that no port of the host
+nginx}` is nginx on port 80, not nginx somewhere. `port:` also takes a list -
+`"80,443,8000-8999/tcp"` or `[80, 8080]` - and then one port of the list must
+meet every key. Without `state:` a port must be open. `not:` takes one condition and means that no port of the host
 satisfies it. `any:` and `all:` group conditions, `tag:` asks for another tag,
 and `grant: service` (or `both`) tags the matching ports instead of the host.
 Text is a regular expression matched anywhere and ignoring case; `{regex:
-"READY", case: true}` respects case, and `{literal: "Jetty(i-jetty)"}` matches
-the text as written. Quote values YAML would read as something else: `"no"`,
+"READY", case: true}` respects case, `{literal: "Jetty(i-jetty)"}` matches
+the text as written anywhere in the value, and `{equals: "Zebra httpd"}` must be
+the whole value (ignoring case unless `case: true`). Quote values YAML would read as something else: `"no"`,
 `"1.10"`.
 
 The rule files of the colleague's tool `categorize_systems` are read as they

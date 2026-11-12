@@ -56,6 +56,23 @@ def contains(ranges: Ranges, port: int) -> bool:
     return at >= 0 and ranges[at][0] <= port <= ranges[at][1]
 
 
+def subtract(ranges: Ranges, minus: Ranges) -> Ranges:
+    """The ports of `ranges` that are not in `minus`; both sorted and merged."""
+    out: list[tuple[int, int]] = []
+    for lo, hi in ranges:
+        for mlo, mhi in minus:
+            if mhi < lo or mlo > hi:
+                continue
+            if mlo > lo:
+                out.append((lo, mlo - 1))
+            lo = mhi + 1
+            if lo > hi:
+                break
+        if lo <= hi:
+            out.append((lo, hi))
+    return tuple(out)
+
+
 @dataclass(frozen=True, slots=True)
 class HostCoverage:
     """The ports some scan probed on one host, per protocol."""

@@ -696,13 +696,31 @@ class TagChangeOut(BaseModel):
 
 
 class FactIO(BaseModel):
-    """One fact of the rule builder, as proposed and as sent back."""
+    """One fact of the rule builder, as shown and as sent back. `ports` is the
+    scope as typed (`80,8000-8999`, empty for any port); `fixed` facts carry the
+    condition as written, in JSON, in `value`."""
     kind: str
     protocol: str | None = None
-    port: int | None = None
+    ports: str = ""
     value: str = ""
-    partial: str = ""
+    mode: str = "equals"
+    case: bool = False
     label: str = ""
+    group: str = ""
+
+
+class DraftFactIO(BaseModel):
+    fact: FactIO
+    state: str = "ignore"
+
+
+class DraftIO(BaseModel):
+    """What the user has chosen: the selection, each fact's state, same port, and
+    the ports the selection was limited to when services were picked."""
+    selection: list[str]
+    facts: list[DraftFactIO] = []
+    same_port: bool = True
+    limit: list[str] | None = None
 
 
 class ProposalOut(BaseModel):
@@ -713,40 +731,97 @@ class ProposalOut(BaseModel):
     assumed_on: list[str] = []
 
 
-class BuilderIn(BaseModel):
-    rows: list[RowRef] = []
-    positive: list[FactIO] = []
-    negative: list[FactIO] = []
-
-
-class RuleIn(BuilderIn):
-    grant: str = "host"
-
-
-class SharedOut(BaseModel):
-    selected: list[str]
-    facts: list[ProposalOut]
-    partial: list[ProposalOut]
-    notes: list[str]
-
-
 class CombinationOut(BaseModel):
     facts: list[FactIO]
     excludes: int
     remaining: int
 
 
-class ExclusionsOut(BaseModel):
-    matched: int
-    unwanted: int
-    single: list[ProposalOut]
-    combination: CombinationOut | None = None
-    notes: list[str] = []
-
-
-class PreviewOut(BaseModel):
-    matched: list[str]
+class FactRowOut(BaseModel):
+    fact: FactIO
+    state: str
     selected: int
-    assumed: list[str]
+    others: int
+
+
+class MatchOut(BaseModel):
+    address: str
+    ports: str
+    title: str
+    matched: bool
+    assumed: bool = False
+
+
+class AssessOut(BaseModel):
     of_selection: int
+    rows: list[FactRowOut]
+    selection: list[MatchOut]
+    others: list[MatchOut]
+    matched: int
+    selected_matched: int
+    other_count: int
+    assumed: list[str]
+    exclusions: list[ProposalOut] = []
+    combination: CombinationOut | None = None
+    rule: list[dict] = []
+    notes: list[str] = []
     confirm: str = ""
+
+
+class BenchView(BaseModel):
+    """The rows in view, when the rule is built from them."""
+    tab: str
+    path: str = ""
+    q: str = ""
+
+
+class BenchIn(BaseModel):
+    rows: list[RowRef] = []
+    view: BenchView | None = None
+
+
+class BenchOut(BaseModel):
+    draft: DraftIO
+    assessment: AssessOut
+    rule_name: str = ""
+    grant: str = "host"
+    replaces: dict | None = None
+
+
+class AssessIn(BaseModel):
+    draft: DraftIO
+
+
+class RefineIn(BaseModel):
+    draft: DraftIO
+    fact: FactIO
+
+
+class RefineOut(BaseModel):
+    fact: FactIO
+    selected: int
+    of_selection: int
+    others: int
+    dropped: list[str]
+
+
+class RuleIn(BaseModel):
+    draft: DraftIO
+    rule_name: str
+    grant: str = "host"
+
+
+class RuleReplaceIn(RuleIn):
+    replaces: dict
+
+
+class RuleRefOut(BaseModel):
+    index: int
+    name: str
+    source: str
+    editable: bool
+    reason: str = ""
+
+
+class RulesOut(BaseModel):
+    rules: list[RuleRefOut]

@@ -5,13 +5,15 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from textual.widgets import Input, OptionList, SelectionList
+from textual.widgets import Button, Input, OptionList, Select, Static
 
 from seek.config import Config
+from seek.nmap import tagbuild as tb
 from seek.nmap.merge import load
 from seek.nmap.views import prepare
-from seek.tui.menu import ChoiceScreen, MultiChoiceScreen, PromptScreen
+from seek.tui.menu import ChoiceScreen, PromptScreen
 from seek.tui.nmap.app import NmapApp
+from seek.tui.nmap.rulebench import FactEditScreen, RuleBenchScreen, RuleSaveScreen
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.slow]
 FIX = Path(__file__).parent / "fixtures" / "nmap"
@@ -158,38 +160,159 @@ async def test_an_issue_added_in_the_editor_reaches_the_record(tmp_path):
         assert "camera-x" in rendered and "Default credentials" in rendered
 
 
+def _facts_of(screen) -> dict[str, str]:
+    """The workbench's fact rows by label, as option ids."""
+    out = {}
+    for fid, fact in screen._fact_ids.items():
+        out.setdefault(fact.label, fid)
+    return out
+
+
+async def _on_fact(pilot, screen, label, *keys):
+    facts = screen.query_one("#facts", OptionList)
+    facts.focus()
+    facts.highlighted = facts.get_option_index(_facts_of(screen)[label])
+    await pilot.press(*keys)
+    await _settle(pilot, 0.5)
+
+
+async def _open_bench(pilot, app, marks=5):
+    for _ in range(marks):
+        await pilot.press("m", "down")
+    await pilot.press("T")
+    await _settle(pilot, 1.2)
+    assert isinstance(app.screen, RuleBenchScreen)
+    return app.screen
+
+
+def _total(screen) -> str:
+    return str(screen.query_one("#total", Static).content)
+
+
 async def test_T_builds_the_five_printer_rule_end_to_end(tmp_path):
     app, eng = _app(tmp_path, _printers_xml())
     async with app.run_test(size=(160, 50)) as pilot:
         await _settle(pilot, 0.4)
-        for _ in range(5):
-            await pilot.press("m", "down")
-        await pilot.press("T")
-        await _settle(pilot, 1.0)
-        assert isinstance(app.screen, MultiChoiceScreen)
-        offered = dict(app.screen._choices)
-        wanted = [cid for cid, label in offered.items()
-                  if label.split("  (")[0] in ("80/tcp open", "515/tcp open", "9100/tcp open")]
-        assert len(wanted) == 3
-        for cid in wanted:
-            app.screen.query_one(SelectionList).select(cid)
-        app.screen.confirm()
-        await _settle(pilot, 1.0)
-        assert isinstance(app.screen, MultiChoiceScreen), "the exclusions"
-        exclusions = dict(app.screen._choices)
-        ssh = next(cid for cid, label in exclusions.items()
-                   if label.startswith("not 22/tcp open"))
-        assert "excludes 20/20" in exclusions[ssh]
-        app.screen.query_one(SelectionList).select(ssh)
-        app.screen.confirm()
-        await _settle(pilot, 1.0)
-        assert "Matches 5 host(s): 5 of 5 selected" in str(app.screen._prompt)
-        await _choose(pilot, app, "\x00save")
-        await _answer(pilot, app, "zebra")
+        bench = await _open_bench(pilot, app)
+        for label in ("80/tcp open", "515/tcp open", "9100/tcp open"):
+            await _on_fact(pilot, bench, label, "space")
+        assert "matches 25 · 5/5 selected · 20 others" in _total(bench)
+        assert "22/tcp open" in _facts_of(bench), "the exclusion is proposed inline"
+        await _on_fact(pilot, bench, "22/tcp open", "space")
+        assert "matches 5 · 5/5 selected · 0 others" in _total(bench)
+        await pilot.press("s")
+        await _settle(pilot, 0.8)
+        assert isinstance(app.screen, RuleSaveScreen)
+        app.screen.query_one("#tag", Input).value = "zebra"
+        app.screen.action_save()
         await _settle(pilot, 1.2)
-        assert "built from 5 host(s)" in (eng / "seek-tags.yaml").read_text()
+        text = (eng / "seek-tags.yaml").read_text()
+        assert "built from 5 host(s)" in text and "zebra" in text
         tagged = sorted(r.cells[0] for r in app._rows if r.cells[-1])
         assert tagged == [f"192.0.2.{n}" for n in range(1, 6)]
+
+
+async def test_changing_ones_mind_and_leaving_asks_first(tmp_path):
+    app, _eng = _app(tmp_path, _printers_xml())
+    async with app.run_test(size=(160, 50)) as pilot:
+        await _settle(pilot, 0.4)
+        bench = await _open_bench(pilot, app)
+        await _on_fact(pilot, bench, "80/tcp open", "plus")
+        await _on_fact(pilot, bench, "22/tcp open", "minus")
+        await _on_fact(pilot, bench, "80/tcp open", "space", "space")   # require → … → ignore
+        assert "matches 5 ·" in _total(bench), "the exclusion alone is kept"
+        await pilot.press("escape")
+        await _settle(pilot, 0.4)
+        assert isinstance(app.screen, ChoiceScreen)
+        await _choose(pilot, app, "stay")
+        assert app.screen is bench
+
+
+async def test_a_forgotten_printer_is_added_from_the_matches(tmp_path):
+    app, _eng = _app(tmp_path, _printers_xml())
+    async with app.run_test(size=(160, 50)) as pilot:
+        await _settle(pilot, 0.4)
+        bench = await _open_bench(pilot, app, marks=4)
+        await _on_fact(pilot, bench, "9100/tcp open", "space")
+        hosts = bench.query_one("#hosts", OptionList)
+        hosts.focus()
+        hosts.highlighted = hosts.get_option_index("o:192.0.2.5")
+        await pilot.press("a")
+        await _settle(pilot, 0.8)
+        assert "5/5 selected" in _total(bench)
+        assert "5 selected" in _screen_text(bench.query_one("#title"))
+
+
+async def test_an_edit_widens_a_fact_and_an_invalid_one_says_why(tmp_path):
+    app, eng = _app(tmp_path, _printers_xml())
+    async with app.run_test(size=(160, 50)) as pilot:
+        await _settle(pilot, 0.4)
+        bench = await _open_bench(pilot, app)
+        await _on_fact(pilot, bench, "80/tcp service = 'http'", "e")
+        edit = app.screen
+        assert isinstance(edit, FactEditScreen)
+        edit.query_one("#value", Input).value = "htt("
+        edit.query_one("#mode", Select).value = "regex"
+        await _settle(pilot, 0.5)
+        assert "not a valid expression" in str(edit.query_one("#error", Static).content)
+        assert edit.query_one("#take", Button).disabled
+        edit.query_one("#value", Input).value = "HTT"
+        edit.query_one("#mode", Select).value = "contains"
+        edit.query_one("#ports", Input).value = ""
+        await _settle(pilot, 0.6)
+        assert "matches 5/5 selected · 20 others" in str(edit.query_one("#count", Static).content)
+        edit.action_take()
+        await _settle(pilot, 0.8)
+        assert "any tcp port service contains 'HTT'" in _facts_of(bench)
+        assert bench.draft.state_of(next(f for f in bench._fact_ids.values()
+                                         if f.label == "any tcp port service contains 'HTT'"))\
+            is tb.State.REQUIRE
+
+
+async def test_T_on_a_filtered_view_offers_the_rows_in_view(tmp_path):
+    app, _eng = _app(tmp_path, _printers_xml())
+    async with app.run_test(size=(160, 50)) as pilot:
+        await _settle(pilot, 0.4)
+        app.query_one("#filter", Input).value = "192.0.2"
+        await _settle(pilot, 1.0)
+        from seek.tui.nmap.app import ScanTable
+        app.query_one(ScanTable).focus()
+        await pilot.press("T")
+        await _settle(pilot, 0.4)
+        assert isinstance(app.screen, ChoiceScreen)
+        await _choose(pilot, app, "\x00view")
+        await _settle(pilot, 1.0)
+        assert isinstance(app.screen, RuleBenchScreen)
+        assert len(app.screen.draft.selection) == 5
+
+
+async def test_a_saved_rule_is_edited_in_the_builder_and_replaced(tmp_path):
+    app, eng = _app(tmp_path)
+    (eng / "seek-rules.yaml").write_text(
+        "tags:\n  web:\n    rules:\n      - {name: plain web, when: [{port: 80}]}\n")
+    async with app.run_test(size=(160, 50)) as pilot:
+        await _settle(pilot, 0.6)
+        await pilot.press("t")
+        await _settle(pilot, 0.4)
+        await _choose(pilot, app, "\x00rules")
+        await _choose(pilot, app, "web")
+        await _choose(pilot, app, "0")
+        await _settle(pilot, 1.0)
+        bench = app.screen
+        assert isinstance(bench, RuleBenchScreen) and "plain web" in _screen_text(
+            bench.query_one("#title"))
+        await _on_fact(pilot, bench, "80 open", "e")
+        app.screen.query_one("#ports", Input).value = "80,8080"
+        await _settle(pilot, 0.4)
+        app.screen.action_take()
+        await _settle(pilot, 0.8)
+        await pilot.press("s")
+        await _settle(pilot, 0.8)
+        assert app.screen.query_one("#tag", Input).disabled, "the rule keeps its tag"
+        app.screen.action_save()
+        await _settle(pilot, 1.2)
+        text = (eng / "seek-rules.yaml").read_text()
+        assert "80,8080" in text and text.count("plain web") == 1
 
 
 async def test_R_reads_a_rule_file_edited_outside_the_viewer(tmp_path):

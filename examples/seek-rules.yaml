@@ -53,4 +53,4 @@ tags:
         grant: both
         when:
           - { port: 554/tcp }
-          - { port: 443/tcp, cert_issuer: "Axis Communications" }
+          - { port: "443,8443/tcp", cert_issuer: "Axis Communications" }

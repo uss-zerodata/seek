@@ -44,11 +44,24 @@ def test_a_full_match_does_not_match_a_longer_name():
     assert m.search("HTTP") and not m.search("https")
 
 
+def test_equals_is_the_whole_value_ignoring_case():
+    m = tr.text_match({"equals": "Zebra httpd"}, "product", 1)
+    assert m.search("zebra HTTPD") and not m.search("Zebra httpd 2.0")
+    assert tr.text_match({"equals": "a.b"}, "product", 1).search("a.b")
+    assert not tr.text_match({"equals": "a.b"}, "product", 1).search("axb")
+
+
+def test_equals_can_be_case_sensitive():
+    m = tr.text_match({"equals": "Zebra httpd", "case": True}, "product", 1)
+    assert m.search("Zebra httpd") and not m.search("zebra httpd")
+
+
 @pytest.mark.parametrize("value, fragment", [
     ("Jetty(i-jetty", "not a valid expression"),
     ("x" * 1001, "longer than 1000"),
     ("", "is empty"),
     ({"regex": "a", "literal": "b"}, "exactly one"),
+    ({"regex": "a", "equals": "b"}, "exactly one of `regex:`, `literal:` or `equals:`"),
     ({"regex": "a", "case": "yes"}, "true or false"),
 ])
 def test_a_bad_text_value_is_refused(value, fragment):
@@ -174,15 +187,54 @@ def test_nmap_port_means_open_without_a_state_and_its_service_is_exact():
     defs = _load("rules:\n  - name: r\n    pattern: {nmap_port: {port: 80, service: http}}\n"
                  "    host_tags: [web]\n")
     clause = defs.tags["web"].rules[0].when
-    assert isinstance(clause, tr.PortClause) and clause.state == "open" and clause.port == 80
+    assert isinstance(clause, tr.PortClause) and clause.state == "open"
+    assert clause.ports == ((80, 80),)
     (field, match), = clause.fields
     assert field is tr.Field.SERVICE and match.search("http") and not match.search("https")
+
+
+@pytest.mark.parametrize("value, ports, proto", [
+    (443, ((443, 443),), None),
+    ("443/tcp", ((443, 443),), "tcp"),
+    ("80,443,8000-8999/tcp", ((80, 80), (443, 443), (8000, 8999)), "tcp"),
+    ([80, 8080], ((80, 80), (8080, 8080)), None),
+    (["8000-8100", 8050, 81, 80], ((80, 81), (8000, 8100)), None),
+])
+def test_a_port_is_one_port_a_list_or_ranges(value, ports, proto):
+    clause = tr.condition({"port": value})
+    assert (clause.ports, clause.protocol) == (ports, proto)
+
+
+@pytest.mark.parametrize("value, fragment", [
+    ("9000-8000", "'9000-8000' is reversed"),
+    ("80,70000", "70000 is outside"),
+    ("80,,81", "not a port list"),
+    ([], "not a port list"),
+    ("http", "'http'"),
+    ("80/icmp", "protocol 'icmp'"),
+    (True, "not a port"),
+])
+def test_a_bad_port_list_is_refused_naming_it(value, fragment):
+    with pytest.raises(tr.RuleError, match=fragment):
+        tr.condition({"port": value})
+
+
+def test_a_reversed_range_disables_only_its_rule():
+    defs = _load("tags:\n  a:\n    rules:\n      - {when: [{port: \"9000-8000\"}]}\n"
+                 "      - {when: [{port: 80}]}\n")
+    assert len(defs.tags["a"].rules) == 1 and "9000-8000" in _errors(defs)[0]
+
+
+def test_ports_are_written_as_they_were_before_lists():
+    assert tr.written_ports(((80, 80),)) == 80
+    assert tr.written_ports(((80, 80),), "tcp") == "80/tcp"
+    assert tr.written_ports(((80, 80), (8000, 8999)), "tcp") == "80,8000-8999/tcp"
 
 
 def test_a_gowitness_pattern_has_no_port():
     defs = _load("rules:\n  - {name: r, pattern: {html_title: {regex: Monitor}}, host_tags: [p]}\n")
     clause = defs.tags["p"].rules[0].when
-    assert clause.port is None and clause.fields[0][0] is tr.Field.TITLE
+    assert clause.ports is None and clause.fields[0][0] is tr.Field.TITLE
 
 
 def test_service_match_reads_colon_keys_and_tests_the_hostname_on_the_host():

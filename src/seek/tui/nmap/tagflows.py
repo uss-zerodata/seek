@@ -1,5 +1,5 @@
-"""Tagging from the viewer: `t` tags the marks (or the row), `T` builds a rule
-from them, `R` reads the tag files again.
+"""Tagging from the viewer: `t` tags the marks (or the row), `T` opens the rule
+builder on them (or on the rows in view), `R` reads the tag files again.
 
 Translation only (ARC-4): the dialogs collect choices, the session plans and
 writes the change, the rule builder (`nmap/tagbuild.py`) proposes the facts.
@@ -11,18 +11,23 @@ from __future__ import annotations
 import asyncio
 
 from textual import work
+from textual.widgets import Input
 
 from seek.nmap import tagbuild as tb
 from seek.nmap import tagrules as tr
 from seek.nmap.export import Record
-from seek.tui.menu import ChoiceScreen, MultiChoiceScreen, PromptScreen
+from seek.tui.menu import ChoiceScreen, PromptScreen
+from seek.tui.nmap.rulebench import RuleBenchScreen
 
 NEW = "\x00new"
 EDIT = "\x00edit"
 COPY = "\x00copy"
 DONE = "\x00done"
-SAVE = "\x00save"
-COMBINED = "\x00combined"
+RULES = "\x00rules"
+VIEW = "\x00view"
+ROW = "\x00row"
+# The rows in view a rule is built from, at most.
+VIEW_LIMIT = 2000
 
 
 class TagFlows:
@@ -71,6 +76,7 @@ class TagFlows:
             verb = "remove" if have == n else "add"
             choices.append((name, f"{verb:<7}{name:<26}{have}/{n} carry it"))
         choices += [(NEW, "add a new tag…"), (EDIT, "edit a tag's description and issues…"),
+                    (RULES, "edit a tag's rules in the builder…"),
                     (COPY, "copy a tag to the global file…")]
         picked = await self.push_screen_wait(ChoiceScreen(
             f"Tag {n} {'record' if n == 1 else 'records'}:", choices))
@@ -81,6 +87,9 @@ class TagFlows:
             return
         if picked == COPY:
             await self._copy_global(names)
+            return
+        if picked == RULES:
+            await self._edit_rules(names)
             return
         add = True
         if picked == NEW:
@@ -194,68 +203,65 @@ class TagFlows:
     def action_build_rule(self) -> None:
         self._build_rule_flow()
 
+    async def _rule_targets(self) -> list[Record] | None:
+        """The marks; with none and a filter on, the row or the rows in view."""
+        if self._marked:
+            return list(self._marked.values())
+        row = self._current_row()
+        here = list(row.records) if row is not None and row.records else []
+        if self.query_one("#filter", Input).value.strip():
+            view = self._visible_records(self._rows)[:VIEW_LIMIT]
+            if len(view) > 1:
+                picked = await self.push_screen_wait(ChoiceScreen(
+                    "Build a rule from:", [(VIEW, f"the {len(view)} rows in view"),
+                                           (ROW, "this row")]))
+                if picked is None:
+                    return None
+                return view if picked == VIEW else here
+        return here
+
     @work(exclusive=True, group="modal")
     async def _build_rule_flow(self) -> None:
-        records = self._tag_targets()
+        records = await self._rule_targets()
+        if records is None:
+            return
         if not records:
             self.notify("mark the hosts a rule should find, then press T", severity="warning")
             return
         builder = await asyncio.to_thread(self.session.rule_builder, records)
-        shared = await asyncio.to_thread(tb.shared, builder)
-        for note in shared.notes:
-            self.notify(note, severity="warning", timeout=8)
-        offered = list(shared.facts) + list(shared.partial)
-        if not offered:
+        await self._bench(builder, builder.draft())
+
+    async def _bench(self, builder, draft, rule: tr.Rule | None = None) -> None:
+        names = sorted(self.session._tag_files_now().tags)
+        got = await self.push_screen_wait(RuleBenchScreen(builder, draft, names, rule=rule))
+        if got is None:
             return
-        facts = {str(k): p.fact for k, p in enumerate(offered)}
-        picked = await self.push_screen_wait(MultiChoiceScreen(
-            f"What {len(shared.selected)} selected host(s) share - "
-            "the number is how many others do too:",
-            [(str(k), f"{p.fact.label}  ({p.others} others)") for k, p in enumerate(offered)],
-            confirm_label="Next"))
-        if not picked:
-            return
-        positive = [facts[k] for k in picked]
-        ex = await asyncio.to_thread(tb.exclusions, builder, positive)
-        negative: list[tb.Fact] = []
-        if ex.unwanted:
-            choices = []
-            if ex.combination is not None:
-                labels = " and ".join(f.label for f in ex.combination.facts)
-                choices.append((COMBINED, f"not {labels}  (leaves {ex.combination.remaining})"))
-            singles = {str(k): p for k, p in enumerate(ex.single)}
-            for k, p in singles.items():
-                assumed = f", assumed on {len(p.assumed_on)} selected" if p.assumed_on else ""
-                choices.append((k, f"not {p.fact.label}  (excludes {p.excludes}/{ex.unwanted}"
-                                   f"{assumed})"))
-            chosen = await self.push_screen_wait(MultiChoiceScreen(
-                f"These facts also match {ex.unwanted} unselected host(s). Exclude:",
-                choices, confirm_label="Next"))
-            if chosen is None:
-                return
-            for k in chosen:
-                if k == COMBINED and ex.combination is not None:
-                    negative += list(ex.combination.facts)
-                elif k in singles:
-                    negative.append(singles[k].fact)
-        negative = list(dict.fromkeys(negative))
-        shown = await asyncio.to_thread(tb.preview, builder, positive, negative)
-        summary = (f"Matches {len(shown.matched)} host(s): {shown.selected} of "
-                   f"{shown.of_selection} selected, {len(shown.assumed)} on an assumption.")
-        if shown.confirm:
-            summary += f"\nNote: {shown.confirm}."
-        action = await self.push_screen_wait(ChoiceScreen(
-            summary, [(SAVE, "save as a rule of a tag…")]))
-        if action != SAVE:
-            return
-        name = await self._ask_tag_name("Save the rule to tag:")
-        if name is None:
-            return
-        raw = tb.draft(f"built from {shown.of_selection} host(s)", positive, negative)
+        raw = tb.draft_rule(got.draft, got.name, got.grant)
         try:
-            change = self.session.plan_rule(name, raw)
+            change = (self.session.plan_rule_replace(rule, raw) if rule is not None
+                      else self.session.plan_rule(got.tag, raw))
         except ValueError as exc:
             self.notify(str(exc), severity="error")
             return
         self._tag_saved(await self.session.apply_tag_change(change, origin="tui"),
                         change.summary)
+
+    async def _edit_rules(self, names: list[str]) -> None:
+        name = await self._pick_tag(names, "Edit the rules of which tag?")
+        if name is None:
+            return
+        rules = self.session.rules_of(name)
+        if not rules:
+            self.notify(f"{name} has no rules - build one with T", severity="warning")
+            return
+        picked = await self.push_screen_wait(ChoiceScreen(
+            f"Which rule of {name}?",
+            [(str(k), f"{r.name}  ({r.source})") for k, r in enumerate(rules)]))
+        if picked is None:
+            return
+        rule = rules[int(picked)]
+        opened = await asyncio.to_thread(self.session.open_rule, rule)
+        if isinstance(opened, str):
+            self.notify(opened, severity="warning", timeout=10)
+            return
+        await self._bench(*opened, rule=rule)

@@ -158,6 +158,41 @@ def test_a_port_nobody_scanned_is_an_assumption_that_names_it():
     assert tags.counts["printer-x"].uncertain == 1
 
 
+def test_one_port_of_a_list_meets_the_condition():
+    text = rule("x", '{port: "80,8000-8999/tcp", product: Zebra}')
+    on_8080 = host("192.0.2.1", svc(8080, "http", "Zebra httpd"))
+    on_443 = host("192.0.2.2", svc(443, "https", "Zebra httpd"))
+    assert set(run(text, [on_8080, on_443]).hosts) == {"192.0.2.1"}
+
+
+def test_the_fields_of_a_list_still_describe_one_port():
+    text = rule("x", '{port: [80, 8080], service: http, product: Zebra}')
+    split = host("192.0.2.1", svc(80, "http", "Apache httpd"), svc(8080, "ssl", "Zebra httpd"))
+    same = host("192.0.2.2", svc(8080, "http", "Zebra httpd"))
+    assert set(run(text, [split, same]).hosts) == {"192.0.2.2"}
+
+
+def test_a_wide_range_finds_what_any_port_finds():
+    text = rule("x", '{port: "1-65535", product: Zebra}')
+    hosts = [host("192.0.2.1", svc(9100, None, "Zebra")), host("192.0.2.2", svc(22, "ssh"))]
+    assert set(run(text, hosts).hosts) == {"192.0.2.1"}
+
+
+def test_a_negated_list_names_the_ports_not_scanned():
+    text = rule("x", "{port: 80}", '{not: {port: "22,23/tcp"}}')
+    h = host("192.0.2.1", svc(80, "http"), svc(22, "ssh", state="closed"))
+    tags = run(text, [h], [scanfile(tcp=((80, 80),))])
+    assert tags.of_host("192.0.2.1")["x"].evidence == ("23/tcp not scanned",)
+    scanned = run(text, [h], [scanfile(tcp=((1, 1000),))])
+    assert not scanned.of_host("192.0.2.1")["x"].uncertain
+
+
+def test_a_long_list_of_unscanned_ports_is_shortened():
+    text = rule("x", "{port: 80}", '{not: {port: "1,3,5,7,9,11,13/tcp"}}')
+    tags = run(text, [host("192.0.2.1", svc(80))], [scanfile(tcp=((80, 80),))])
+    assert tags.of_host("192.0.2.1")["x"].evidence == ("1,3,5,7,9/tcp and 2 more not scanned",)
+
+
 def test_a_recorded_closed_port_is_evidence_even_without_a_port_list():
     h = _printer("192.0.2.1", svc(22, "ssh", state="closed"))
     tags = run(EXCLUDE_SSH, [h], [scanfile(tcp=())], _home("192.0.2.1"))

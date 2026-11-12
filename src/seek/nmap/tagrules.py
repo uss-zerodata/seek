@@ -22,6 +22,8 @@ from enum import StrEnum
 
 import yaml
 
+from seek.nmap.coverage import Ranges, merge_ranges
+
 FORMAT_VERSION = 1
 # A rule file is a page of text a person writes. Anything bigger is a mistake
 # or an attack; refusing it bounds both the parse and the walk below.
@@ -122,17 +124,19 @@ class Problem:
 
 @dataclass(frozen=True, slots=True)
 class TextMatch:
-    """A text test: an expression searched anywhere, ignoring case, by default."""
+    """A text test: an expression searched anywhere, ignoring case, by default;
+    `literal` takes the text as typed, `equals` must match the whole value."""
     pattern: re.Pattern
     written: str
     literal: bool = False
     case: bool = False
+    equals: bool = False
 
     def search(self, value: str | None) -> bool:
         return bool(value) and self.pattern.search(value) is not None
 
     def key(self) -> tuple:
-        return (self.written, self.literal, self.case)
+        return (self.written, self.literal, self.case, self.equals)
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,14 +150,21 @@ class ScriptTest:
 class PortClause:
     """Facts about one port: every test must hold for the same port.
 
-    `port` None means any port - legal, and noted as slow, because nothing
-    narrows it down.
+    `ports` is sorted, merged inclusive ranges - `((80, 80),)` for one port -
+    and one port of them must meet every test. None means any port - legal,
+    and noted as slow, because nothing narrows it down.
     """
-    port: int | None = None
+    ports: Ranges | None = None
     protocol: str | None = None
     state: str = "open"
     fields: tuple[tuple[Field, TextMatch], ...] = ()
     scripts: tuple[ScriptTest, ...] = ()
+
+    @property
+    def where(self) -> str:
+        if self.ports is None:
+            return f"any {self.protocol} port" if self.protocol else "any port"
+        return format_ports(self.ports, self.protocol)
 
     @property
     def reads_captures(self) -> bool:
@@ -363,54 +374,89 @@ def tag_name(value, line: int | None = None) -> str:
 
 
 def text_match(value, what: str, line: int | None, *, full: bool = False) -> TextMatch:
-    """A text test from `"expr"`, `{regex: expr, case: true}` or `{literal: text}`.
+    """A text test from `"expr"`, `{regex: expr, case: true}`, `{literal: text}` or
+    `{equals: text}` - the whole value, case ignored unless `case: true`.
 
     `full` anchors an expression at both ends - the colleague's `service`
     compared names with `!=`, and `http` must not match `https` there.
     """
-    literal, case = False, False
+    literal, case, equals = False, False, False
     if isinstance(value, dict):
         line = _line(value, line)
-        _only(value, {"regex", "literal", "case"}, what, line)
-        if ("regex" in value) == ("literal" in value):
-            raise RuleError(f"{what}: give exactly one of `regex:` or `literal:`", line)
+        _only(value, {"regex", "literal", "equals", "case"}, what, line)
+        kinds = [k for k in ("regex", "literal", "equals") if k in value]
+        if len(kinds) != 1:
+            raise RuleError(f"{what}: give exactly one of `regex:`, `literal:` or `equals:`",
+                            line)
         case = value.get("case", False)
         if not isinstance(case, bool):
             raise RuleError(f"{what}: `case:` must be true or false", line)
-        literal = "literal" in value
-        written = _text(value["literal" if literal else "regex"], what, line)
+        literal, equals = kinds[0] == "literal", kinds[0] == "equals"
+        written = _text(value[kinds[0]], what, line)
     else:
         written = _text(value, what, line)
     if not written:
         raise RuleError(f"{what} is empty", line)
     if len(written) > MAX_PATTERN:
         raise RuleError(f"{what} is longer than {MAX_PATTERN} characters", line)
-    source = re.escape(written) if literal else written
-    if full:
+    source = re.escape(written) if literal or equals else written
+    if full or equals:
         source = rf"\A(?:{source})\Z"
     try:
         pattern = re.compile(source, 0 if case else re.IGNORECASE)
     except re.error as exc:
         raise RuleError(f"{what}: {written!r} is not a valid expression ({exc})", line) from None
-    return TextMatch(pattern, written, literal, case)
+    return TextMatch(pattern, written, literal, case, equals)
 
 
-def _port(value, line: int | None) -> tuple[int, str | None]:
-    """`443`, `"443/tcp"` - a port and maybe its protocol."""
-    if isinstance(value, bool):
-        raise RuleError("a port must be a number such as 443 or text such as \"443/tcp\"", line)
-    if isinstance(value, int):
-        number, proto = value, None
-    elif isinstance(value, str):
-        num, _, proto_text = value.strip().partition("/")
-        if not num.isdigit():
-            raise RuleError(f"{value!r} is not a port such as 443 or 443/tcp", line)
-        number, proto = int(num), (_protocol(proto_text, line) if proto_text else None)
+def _port_part(part, value, line: int | None) -> tuple[int, int]:
+    """One element of a port list: `443` or `"8000-8999"`."""
+    if isinstance(part, bool) or not isinstance(part, int | str):
+        raise RuleError(f"{value!r} is not a port such as 443, \"443/tcp\" or "
+                        "\"80,8000-8999/tcp\"", line)
+    text = str(part).strip()
+    low, dash, high = text.partition("-")
+    if not low.isdigit() or (dash and not high.isdigit()):
+        raise RuleError(f"{text!r} in {value!r} is not a port such as 443 or a range such as "
+                        "8000-8999", line)
+    lo, hi = int(low), int(high) if dash else int(low)
+    for n in (lo, hi):
+        if not 1 <= n <= 65535:
+            raise RuleError(f"port {n} is outside 1-65535", line)
+    if lo > hi:
+        raise RuleError(f"the port range {text!r} is reversed", line)
+    return lo, hi
+
+
+def _port(value, line: int | None) -> tuple[Ranges, str | None]:
+    """`443`, `"443/tcp"`, `"80,443,8000-8999/tcp"`, `[80, 8080]` - ports and maybe
+    their protocol."""
+    proto = None
+    if isinstance(value, str):
+        text, _, proto_text = value.strip().partition("/")
+        proto = _protocol(proto_text, line) if proto_text else None
+        parts: list = [p for p in text.split(",")]
+    elif isinstance(value, list):
+        parts = list(value)
     else:
-        raise RuleError(f"a port must be a number, found a {type(value).__name__}", line)
-    if not 1 <= number <= 65535:
-        raise RuleError(f"port {number} is outside 1-65535", line)
-    return number, proto
+        parts = [value]
+    if not parts or any(isinstance(p, str) and not p.strip() for p in parts):
+        raise RuleError(f"{value!r} is not a port list such as \"80,443/tcp\"", line)
+    return merge_ranges(_port_part(p, value, line) for p in parts), proto
+
+
+def format_ports(ports: Ranges, protocol: str | None = None) -> str:
+    """`((80, 80), (8000, 8999))`, "tcp" as `80,8000-8999/tcp` - the written form."""
+    text = ",".join(str(lo) if lo == hi else f"{lo}-{hi}" for lo, hi in ports)
+    return f"{text}/{protocol}" if protocol else text
+
+
+def written_ports(ports: Ranges, protocol: str | None = None) -> int | str:
+    """The value of `port:` to write: an int for one port without a protocol, as
+    files were written before port lists."""
+    if protocol is None and len(ports) == 1 and ports[0][0] == ports[0][1]:
+        return ports[0][0]
+    return format_ports(ports, protocol)
 
 
 def _protocol(value, line: int | None) -> str:
@@ -461,9 +507,9 @@ def _scripts(value, line: int | None) -> tuple[ScriptTest, ...]:
 
 def _port_clause(data: dict, line: int | None, *, legacy_service: bool = False,
                  port_required: bool = False) -> PortClause:
-    port, proto = None, None
+    ports, proto = None, None
     if "port" in data:
-        port, proto = _port(data["port"], line)
+        ports, proto = _port(data["port"], line)
     elif port_required:
         raise RuleError("`port:` is required", line)
     if "protocol" in data:
@@ -474,7 +520,7 @@ def _port_clause(data: dict, line: int | None, *, legacy_service: bool = False,
         fields.append((Field(key), text_match(data[key], key, line,
                                               full=legacy_service and key == "service")))
     scripts = _scripts(data["script"], line) if "script" in data else ()
-    return PortClause(port, proto, state, tuple(fields), scripts)
+    return PortClause(ports, proto, state, tuple(fields), scripts)
 
 
 def _host_clause(data: dict, line: int | None) -> HostClause:

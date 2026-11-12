@@ -209,6 +209,10 @@ def _by_host_and_port(url: str, by_name: dict) -> tuple[str, str, int] | None:
     return (host.address, svc.protocol, svc.port)
 
 
+# A saved rule opened in the builder selects at most this many of its hosts.
+OPEN_RULE_HOSTS = 200
+
+
 @dataclass(frozen=True, slots=True)
 class TagChange:
     """A change to tag files, planned on the loop and written off it: each file
@@ -293,6 +297,8 @@ class Session:
         # parts of it that only change with the model and the captures.
         self.tag_home: Path | None = tagfiles_mod.home(self.sources)
         self.tag_files: tagfiles_mod.Loaded | None = None
+        # The browser's rule builder: one kept while the model and tags stay.
+        self._bench: tuple[tuple, Builder] | None = None
         self.tags_generation = 0
         self._tags: tagging_mod.TagSet | None = None
         self._tags_for: tuple = (None, None, None)
@@ -726,6 +732,41 @@ class Session:
         tags = self.tags()
         return tagbuild.start(self._tag_index(), self.scans.files, tags, records)
 
+    def bench_builder(self, limit: frozenset[tuple[str, int]] | None = None) -> Builder:
+        """A rule builder without a selection - each browser request names its own
+        draft - kept while the model, the tags and the port limit stay, so its
+        counts are not made again per request. Blocking: call it off the loop."""
+        from seek.nmap import tagbuild
+        tags, index = self.tags(), self._tag_index()
+        kept = self._bench
+        if kept is None or kept[0][0] is not index or kept[0][1] is not tags \
+                or kept[0][2] != limit:
+            b = tagbuild.start(index, self.scans.files, tags, [])
+            b.limit = limit
+            kept = self._bench = ((index, tags, limit), b)
+        return kept[1]
+
+    def open_rule(self, rule) -> tuple[Builder, object] | str:
+        """A builder and its draft for a saved rule, selecting the hosts it matches
+        now (the first OPEN_RULE_HOSTS of them); or why it cannot be opened.
+        Blocking on a large model: call it off the loop."""
+        from seek.nmap import tagbuild
+        opened = tagbuild.from_rule(rule)
+        if isinstance(opened, str):
+            return opened
+        tags = self.tags()
+        index = self._tag_index()
+        out = tagging_mod.evaluate(index, rule.when, tags)
+        hosts = sorted(out.certain | out.assumed.keys())
+        b = tagbuild.start(index, self.scans.files, tags,
+                           [Record(index.hosts[h]) for h in hosts[:OPEN_RULE_HOSTS]])
+        if len(hosts) > OPEN_RULE_HOSTS:
+            b.notes.append(f"the rule matches {len(hosts)} hosts; the first "
+                           f"{OPEN_RULE_HOSTS} are selected")
+        if not hosts:
+            b.notes.append("the rule matches no host now - add hosts from the matches")
+        return b, tagbuild.Draft(b.initial, opened.facts, opened.same_port)
+
     # Changing tags: planned here, on the loop, from what the front end holds;
     # written off the loop by `apply_tag_change`; adopted back on the loop.
 
@@ -777,6 +818,18 @@ class Session:
                                else {"all": raw.get("when")})   # refuses a broken rule
         return TagChange(((self._home_file(), tagfiles_mod.add_rule(tag, raw)),),
                          f"saved a rule for {tag}")
+
+    def plan_rule_replace(self, rule, raw: dict) -> TagChange:
+        """Replace a rule the builder opened, in the file it came from."""
+        tagrules_mod.condition({"all": raw.get("when")})       # refuses a broken rule
+        return TagChange(((Path(rule.source.path),
+                           tagfiles_mod.replace_rule(rule.tag, dict(rule.raw), raw)),),
+                         f"changed a rule of {rule.tag}")
+
+    def rules_of(self, tag: str) -> list:
+        """The rules of a tag as loaded, in their files' order."""
+        found = self._tag_files_now().tags.get(tag)
+        return list(found.rules) if found else []
 
     def plan_copy_global(self, name: str) -> TagChange:
         """The definition only - never a manual entry, so no address leaves the

@@ -112,22 +112,112 @@ def test_reload_reads_a_new_file(tmp_path):
     assert [t["name"] for t in out["tags"]] == ["ssh"]
 
 
-def test_the_builder_proposes_previews_and_saves_like_the_terminal(tmp_path):
+def _row_of(out: dict, label: str) -> dict:
+    return next(r for r in out["rows"] if r["fact"]["label"] == label)
+
+
+def _with(draft: dict, fact: dict, state: str) -> dict:
+    facts = [f for f in draft["facts"] if f["fact"] != fact] + [{"fact": fact, "state": state}]
+    return {**draft, "facts": facts}
+
+
+def test_the_builder_assesses_and_saves_like_the_terminal(tmp_path):
     client, sess, eng = _client(tmp_path, rules=None)
-    rows = [_row("192.0.2.2")]
-    shared = client.post("/api/v1/tags/builder", json={"rows": rows}).json()
-    open80 = next(p for p in shared["facts"] if p["fact"]["label"] == "80/tcp open")
+    started = client.post("/api/v1/tags/builder", json={"rows": [_row("192.0.2.2")]}).json()
+    draft, a = started["draft"], started["assessment"]
+    open80 = _row_of(a, "80/tcp open")
     assert (open80["selected"], open80["others"]) == (1, 1)
-    ex = client.post("/api/v1/tags/builder/exclusions",
-                     json={"rows": rows, "positive": [open80["fact"]]}).json()
-    assert ex["unwanted"] == 1
-    ssh = next(p for p in ex["single"] if p["fact"]["label"] == "22/tcp open")
-    body = {"rows": rows, "positive": [open80["fact"]], "negative": [ssh["fact"]]}
-    shown = client.post("/api/v1/tags/builder/preview", json=body).json()
-    assert shown["matched"] == ["192.0.2.2"] and shown["selected"] == 1
-    saved = client.post("/api/v1/tags/web-only/rules", json=body)
-    assert saved.status_code == 200 and "web-only" in (eng / "seek-tags.yaml").read_text()
+    draft = _with(draft, open80["fact"], "require")
+    a = client.post("/api/v1/tags/builder/assess", json={"draft": draft}).json()
+    assert (a["matched"], a["other_count"]) == (2, 1)
+    ssh = next(p for p in a["exclusions"] if p["fact"]["label"] == "22/tcp open")
+    draft = _with(draft, ssh["fact"], "exclude")
+    a = client.post("/api/v1/tags/builder/assess", json={"draft": draft}).json()
+    assert [m["address"] for m in a["selection"] if m["matched"]] == ["192.0.2.2"]
+    assert a["other_count"] == 0
+    saved = client.post("/api/v1/tags/web-only/rules",
+                        json={"draft": draft, "rule_name": "web, no ssh"})
+    assert saved.status_code == 200 and "web, no ssh" in (eng / "seek-tags.yaml").read_text()
     assert set(sess.tags().hosts) == {"192.0.2.2"}
+
+
+def test_an_edit_is_counted_and_an_invalid_one_is_a_422(tmp_path):
+    client, _sess, eng = _client(tmp_path, rules=None)
+    draft = client.post("/api/v1/tags/builder",
+                        json={"rows": [_row("192.0.2.2")]}).json()["draft"]
+    fact = {"kind": "service", "ports": "", "value": "HTT", "mode": "contains"}
+    got = client.post("/api/v1/tags/builder/refine", json={"draft": draft, "fact": fact})
+    assert got.status_code == 200 and got.json()["selected"] == 1
+    assert got.json()["fact"]["label"] == "any port service contains 'HTT'"
+    bad = client.post("/api/v1/tags/builder/refine",
+                      json={"draft": draft, "fact": {**fact, "value": "htt(", "mode": "regex"}})
+    assert bad.status_code == 422 and "not a valid expression" in bad.json()["detail"]
+    broken = _with(draft, {**fact, "value": "htt(", "mode": "regex"}, "require")
+    r = client.post("/api/v1/tags/web/rules", json={"draft": broken, "rule_name": "x"})
+    assert r.status_code == 422 and not (eng / "seek-tags.yaml").exists()
+
+
+def test_the_same_edit_saves_the_same_rule_as_the_terminal(tmp_path):
+    from seek.nmap import tagbuild as tb
+
+    client, _sess, eng = _client(tmp_path, rules=None)
+    draft = client.post("/api/v1/tags/builder",
+                        json={"rows": [_row("192.0.2.2")]}).json()["draft"]
+    fact = {"kind": "product", "protocol": "tcp", "ports": "80,8080", "value": "zebra",
+            "mode": "contains"}
+    client.post("/api/v1/tags/web/rules",
+                json={"draft": _with(draft, fact, "require"), "rule_name": "r"})
+    terminal = tb.fact_from("product", protocol="tcp", ports="80,8080", value="zebra",
+                            mode="contains")
+    expected = tb.draft_rule(tb.Draft(("192.0.2.2",), ((terminal, tb.State.REQUIRE),)), "r")
+    import yaml
+    saved = yaml.safe_load((eng / "seek-tags.yaml").read_text())["tags"]["web"]["rules"][0]
+    assert saved == expected
+
+
+def test_the_rows_in_view_start_the_builder(tmp_path):
+    client, _sess, _eng = _client(tmp_path, rules=None)
+    out = client.post("/api/v1/tags/builder",
+                      json={"view": {"tab": "hosts", "q": "192.0.2"}}).json()
+    assert len(out["draft"]["selection"]) == 3
+
+
+def test_a_saved_rule_is_opened_and_replaced_from_the_browser(tmp_path):
+    client, _sess, eng = _client(tmp_path)
+    (listed,) = client.get("/api/v1/tags/web-only/rules").json()["rules"]
+    assert listed["editable"]
+    opened = client.post("/api/v1/tags/web-only/rules/0/open").json()
+    assert opened["draft"]["selection"] == ["192.0.2.2"] and opened["replaces"]
+    draft = opened["draft"]
+    draft["facts"] = [f for f in draft["facts"] if f["state"] == "require"]
+    r = client.put("/api/v1/tags/web-only/rules/0",
+                   json={"draft": draft, "rule_name": opened["rule_name"],
+                         "replaces": opened["replaces"]})
+    assert r.status_code == 200
+    text = (eng / "seek-rules.yaml").read_text()
+    assert "22/tcp" not in text and "Exposed" in text
+    stale = client.put("/api/v1/tags/web-only/rules/0",
+                       json={"draft": draft, "rule_name": "x", "replaces": opened["replaces"]})
+    assert stale.status_code == 409
+
+
+def test_another_site_cannot_replace_a_rule(tmp_path):
+    client, _sess, eng = _client(tmp_path)
+    opened = client.post("/api/v1/tags/web-only/rules/0/open").json()
+    before = (eng / "seek-rules.yaml").read_text()
+    r = client.put("/api/v1/tags/web-only/rules/0",
+                   json={"draft": opened["draft"], "rule_name": "x",
+                         "replaces": opened["replaces"]},
+                   headers={"Origin": "http://evil.example"})
+    assert r.status_code == 403 and (eng / "seek-rules.yaml").read_text() == before
+
+
+def test_a_rule_beyond_the_builder_is_listed_with_why(tmp_path):
+    client, _sess, _eng = _client(
+        tmp_path, rules="tags:\n  x:\n    rules: [{when: {any: [{port: 80}, {port: 22}]}}]\n")
+    (listed,) = client.get("/api/v1/tags/x/rules").json()["rules"]
+    assert not listed["editable"] and "any:" in listed["reason"]
+    assert client.post("/api/v1/tags/x/rules/0/open").status_code == 422
 
 
 def test_a_tag_made_in_the_browser_is_announced_to_the_terminal(tmp_path):

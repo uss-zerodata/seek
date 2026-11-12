@@ -215,7 +215,10 @@ def entry_from(item, line: int | None = None) -> Entry:
     host = canonical_address(tr._text(item["host"], "a host", line))
     protocol, port = None, None
     if "port" in item:
-        port, protocol = tr._port(item["port"], line)
+        ports, protocol = tr._port(item["port"], line)
+        if len(ports) != 1 or ports[0][0] != ports[0][1]:
+            raise tr.RuleError("a manual tag names one port, such as 443/tcp", line)
+        port = ports[0][0]
         if protocol is None:
             raise tr.RuleError("a manual tag's port needs its protocol, such as 443/tcp", line)
     added = item.get("added", "")
@@ -414,6 +417,34 @@ def add_rule(name: str, raw: dict) -> Op:
         if tr.plain(raw) in rules:
             return doc
         body["rules"] = rules + [tr.plain(raw)]
+        tags[name] = body
+        return {**doc, "tags": tags}
+    return op
+
+
+def _same_rule(entry, old: dict) -> bool:
+    """The rule a builder opened, as it is in the file: the same tests and grant.
+    A name the loader made up (`rule 2`) is not in the file, so it is not compared."""
+    return (isinstance(entry, dict)
+            and tr.plain(entry.get("when")) == old.get("when")
+            and str(entry.get("grant", tr.Grant.HOST.value)).lower()
+            == old.get("grant", tr.Grant.HOST.value))
+
+
+def replace_rule(name: str, old: dict, new: dict) -> Op:
+    """Replace a rule of a tag in place. Raises TagWriteError, and writes nothing,
+    when the rule is no longer in the file as it was read."""
+    def op(doc: dict) -> dict:
+        tags = dict(doc.get("tags") or {})
+        body = dict(tags.get(name) or {})
+        rules = list(body.get("rules") or [])
+        for n, entry in enumerate(rules):
+            if _same_rule(entry, old):
+                rules[n] = tr.plain(new)
+                break
+        else:
+            raise TagWriteError("the rule changed on disk - press R and open it again")
+        body["rules"] = rules
         tags[name] = body
         return {**doc, "tags": tags}
     return op

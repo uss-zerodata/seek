@@ -60,7 +60,7 @@ more, against the test suite's feed fixtures built into a throwaway database:
 tab` 1187 ms. The lookup's cost grows with distinct versions, not with hosts;
 the tabs' with the places each product runs on.
 
-Host tagging (`openspec/changes/host-tagging/`) adds `tags (200 rules)`: 200
+Host tagging (`openspec/changes/archive/2026-11-12-host-tagging/`) adds `tags (200 rules)`: 200
 generated rules - every fourth with an exclusion, every tenth testing a product
 on any port, every twentieth asking for another tag - over the same corpus, as
 the session's projection builds them: 1370 ms from cold, of which about half is
@@ -70,6 +70,15 @@ or a rule edit reuses it and takes about 900 ms. The corpus is a hard case for
 it: every host has most ports open, so each rule holds on about 40 % of hosts -
 150 000 host grants in all. Evaluating host by host, over the same rules, took
 13.6 s; clause by clause over sets of hosts is what brought it here.
+The 1 s target is not met on this worst case; the measured numbers are the
+accepted baseline (host-tagging task 4.7).
+
+The rule builder (`openspec/changes/tag-builder-refine/`) adds three steps over
+five selected hosts: `builder proposals` 880 ms, once per builder (the index
+values a first count warms; a host added to the selection then costs about
+50 ms), `builder assess` 280 ms for the first change of a draft and about 90 ms
+for every later one (the facts of the sampled unwanted hosts are kept), and
+`builder refine` 48 ms per keystroke in the fact editor.
 
 Note that "to the first screen" has no row any more, because there no longer is
 one: the viewer opens on the candidate files and reads them with the screen
@@ -254,6 +263,20 @@ def pipeline(root: Path, policy: bool = True) -> None:
         loaded = _generated_tags(RULES)
         split.time(f"tags ({RULES} rules)",
                    lambda: tagging.build(scans.hosts, scans.files, loaded, {}))
+        # The rule builder: the proposals once per selection, then what every
+        # change of the draft and every keystroke in the fact editor costs.
+        from seek.nmap import tagbuild
+        from seek.nmap.export import Record
+        index = tagging.prepare(scans.hosts, scans.files, {})
+        b = tagbuild.start(index, scans.files, None, [Record(h) for h in scans.hosts[:5]])
+        offered = split.time("builder proposals", lambda: tagbuild.proposals(
+            b, [b.position(a) for a in b.initial]))
+        draft = b.draft()
+        for p in offered[:3]:
+            draft = draft.with_state(p.fact, tagbuild.State.REQUIRE)
+        split.time("builder assess", lambda: tagbuild.assess(b, draft))
+        split.time("builder refine", lambda: tagbuild.refine(b, draft, tagbuild.fact_from(
+            "product", ports="", value="http", mode="contains")))
 
     size = sum(p.stat().st_size for p in paths)
     print(f"\n{len(paths)} files, {size / 1e6:.1f} MB, {len(scans.hosts)} hosts, "

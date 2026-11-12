@@ -150,7 +150,7 @@ src/seek/
     tagrules.py     the tag rule language: YAML (both dialects) -> immutable definitions, problems, order
     tagfiles.py     owner of seek-rules.yaml / seek-tags.yaml: find, precedence, entries, locked writes
     tagging.py      tag rules over the model -> TagSet (three-valued, clause by clause over sets)
-    tagbuild.py     the rule builder: shared facts, exclusions, preview, draft - counted by tagging
+    tagbuild.py     the rule builder: facts, a Draft and its assess, proposals, opening a rule - counted by tagging
     filtering.py    the filter grammar: FilterSpec (fuzzy / ranges / field terms), prefer_firm, explain
     names.py        the names a host is known by, read from what the server gives away
     rawlog.py       which lines of a `.nmap` text are one host or one port - boundary search, no meaning
@@ -166,7 +166,8 @@ src/seek/
     scans.py        the Scans tab: run list + the three report modes
     scope.py        scope editor, editable command, the review before it runs
     builder.py      the chooser (build / recent / frequent / presets) and the builder screen
-    tagflows.py     TagFlows mixin: t (tag, edit, copy), T (rule builder), R (reload)
+    tagflows.py     TagFlows mixin: t (tag, edit, rules, copy), T (rule builder), R (reload)
+    rulebench.py    the rule builder's workbench, fact editor and save dialog - shows tagbuild.assess
   gowitness/
     detect.py       docker or native, or neither - never raises
     capture.py      one argv for both backends, output layout, the CaptureRun

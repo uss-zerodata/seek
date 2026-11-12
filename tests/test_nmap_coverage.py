@@ -87,3 +87,10 @@ def test_hosts_sharing_sources_share_one_answer():
     _scans, hosts, cov = _hosts("ports.xml", "other.xml")
     a = cov.of(hosts["192.0.2.60"])
     assert cov.of(hosts["192.0.2.60"]) is a
+
+
+def test_subtract_leaves_the_ports_not_in_the_second_list():
+    from seek.nmap.coverage import subtract
+    assert subtract(((1, 10), (20, 30)), ((3, 4), (8, 22))) == ((1, 2), (5, 7), (23, 30))
+    assert subtract(((22, 23),), ()) == ((22, 23),)
+    assert subtract(((22, 23),), ((1, 100),)) == ()

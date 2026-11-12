@@ -587,6 +587,7 @@ async function tag() {
       <p class="dim small">lowercase letters, digits, . _ - · Remove takes off a tag given by hand</p>`,
     `<button value="add" class="primary">Add</button> <button value="remove">Remove</button>
          <button value="edit">Edit its description and issues…</button>
+         <button value="rules">Edit its rules in the builder…</button>
          <button value="global">Copy to the global file</button>
          <button value="cancel">Cancel</button>`);
   const form = d.querySelector("form");
@@ -594,8 +595,9 @@ async function tag() {
   d.addEventListener("close", async () => {
     const choice = d.returnValue;
     const name = form.tag.value.trim();
-    if (!["add", "remove", "edit", "global"].includes(choice)) return;
+    if (!["add", "remove", "edit", "global", "rules"].includes(choice)) return;
     if (!name) { say("no tag name given"); return; }
+    if (choice === "rules") { editRules(name.toLowerCase()); return; }
     if (choice === "edit") { editTag(name, known.tags.find((x) => x.name === name.toLowerCase())); return; }
     try {
       reportChange(choice === "global"
@@ -641,73 +643,309 @@ async function reloadTags() {
   } catch (e) { say(e.message); }
 }
 
-// `T`: shared facts, then exclusions, then the preview - each a choice, as in the
-// terminal; every count comes from the server's rule builder.
+// `T`: the rule builder - one dialog, as the terminal's workbench. The dialog
+// holds only the draft; every count, proposal and condition is the server's, and
+// a newer change aborts the request of an older one, so the last change shows.
+const MARK = { ignore: "·", require: "+", exclude: "−" };
+const CYCLE = { ignore: "require", require: "exclude", exclude: "ignore" };
+const MODES = [["equals", "equals"], ["contains", "contains"], ["start", "starts with"],
+               ["end", "ends with"], ["regex", "regex"]];
+const GRANTS = [["host", "the host"], ["service", "the matched services"], ["both", "both"]];
+const factKey = (f) => JSON.stringify([f.kind, f.protocol || null, f.ports || "", f.value || "",
+                                       f.mode || "equals", !!f.case]);
+
+function withState(draft, fact, state) {
+  const key = factKey(fact);
+  const known = draft.facts.some((x) => factKey(x.fact) === key);
+  const facts = known ? draft.facts.map((x) => factKey(x.fact) === key ? { ...x, state } : x)
+                      : [...draft.facts, { fact, state }];
+  return { ...draft, facts };
+}
+
+function stateOf(draft, fact) {
+  return draft.facts.find((x) => factKey(x.fact) === factKey(fact))?.state || "ignore";
+}
+
+function choose(title, choices) {
+  return new Promise((resolve) => {
+    const d = dialog(title, "", choices.map(([value, label], k) =>
+      `<button value="${esc(value)}"${k ? "" : ' class="primary"'}>${esc(label)}</button>`).join(" "));
+    d.addEventListener("close", () => resolve(choices.some(([v]) => v === d.returnValue) ? d.returnValue : null));
+  });
+}
+
 async function buildRule() {
-  const t = await tagTargets();
-  if (!t) return;
-  let shared;
-  try { shared = await send("POST", "/api/v1/tags/builder", { rows: t.rows }); }
-  catch (e) { say(e.message); return; }
-  if (shared.notes.length) say(shared.notes.join(" · "));
-  const offered = [...shared.facts, ...shared.partial];
-  if (!offered.length) return;
-  const d = dialog(`What ${shared.selected.length} selected host(s) share`, `
-      <p class="dim small">the number is how many other hosts share it too</p>
-      <fieldset class="facts">${offered.map((p, k) => `<label><input type="checkbox" name="fact" value="${k}"> ${esc(p.fact.label)} <span class="dim">(${p.others} others)</span></label><br>`).join("")}</fieldset>`,
-    `<button value="next" class="primary">Next</button> <button value="cancel">Cancel</button>`);
-  d.addEventListener("close", async () => {
-    if (d.returnValue !== "next") return;
-    const positive = [...d.querySelectorAll("input[name=fact]:checked")].map((c) => offered[+c.value].fact);
-    if (!positive.length) { say("choose at least one fact"); return; }
-    let ex;
-    try { ex = await send("POST", "/api/v1/tags/builder/exclusions", { rows: t.rows, positive }); }
-    catch (e) { say(e.message); return; }
-    excludeStep(t, positive, ex);
-  });
-}
-
-function excludeStep(t, positive, ex) {
-  if (!ex.unwanted) { previewStep(t, positive, []); return; }
-  const choices = [];
-  if (ex.combination) {
-    choices.push({ facts: ex.combination.facts,
-                   label: `not ${ex.combination.facts.map((f) => f.label).join(" and ")} (leaves ${ex.combination.remaining})` });
+  let marks;
+  try { marks = await send("GET", "/api/v1/marks"); } catch (e) { say(e.message); return; }
+  const v = view();
+  const tr = document.querySelector("table.rows tr.selected");
+  const row = tr ? { rows: [{ tab: v.tab, path: v.path, step: tr.dataset.step }] } : null;
+  let body = marks.count ? { rows: [] } : row;
+  if (!marks.count && v.q && document.querySelectorAll("table.rows tr[data-step]").length > 1) {
+    const from = await choose("Build a rule from:", [["view", "the rows in view"], ["row", "this row"]]);
+    if (!from) return;
+    body = from === "view" ? { view: { tab: v.tab, path: v.path, q: v.q } } : row;
   }
-  ex.single.forEach((p) => choices.push({ facts: [p.fact],
-    label: `not ${p.fact.label} (excludes ${p.excludes}/${ex.unwanted}` +
-           (p.assumed_on.length ? `, assumed on ${p.assumed_on.length} selected)` : ")") }));
-  const d = dialog(`These facts also match ${ex.unwanted} unselected host(s)`, `
-      <fieldset class="facts">${choices.map((c, k) => `<label><input type="checkbox" name="ex" value="${k}"> ${esc(c.label)}</label><br>`).join("")}</fieldset>`,
-    `<button value="next" class="primary">Next</button> <button value="cancel">Cancel</button>`);
-  d.addEventListener("close", () => {
-    if (d.returnValue !== "next") return;
-    const negative = [];
-    d.querySelectorAll("input[name=ex]:checked").forEach((c) => choices[+c.value].facts.forEach((f) => {
-      if (!negative.some((n) => n.label === f.label)) negative.push(f);
-    }));
-    previewStep(t, positive, negative);
+  if (!body) { say("mark the hosts a rule should find, then press T"); return; }
+  let out;
+  try { out = await send("POST", "/api/v1/tags/builder", body); } catch (e) { say(e.message); return; }
+  bench(out, null);
+}
+
+async function editRules(name) {
+  let listed;
+  try { listed = await send("GET", `/api/v1/tags/${encodeURIComponent(name)}/rules`); }
+  catch (e) { say(e.message); return; }
+  if (!listed.rules.length) { say(`${name} has no rules - build one with T`); return; }
+  const first = listed.rules.find((r) => r.editable)?.index;
+  const d = dialog(`Which rule of ${name}?`, listed.rules.map((r) =>
+      `<p><button value="${r.index}"${r.editable ? "" : " disabled"}${r.index === first ? ' class="primary"' : ""}>${esc(r.name)}</button>
+       <span class="dim small">${esc(r.editable ? r.source : r.reason)}</span></p>`).join(""),
+    `<button value="cancel">Cancel</button>`);
+  d.addEventListener("close", async () => {
+    const index = Number(d.returnValue);
+    if (d.returnValue === "cancel" || Number.isNaN(index)) return;
+    let out;
+    try { out = await send("POST", `/api/v1/tags/${encodeURIComponent(name)}/rules/${index}/open`); }
+    catch (e) { say(e.message); return; }
+    bench(out, { tag: name, index, name: out.rule_name, grant: out.grant, replaces: out.replaces });
   });
 }
 
-async function previewStep(t, positive, negative) {
-  let shown;
-  try { shown = await send("POST", "/api/v1/tags/builder/preview", { rows: t.rows, positive, negative }); }
-  catch (e) { say(e.message); return; }
-  const d = dialog("Save the rule", `
-      <p>Matches ${shown.matched.length} host(s): ${shown.selected} of ${shown.of_selection} selected, ${shown.assumed.length} on an assumption.</p>
-      ${shown.confirm ? `<p class="why">${esc(shown.confirm)} - save anyway?</p>` : ""}
-      <p><label>to tag <input name="tag" autocomplete="off"></label></p>`,
-    `<button value="save" class="primary">Save</button> <button value="cancel">Cancel</button>`);
+function bench(started, rule) {
+  const st = { draft: started.draft, start: JSON.stringify(started.draft), a: started.assessment,
+               ids: {}, combo: [], pending: null };
+  const title = rule ? `Rule builder · ${rule.tag} · ${rule.name}` : "Rule builder";
+  const d = dialog(title, `
+      <p class="bench-head"><span class="sel"></span>
+        <label><input type="checkbox" name="same"> same port (p)</label></p>
+      <div class="bench">
+        <ul class="bench-list facts-list" aria-label="facts"></ul>
+        <ul class="bench-list hosts-list" aria-label="hosts"></ul>
+      </div>
+      <p class="why notes"></p>
+      <p class="total"></p>
+      <p class="dim small">space cycles · + require · - exclude · e edit · p same port ·
+        a add · d drop · x exclude host · s save</p>`,
+    `<button value="save" class="primary">Save…</button> <button value="cancel">Cancel</button>`);
+  d.classList.add("wide");
   const form = d.querySelector("form");
-  d.addEventListener("close", async () => {
-    const name = form.tag.value.trim();
-    if (d.returnValue !== "save") return;
-    if (!name) { say("no tag name given"); return; }
+  const factsEl = d.querySelector(".facts-list");
+  const hostsEl = d.querySelector(".hosts-list");
+  form.same.checked = st.draft.same_port;
+
+  const change = (draft) => { st.draft = draft; render(); recount(); };
+  async function recount() {
+    st.pending?.abort();
+    const ctl = st.pending = new AbortController();
+    await new Promise((r) => setTimeout(r, 120));
+    if (ctl.signal.aborted) return;
     try {
-      reportChange(await send("POST", `/api/v1/tags/${encodeURIComponent(name)}/rules`,
-                              { rows: t.rows, positive, negative }));
+      const res = await fetch("/api/v1/tags/builder/assess", { method: "POST", signal: ctl.signal,
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ draft: st.draft }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || res.statusText);
+      if (ctl === st.pending) { st.a = data; render(); }
+    } catch (e) { if (e.name !== "AbortError") say(e.message); }
+  }
+
+  function li(id, text, extra = "", cls = "") {
+    return `<li tabindex="-1" data-id="${esc(id)}" class="${cls}">${text}${extra}</li>`;
+  }
+  function render() {
+    const a = st.a, n = a.of_selection;
+    const keepF = factsEl.querySelector("li:focus")?.dataset.id;
+    const keepH = hostsEl.querySelector("li:focus")?.dataset.id;
+    st.ids = {};
+    let html = "", group = null;
+    a.rows.forEach((r, k) => {
+      if (r.fact.group !== group) { group = r.fact.group; html += `<li class="head">${esc(group)}</li>`; }
+      st.ids[`f${k}`] = r.fact;
+      const state = stateOf(st.draft, r.fact);
+      const label = group !== "host" && r.fact.label.startsWith(group + " ") ? r.fact.label.slice(group.length + 1) : r.fact.label;
+      html += li(`f${k}`, `<b class="state-${state}">${MARK[state]}</b> ${esc(label)}`,
+                 ` <span class="dim">${r.selected}/${n} sel · ${r.others} others</span>`);
+    });
+    st.combo = [];
+    if (a.other_count && (a.exclusions.length || a.combination)) {
+      html += `<li class="head">exclude to drop ${a.other_count}</li>`;
+      if (a.combination && a.combination.facts.length > 1) {
+        st.combo = a.combination.facts;
+        html += li("combo", `− ${esc(a.combination.facts.map((f) => f.label).join(" and "))}`,
+                   ` <span class="dim">leaves ${a.combination.remaining}</span>`);
+      }
+      a.exclusions.forEach((p, k) => {
+        st.ids[`x${k}`] = p.fact;
+        html += li(`x${k}`, `− ${esc(p.fact.label)}`, ` <span class="dim">excludes ${p.excludes}/${a.other_count}` +
+                   (p.assumed_on.length ? `, assumed on ${p.assumed_on.length} selected` : "") + "</span>");
+      });
+    }
+    factsEl.innerHTML = html;
+    let hosts = `<li class="head">selection (${a.selection.length})</li>`;
+    a.selection.forEach((m) => {
+      hosts += li(`s:${m.address}`, `${m.matched ? (m.assumed ? "~" : "✓") : "✗"} ${esc(m.address)}`,
+                  ` <span class="dim">${esc(m.ports)} ${esc(m.title)}</span>`);
+    });
+    if (a.other_count) {
+      hosts += `<li class="head">matches also (${a.other_count}${a.other_count > a.others.length ? `, first ${a.others.length}` : ""})</li>`;
+      a.others.forEach((m) => { hosts += li(`o:${m.address}`, esc(m.address), ` <span class="dim">${esc(m.ports)} ${esc(m.title)}</span>`); });
+    }
+    hostsEl.innerHTML = hosts;
+    d.querySelector(".sel").textContent = `${st.draft.selection.length} selected`;
+    d.querySelector(".notes").textContent = [...a.notes, ...(a.confirm ? [a.confirm] : [])].join(" · ");
+    d.querySelector(".total").textContent = a.rule.length
+      ? `matches ${a.matched} · ${a.selected_matched}/${a.of_selection} selected · ${a.other_count} others · ${a.assumed.length} assumed`
+      : "require (+) or exclude (-) a fact to start the rule";
+    (factsEl.querySelector(`li[data-id="${CSS.escape(keepF || "")}"]`)
+      || hostsEl.querySelector(`li[data-id="${CSS.escape(keepH || "")}"]`))?.focus();
+  }
+
+  const focused = () => d.querySelector(".bench-list li:focus")?.dataset.id || null;
+  function setState(id, state) {
+    if (id === "combo") { let draft = st.draft; st.combo.forEach((f) => { draft = withState(draft, f, "exclude"); }); change(draft); return; }
+    const fact = st.ids[id];
+    if (fact) change(withState(st.draft, fact, state));
+  }
+  function cycle(id) {
+    if (id === "combo") { setState(id, "exclude"); return; }
+    const fact = st.ids[id];
+    if (!fact) return;
+    const state = stateOf(st.draft, fact);
+    setState(id, id.startsWith("x") && state === "ignore" ? "exclude" : CYCLE[state]);
+  }
+  async function edit(id) {
+    const fact = st.ids[id];
+    if (!fact) return;
+    if (["tag", "address", "fixed"].includes(fact.kind)) { say("this fact is kept as it is - require, exclude or ignore it"); return; }
+    const edited = await editFact(st.draft, fact);
+    if (!edited) return;
+    const old = stateOf(st.draft, fact);
+    const rest = st.draft.facts.filter((x) => ![factKey(fact), factKey(edited)].includes(factKey(x.fact)));
+    change({ ...st.draft, facts: [{ fact: edited, state: old === "ignore" ? "require" : old }, ...rest] });
+  }
+  function move(step) {
+    const items = [...d.querySelectorAll(".bench-list li[data-id]")];
+    const at = items.indexOf(document.activeElement);
+    items[Math.max(0, Math.min(items.length - 1, at + step))]?.focus();
+  }
+
+  d.addEventListener("click", (event) => {
+    const item = event.target.closest(".bench-list li[data-id]");
+    if (item) { item.focus(); if (item.closest(".facts-list")) cycle(item.dataset.id); }
+  });
+  d.addEventListener("keydown", (event) => {
+    if (event.target.matches("input, select") && event.target.name !== "same") return;
+    const id = focused();
+    const key = event.key;
+    const act = {
+      " ": () => id && cycle(id), "+": () => id && setState(id, "require"),
+      "-": () => id && setState(id, "exclude"), e: () => id && edit(id),
+      p: () => { form.same.checked = !form.same.checked; change({ ...st.draft, same_port: form.same.checked }); },
+      a: () => id?.startsWith("o:") && change({ ...st.draft, selection: [...st.draft.selection, id.slice(2)] }),
+      d: () => id?.startsWith("s:") && change({ ...st.draft, selection: st.draft.selection.filter((x) => x !== id.slice(2)) }),
+      x: () => id?.startsWith("o:") && change(withState(st.draft, { kind: "address", value: id.slice(2) }, "exclude")),
+      s: () => save(),
+      ArrowDown: () => move(1), j: () => move(1), ArrowUp: () => move(-1), k: () => move(-1),
+    }[key];
+    if (act) { event.preventDefault(); act(); }
+  });
+  form.same.addEventListener("change", () => change({ ...st.draft, same_port: form.same.checked }));
+  d.addEventListener("cancel", (event) => {
+    if (JSON.stringify(st.draft) !== st.start && !window.confirm("Leave the rule builder? The draft is not saved.")) event.preventDefault();
+  });
+  form.addEventListener("submit", (event) => {
+    if (event.submitter?.value === "save") { event.preventDefault(); save(); }
+    else if (JSON.stringify(st.draft) !== st.start && !window.confirm("Leave the rule builder? The draft is not saved.")) event.preventDefault();
+  });
+
+  async function save() {
+    if (!st.a.rule.length) { say("require or exclude a fact first"); return; }
+    if (st.a.confirm && !window.confirm(`${st.a.confirm} - save it anyway?`)) return;
+    const got = await saveDialog(rule, st.a.of_selection);
+    if (!got) return;
+    try {
+      const out = rule
+        ? await send("PUT", `/api/v1/tags/${encodeURIComponent(rule.tag)}/rules/${rule.index}`,
+                     { draft: st.draft, rule_name: got.name, grant: got.grant, replaces: rule.replaces })
+        : await send("POST", `/api/v1/tags/${encodeURIComponent(got.tag)}/rules`,
+                     { draft: st.draft, rule_name: got.name, grant: got.grant });
+      d.close("saved");
+      reportChange(out);
     } catch (e) { say(e.message); }
+  }
+
+  render();
+  factsEl.querySelector("li[data-id]")?.focus();
+}
+
+function editFact(draft, fact) {
+  return new Promise((resolve) => {
+    const text = fact.kind !== "open";
+    const ports = !["os", "tag", "address", "fixed"].includes(fact.kind);
+    const d = dialog(`Edit: ${fact.label}`, `
+        ${text ? `<p><label>value <input name="value" value="${esc(fact.value)}" autocomplete="off"></label>
+          <select name="mode">${MODES.map(([v, l]) => `<option value="${v}"${v === fact.mode ? " selected" : ""}>${l}</option>`).join("")}</select>
+          <label><input type="checkbox" name="case"${fact.case ? " checked" : ""}> match case</label></p>` : ""}
+        ${ports ? `<p><label>ports <input name="ports" value="${esc(fact.ports ? fact.ports : "")}" placeholder="any port" autocomplete="off"></label>
+          <span class="dim small">one, a list such as 80,8000-8999, or empty for any</span></p>` : ""}
+        <p class="count"></p><p class="why warn"></p><p class="why error"></p>`,
+      `<button value="take" class="primary">Take</button> <button value="cancel">Cancel</button>`);
+    const form = d.querySelector("form");
+    let current = null, pending = null;
+    const typed = () => ({ kind: fact.kind, protocol: fact.protocol, ports: ports ? form.ports.value : "",
+                           value: text ? form.value.value : "", mode: text ? form.mode.value : "equals",
+                           case: text ? form.case.checked : false });
+    async function recount() {
+      pending?.abort();
+      const ctl = pending = new AbortController();
+      await new Promise((r) => setTimeout(r, 120));
+      if (ctl.signal.aborted) return;
+      try {
+        const res = await fetch("/api/v1/tags/builder/refine", { method: "POST", signal: ctl.signal,
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify({ draft, fact: typed() }) });
+        const data = await res.json();
+        if (ctl !== pending) return;
+        if (!res.ok) {
+          current = null; form.querySelector("button[value=take]").disabled = true;
+          d.querySelector(".error").textContent = data.detail || res.statusText; return;
+        }
+        current = data.fact;
+        form.querySelector("button[value=take]").disabled = false;
+        d.querySelector(".error").textContent = "";
+        d.querySelector(".count").textContent = `${data.fact.label} · matches ${data.selected}/${data.of_selection} selected · ${data.others} others`;
+        d.querySelector(".warn").textContent = data.dropped.length
+          ? `drops ${data.dropped.length} selected host(s): ${data.dropped.slice(0, 5).join(", ")}${data.dropped.length > 5 ? " …" : ""}` : "";
+      } catch (e) { if (e.name !== "AbortError") say(e.message); }
+    }
+    form.addEventListener("input", recount);
+    form.addEventListener("change", recount);
+    form.addEventListener("submit", (event) => {
+      if (event.submitter?.value !== "cancel" && !current) event.preventDefault();
+    });
+    d.addEventListener("close", () => resolve(d.returnValue === "take" ? current : null));
+    (form.value || form.ports)?.focus();
+    recount();
+  });
+}
+
+function saveDialog(rule, count) {
+  return new Promise(async (resolve) => {
+    let known = { tags: [] };
+    try { known = await send("GET", "/api/v1/tags"); } catch { /* names are a convenience */ }
+    const d = dialog("Save the rule", `
+        <p><label>tag <input name="tag" list="bench-tags" autocomplete="off" value="${esc(rule?.tag || "")}"${rule ? " disabled" : ""}></label>
+        <datalist id="bench-tags">${known.tags.map((x) => `<option value="${esc(x.name)}">`).join("")}</datalist></p>
+        <p><label>rule name <input name="name" value="${esc(rule?.name || `built from ${count} host(s)`)}" autocomplete="off"></label></p>
+        <p><label>it tags <select name="grant">${GRANTS.map(([v, l]) => `<option value="${v}"${v === (rule?.grant || "host") ? " selected" : ""}>${l}</option>`).join("")}</select></label></p>`,
+      `<button value="save" class="primary">Save</button> <button value="cancel">Cancel</button>`);
+    const form = d.querySelector("form");
+    (rule ? form.name : form.tag).focus();
+    d.addEventListener("close", () => {
+      if (d.returnValue !== "save") { resolve(null); return; }
+      const tag = form.tag.value.trim(), name = form.name.value.trim();
+      if (!tag || !name) { say("give a tag and a rule name"); resolve(null); return; }
+      resolve({ tag, name, grant: form.grant.value });
+    });
   });
 }
 

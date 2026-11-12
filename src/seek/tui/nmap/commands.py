@@ -57,7 +57,7 @@ _STATIC: list[tuple[str, str, str, object]] = [
     ("Mark selected row", "Collect it for export (m)", "action_mark", None),
     ("Clear marks", "Drop every mark (M)", "action_clear_marks", None),
     ("Tag", "Tag the marks, or the row; edit or copy a tag (t)", "action_tag", None),
-    ("Build a tag rule", "From the marked hosts: shared facts, exclusions (T)",
+    ("Build a tag rule", "From the marked hosts or the rows in view: facts, live counts (T)",
      "action_build_rule", None),
     ("Reload tag rules", "Read every seek-rules.yaml and seek-tags.yaml again (R)",
      "action_reload_tags", None),

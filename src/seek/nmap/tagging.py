@@ -13,6 +13,7 @@ probed 22/tcp. Missing data for a positive test is simply a failure.
 from __future__ import annotations
 
 import ipaddress
+from bisect import bisect_left, bisect_right
 from collections import OrderedDict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -20,7 +21,7 @@ from pathlib import Path
 
 from seek.gowitness import results as gw_results
 from seek.nmap import tagrules as tr
-from seek.nmap.coverage import Coverage
+from seek.nmap.coverage import Coverage, Ranges, merge_ranges, subtract
 from seek.nmap.models import Host, ScanFile, Service
 from seek.nmap.progress import TAGS, Report, counted
 from seek.nmap.tagfiles import Loaded
@@ -302,6 +303,8 @@ class _Index:
         self.by_port = {k: set(v) for k, v in by_port.items()}
         self.with_caps = set(caps)
         self.protocols = {k[0] for k in self.by_port}
+        self.numbers = sorted({k[1] for k in self.by_port})
+        self._uncovered: dict[tuple, Ranges] = {}
         self.all_hosts = set(range(len(hosts)))
         self._by_state: dict[str, set[int]] = {}
         self._recorded: dict[ServiceKey, set[int]] | None = None
@@ -322,8 +325,17 @@ class _Index:
         host_of = self.host_of
         return {host_of[s] for s in sids}
 
+    def in_ranges(self, ports: Ranges) -> list[int]:
+        """The recorded port numbers within `ports` - a range as wide as 1-65535
+        costs what the recorded numbers cost, not sixty thousand lookups."""
+        numbers = self.numbers
+        out: list[int] = []
+        for lo, hi in ports:
+            out += numbers[bisect_left(numbers, lo):bisect_right(numbers, hi)]
+        return out
+
     def candidates(self, clause: tr.PortClause) -> set[int]:
-        if clause.port is None:
+        if clause.ports is None:
             found = self._by_state.get(clause.state)
             if found is None:
                 found = set().union(*(sids for (_p, _n, st), sids in self.by_port.items()
@@ -332,19 +344,21 @@ class _Index:
             return found
         protos = (clause.protocol,) if clause.protocol else tuple(self.protocols)
         found: set[int] = set()
-        for p in protos:
-            found |= self.by_port.get((p, clause.port, clause.state), set())
+        for n in self.in_ranges(clause.ports):
+            for p in protos:
+                found |= self.by_port.get((p, n, clause.state), set())
         return found
 
     def _port_hosts(self, clause: tr.PortClause) -> set[int]:
         protos = (clause.protocol,) if clause.protocol else tuple(self.protocols)
         found: set[int] = set()
-        for p in protos:
-            key = (p, clause.port, clause.state)
-            hosts = self._group_hosts.get(key)
-            if hosts is None:
-                hosts = self._group_hosts[key] = self.hosts_of(self.by_port.get(key, ()))
-            found |= hosts
+        for n in self.in_ranges(clause.ports):
+            for p in protos:
+                key = (p, n, clause.state)
+                hosts = self._group_hosts.get(key)
+                if hosts is None:
+                    hosts = self._group_hosts[key] = self.hosts_of(self.by_port.get(key, ()))
+                found |= hosts
         return found
 
     def field_matches(self, fld: tr.Field, match: tr.TextMatch) -> set[int]:
@@ -388,6 +402,24 @@ class _Index:
             self._probed[key] = found
         return found
 
+    def unprobed(self, h: int, ports: Ranges, protocol: str | None) -> Ranges:
+        """The ports of `ports` that no scan probed and none recorded on host `h`."""
+        host = self.hosts[h]
+        cov = self.coverage.of(host) if self.coverage is not None else None
+        key = (id(cov), ports, protocol)
+        missing = self._uncovered.get(key)
+        if missing is None:
+            covered: Ranges = ()
+            if cov is not None:
+                covered = (cov.by_protocol.get(protocol, ()) if protocol
+                           else merge_ranges(r for rs in cov.by_protocol.values() for r in rs))
+            missing = self._uncovered[key] = subtract(ports, covered)
+        if missing:
+            recorded = merge_ranges((s.port, s.port) for s in host.services
+                                    if protocol is None or s.protocol == protocol)
+            missing = subtract(missing, recorded)
+        return missing
+
     def clause(self, clause: tr.PortClause) -> _ClauseResult:
         """The services satisfying a positive port clause, computed once."""
         cached = self._clauses.get(clause)
@@ -425,7 +457,7 @@ class _Index:
                     sids = kept
                 else:
                     sids &= self.field_matches(fld, match)
-        if not clause.fields and not clause.scripts and clause.port is not None:
+        if not clause.fields and not clause.scripts and clause.ports is not None:
             hosts = self._port_hosts(clause)     # a bare port: the group's hosts
         else:
             hosts = self.hosts_of(sids)
@@ -539,11 +571,23 @@ class _Eval:
                 evidence.setdefault(h, [])
                 if why not in evidence[h]:
                     evidence[h].append(why)
-        if clause.port is not None:
-            where = f"{clause.port}/{clause.protocol}" if clause.protocol else str(clause.port)
-            for h in rest - index.probed(clause.port, clause.protocol):
+        ports = clause.ports
+        if ports is not None and len(ports) == 1 and ports[0][0] == ports[0][1]:
+            where = clause.where
+            for h in rest - index.probed(ports[0][0], clause.protocol):
                 evidence.setdefault(h, []).insert(0, f"{where} not scanned")
+        elif ports is not None:
+            for h in rest:
+                missing = index.unprobed(h, ports, clause.protocol)
+                if missing:
+                    evidence.setdefault(h, []).insert(
+                        0, f"{_few_ports(missing, clause.protocol)} not scanned")
         return Outcome(rest - evidence.keys(), {h: tuple(e) for h, e in evidence.items()})
+
+
+def _few_ports(ports: Ranges, protocol: str | None, most: int = 5) -> str:
+    text = tr.format_ports(ports[:most], protocol)
+    return text + (f" and {len(ports) - most} more" if len(ports) > most else "")
 
 
 # --- the build -------------------------------------------------------------------
@@ -567,7 +611,7 @@ def _cost(node: tr.Node) -> int:
     if isinstance(node, tr.PortClause):
         if node.reads_bodies:
             return 6
-        return (2 if node.reads_captures else 1) + (3 if node.port is None else 0)
+        return (2 if node.reads_captures else 1) + (3 if node.ports is None else 0)
     if isinstance(node, tr.TagClause):
         return 2
     if isinstance(node, tr.HostClause):
@@ -589,7 +633,7 @@ def compile_rule(rule: tr.Rule) -> _Compiled:
     when = tr.All(children) if isinstance(rule.when, tr.All) else rule.when
     nodes = list(_walk(rule.when))
     reads_bodies = any(isinstance(n, tr.PortClause) and n.reads_bodies for n in nodes)
-    no_port = any(isinstance(n, tr.PortClause) and n.port is None for n in nodes)
+    no_port = any(isinstance(n, tr.PortClause) and n.ports is None for n in nodes)
     return _Compiled(tr.Rule(rule.tag, rule.name, rule.grant, when, rule.source, rule.raw),
                      reads_bodies, no_port, f"{rule.source} {rule.name}")
 
@@ -604,7 +648,7 @@ def _body_wants(index: _Index, compiled: list[_Compiled]
             continue
         for clause in (n for n in _walk(c.rule.when)
                        if isinstance(n, tr.PortClause) and n.reads_bodies):
-            rest = tr.PortClause(clause.port, clause.protocol, clause.state,
+            rest = tr.PortClause(clause.ports, clause.protocol, clause.state,
                                  tuple(fm for fm in clause.fields if fm[0] is not tr.Field.BODY),
                                  clause.scripts)
             for s in index.clause(rest).matched & index.with_caps:

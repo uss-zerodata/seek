@@ -351,11 +351,42 @@ async def test_the_rule_builder_counts_with_the_session_s_model(tmp_path):
     session = _engagement(tmp_path)
     host = next(h for h in session.scans.hosts if h.address == "192.0.2.2")
     b = session.rule_builder([Record(host)])
-    shared = tagbuild.shared(b)
-    open80 = next(p for p in shared.facts if p.fact.label == "80/tcp open")
-    assert (open80.selected, open80.others) == (1, 1), "192.0.2.1 has 80 open too"
-    assert any(p.fact.kind is tagbuild.Kind.TAG and p.fact.value == "web-only"
-               for p in shared.facts), "the session's tags are facts"
+    rows = {r.fact.label: r for r in tagbuild.assess(b, b.draft()).rows}
+    assert (rows["80/tcp open"].selected, rows["80/tcp open"].others) == (1, 1), \
+        "192.0.2.1 has 80 open too"
+    assert any(r.fact.kind is tagbuild.Kind.TAG and r.fact.value == "web-only"
+               for r in rows.values()), "the session's tags are facts"
+
+
+async def test_a_saved_rule_is_opened_edited_and_replaced_in_place(tmp_path):
+    from seek.nmap import tagbuild
+
+    session = _engagement(tmp_path)
+    (rule,) = session.rules_of("web-only")
+    b, draft = session.open_rule(rule)
+    assert draft.selection == ("192.0.2.2",)
+    widened = draft.with_state(tagbuild.Fact(tagbuild.Kind.OPEN, "tcp", ((22, 22),)),
+                               tagbuild.State.IGNORE)
+    raw = tagbuild.draft_rule(widened, rule.name)
+    result = await session.apply_tag_change(session.plan_rule_replace(rule, raw))
+    assert result.ok and result.saved
+    assert set(session.tags().hosts) == {"192.0.2.1", "192.0.2.2"}
+    (again,) = session.rules_of("web-only")
+    assert again.raw["when"] == [{"port": 80}]
+
+
+async def test_a_rule_changed_on_disk_is_not_replaced(tmp_path):
+    from seek.nmap import tagbuild
+
+    session = _engagement(tmp_path)
+    (rule,) = session.rules_of("web-only")
+    _b, draft = session.open_rule(rule)
+    rules = tmp_path / "eng" / "seek-rules.yaml"
+    rules.write_text(rules.read_text().replace("port: 80", "port: 8080"))
+    before = rules.read_text()
+    change = session.plan_rule_replace(rule, tagbuild.draft_rule(draft, "r"))
+    result = await session.apply_tag_change(change)
+    assert "changed on disk" in result.errors[0] and rules.read_text() == before
 
 
 async def test_the_host_list_shows_tags_worst_first_and_follows_a_retag(tmp_path):
