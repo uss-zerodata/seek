@@ -93,6 +93,7 @@ _GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("", "removes it) or type a new one; or open the tag editor - name,"),
         ("", "description, issues with references, rules (↵ opens one in the"),
         ("", "builder, del deletes) - saved together; or copy a tag globally"),
+        ("", "the tags the row already carries come first: one key to edit them"),
         ("T", "the rule builder, on the marked hosts (or the rows in view):"),
         ("", "space cycles a fact ignore/require/exclude, + and - set it, e edits"),
         ("", "its value (equals, contains, starts, ends, regex) and ports, p joins"),

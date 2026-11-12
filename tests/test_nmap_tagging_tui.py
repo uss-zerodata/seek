@@ -395,3 +395,18 @@ async def test_H_on_a_port_marks_its_host(tmp_path):
         await pilot.press("H")
         await _settle(pilot, 0.3)
         assert not app._marked
+
+
+async def test_t_offers_the_tags_the_row_carries_first(tmp_path):
+    app, eng = _app(tmp_path)
+    (eng / "seek-rules.yaml").write_text("tags:\n  any-web:\n    rules: [{when: [{port: 80}]}]\n")
+    async with app.run_test(size=(140, 40)) as pilot:
+        await _settle(pilot, 0.8)
+        await pilot.press("t")
+        await _settle(pilot, 0.6)
+        options = app.screen.query_one(OptionList)
+        assert options.get_option_at_index(0).id == "\x00edit:any-web"
+        await _choose(pilot, app, "\x00edit:any-web")
+        await _settle(pilot, 0.6)
+        assert isinstance(app.screen, TagEditScreen)
+        assert app.screen.query_one("#name", Input).value == "any-web"

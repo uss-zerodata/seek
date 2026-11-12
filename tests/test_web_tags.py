@@ -270,3 +270,11 @@ def test_a_port_row_marks_its_host(tmp_path):
     assert client.post("/api/v1/marks/hosts", json={"address": "203.0.113.9"}).status_code \
         == 404
 
+
+
+def test_the_tags_a_row_carries_are_offered(tmp_path):
+    client, _sess, _eng = _client(tmp_path)
+    client.post("/api/v1/tags/entries", json={"tag": "explored", "rows": [_row("192.0.2.2")]})
+    out = client.post("/api/v1/tags/of", json={"rows": [_row("192.0.2.2")]}).json()
+    assert out["tags"] == ["explored", "web-only"], "by hand and by a rule"
+    assert client.post("/api/v1/tags/of", json={"rows": [_row("192.0.2.1")]}).json()["tags"] == []

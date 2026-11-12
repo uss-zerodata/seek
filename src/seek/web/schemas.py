@@ -849,3 +849,13 @@ class TagEditIO(BaseModel):
     manual_hosts: int = 0
     manual_services: int = 0
     confirm_overwrite: bool = False
+
+
+class TagsOfIn(BaseModel):
+    """Rows, or none for the marks."""
+    rows: list[RowRef] = []
+
+
+class TagsOfOut(BaseModel):
+    tags: list[str]
+

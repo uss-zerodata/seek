@@ -314,6 +314,16 @@ def _edit_out(edit) -> s.TagEditIO:
         rules=rules, manual_hosts=edit.manual_hosts, manual_services=edit.manual_services)
 
 
+@router.post("/of", response_model=s.TagsOfOut, responses={404: {"model": s.ErrorOut}})
+def tags_of(body: s.TagsOfIn, sess=Depends(session), cache=Depends(places)) -> s.TagsOfOut:
+    """The tags these rows (or the marks) carry - the quick picks of the `t` dialog."""
+    try:
+        records = _records(sess, cache, body.rows)
+    except views.Unresolved as exc:
+        raise HTTPException(404, str(exc)) from None
+    return s.TagsOfOut(tags=sess.tags_of(records))
+
+
 @router.get("/edit", response_model=s.TagEditIO)
 def get_edit(name: str = "", sess=Depends(session)) -> s.TagEditIO:
     """A tag as the editor holds it - a new one when `name` is empty or unknown."""

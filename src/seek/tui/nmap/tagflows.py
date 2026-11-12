@@ -27,6 +27,7 @@ from seek.tui.nmap.tageditor import TagEditScreen
 
 NEW = "\x00new"
 EDIT = "\x00edit"
+EDIT_ONE = "\x00edit:"
 COPY = "\x00copy"
 VIEW = "\x00view"
 ROW = "\x00row"
@@ -72,7 +73,11 @@ class TagFlows:
         names = sorted(set(loaded.tags) | set(manual)
                        | {e.tag for e in loaded.all_entries})
         n = len(records)
-        choices = []
+        # The tags the selection carries, first: the usual reason to press `t` on
+        # a tagged row is to look at or change one of them.
+        carried = await asyncio.to_thread(self.session.tags_of, records) if records else []
+        choices = [(EDIT_ONE + name, f"edit {name}…  (on {'this' if n == 1 else 'these'})")
+                   for name in carried]
         if records:
             for name in names:
                 have = manual.get(name, 0)
@@ -85,6 +90,9 @@ class TagFlows:
                   else "Tags:")
         picked = await self.push_screen_wait(ChoiceScreen(prompt, choices))
         if picked is None:
+            return
+        if picked.startswith(EDIT_ONE):
+            await self._edit_tag(picked[len(EDIT_ONE):])
             return
         if picked == EDIT:
             name = await self._pick_tag(names, "Edit which tag?", [(NEW, "a new tag…")])

@@ -41,6 +41,7 @@
 
 - [x] 7.1 Add `H`: mark the host of the row - from a port, a screenshot or a bucket row - in the terminal and the browser; add `POST /api/v1/marks/hosts`, and a "mark host" button on the gallery cards and the capture page. Verify with `test_H_on_a_port_marks_its_host`, `test_a_port_row_marks_its_host` and `test_screenshots_offer_to_mark_their_host`.
 - [x] 7.2 Redesign the browser builder, fact editor, save step, tag editor and issue dialog. Add a stat bar, a three-way control per fact, labelled forms, segmented choices and severity pills, and rename the classes that clashed with the scan builder. Verify with headless screenshots in light and dark mode, and the layout tests.
+- [x] 7.3 `t` offers the tags the selection carries first, each opening the tag editor directly: `Session.tags_of`, `POST /api/v1/tags/of`, and quick buttons in the browser's tag dialog. Verify with `test_t_offers_the_tags_the_row_carries_first` and `test_the_tags_a_row_carries_are_offered`.
 
 ## 5. Integration
 

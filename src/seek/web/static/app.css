@@ -335,6 +335,8 @@ dialog.busy .tb-stats { opacity: .55; }
 .sevs label:has(input[value="high"]:checked) { color: var(--c-red); background: color-mix(in srgb, var(--c-red) 12%, var(--pane)); }
 .sevs label:has(input[value="medium"]:checked) { color: var(--filtered); background: color-mix(in srgb, var(--filtered) 12%, var(--pane)); }
 .sevs label:has(input[value="low"]:checked) { color: var(--c-blue); background: color-mix(in srgb, var(--c-blue) 12%, var(--pane)); }
+.quick { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 14px; padding: 8px 10px;
+  border-radius: 6px; background: var(--inset); }
 button.mark-host { height: 20px; padding: 0 6px; font-size: 11px; margin-left: 6px; }
 button.mark-host[aria-pressed="true"] { color: var(--mark); border-color: var(--mark); }
 .syntax { max-width: min(760px, 94vw); }

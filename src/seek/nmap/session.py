@@ -835,6 +835,17 @@ class Session:
         found = self._tag_files_now().tags.get(tag)
         return list(found.rules) if found else []
 
+    def tags_of(self, records) -> list[str]:
+        """The tags these records carry - by a rule or by hand - for a quick pick.
+        Blocking on a large model: call it off the loop."""
+        tags = self.tags()
+        found: set[str] = set()
+        for r in records:
+            svc = r.service
+            found |= tags.names(r.host.address, svc.protocol if svc else None,
+                                svc.port if svc else None)
+        return sorted(found)
+
     def tag_edit(self, name: str | None) -> TagEdit:
         """A tag as the editor holds it, from the files as read."""
         from seek.nmap import tagedit

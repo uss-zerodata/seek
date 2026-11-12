@@ -590,9 +590,12 @@ const SEVERITIES = ["info", "low", "medium", "high", "critical"];
 async function tag() {
   const t = await tagTargets();
   if (!t) return;
-  let known;
+  let known, carried = { tags: [] };
   try { known = await send("GET", "/api/v1/tags"); } catch (e) { say(e.message); return; }
+  try { carried = await send("POST", "/api/v1/tags/of", { rows: t.rows }); } catch { /* a convenience */ }
   const d = dialog(`Tag ${t.label}`, `
+      ${carried.tags.length ? `<div class="quick"><span class="hint">on ${esc(t.label)} - open in the tag editor:</span>
+        ${carried.tags.map((x) => `<button type="button" class="small" data-edit-tag="${esc(x)}">${esc(x)}</button>`).join("")}</div>` : ""}
       <p><label>tag <input name="tag" list="tag-names" autocomplete="off"></label>
       <datalist id="tag-names">${known.tags.map((x) => `<option value="${esc(x.name)}">`).join("")}</datalist></p>
       <p class="dim small">lowercase letters, digits, . _ - · Remove takes off a tag given by hand</p>`,
@@ -601,6 +604,10 @@ async function tag() {
          <button value="global">Copy to the global file</button>
          <button value="cancel">Cancel</button>`);
   const form = d.querySelector("form");
+  d.querySelectorAll("[data-edit-tag]").forEach((b) => b.addEventListener("click", () => {
+    d.close("cancel");
+    openTagEditor(b.dataset.editTag);
+  }));
   form.tag.focus();
   d.addEventListener("close", async () => {
     const choice = d.returnValue;
